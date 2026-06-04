@@ -386,7 +386,7 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const API_URL = 'https://script.google.com/macros/s/AKfycbxWcoHBgGViw9b_ng3vlxAeJPy4rH3QNKtZDK6rndokp0nHgkqq_Xl7S3pz70duZAmJOw/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzDkI7OyePfKnqeUpxHuehRU2smplZxPotpag6oUvgX-ztvGPcapAzjnPljt4_pg2-t/exec';
 
 const PRODUCTS = [
   'Подгузники S', 'Подгузники M',
@@ -649,22 +649,30 @@ async function submitShipment() {
 // ══════════════════════════════════════════════════════════════
 // API
 // ══════════════════════════════════════════════════════════════
-async function api(method, payload) {
+async function api(method, payload, _retry = true) {
   if (API_URL === 'ВСТАВЬ_EXEC_URL_APPS_SCRIPT') {
     console.warn('API URL не настроен — работаем локально');
     return [];
   }
-  const res = await fetch(API_URL, {
-    method:   'POST',
-    redirect: 'follow',
-    body:     JSON.stringify(payload),
-    headers:  { 'Content-Type': 'text/plain;charset=utf-8' }
-  });
-  const text = await res.text();
-  let json;
-  try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 100)); }
-  if (json && json.error) throw new Error(json.error);
-  return json;
+  try {
+    const res = await fetch(API_URL, {
+      method:   'POST',
+      redirect: 'follow',
+      body:     JSON.stringify(payload),
+      headers:  { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 100)); }
+    if (json && json.error) throw new Error(json.error);
+    return json;
+  } catch(e) {
+    if (_retry) {
+      await new Promise(r => setTimeout(r, 1500));
+      return api(method, payload, false);
+    }
+    throw e;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
