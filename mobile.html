@@ -443,7 +443,6 @@ function showApp() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appWrap').style.display = 'block';
   document.getElementById('repNameBadge').textContent = repName;
-  initProducts();
   initShipmentItems();
   loadClients();
   setDefaultDates();
@@ -452,14 +451,6 @@ function showApp() {
 // ══════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════
-function initProducts() {
-  const wrap = document.getElementById('vProducts');
-  wrap.innerHTML = PRODUCTS.map(p => `
-    <label class="check-item">
-      <input type="checkbox" name="products" value="${p}">
-      <span>${p}</span>
-    </label>`).join('');
-}
 
 function setDefaultDates() {
   const today = new Date().toISOString().slice(0, 10);
@@ -567,8 +558,6 @@ async function submitVisit() {
   if (!clientName) return toast('Введи название аптеки');
   if (!result)     return toast('Укажи результат визита');
 
-  const products = [...document.querySelectorAll('#vProducts input:checked')].map(el => el.value);
-
   const contact = document.getElementById('vContact').value;
   const phone   = document.getElementById('vPhone').value;
 
@@ -596,7 +585,7 @@ async function submitVisit() {
     const data = {
       date:      new Date().toISOString().slice(0, 10),
       clientId:  resolvedClientId,
-      clientName, result, products, contact, phone,
+      clientName, result, contact, phone,
       address:   document.getElementById('vAddress').value,
       potential: document.getElementById('vPotential').value,
       nextDate:  document.getElementById('vNextDate').value,
@@ -724,7 +713,6 @@ function resetVisitForm() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  document.querySelectorAll('#vProducts input').forEach(cb => cb.checked = false);
   document.getElementById('vNewClientName').value = '';
   document.getElementById('vNewClientWrap').style.display = 'none';
   setDefaultDates();
