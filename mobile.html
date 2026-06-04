@@ -262,12 +262,6 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
           </select>
         </div>
         <div class="field">
-          <label>Заинтересованные позиции</label>
-          <div class="checkbox-group" id="vProducts">
-            <!-- заполняется из CONFIG -->
-          </div>
-        </div>
-        <div class="field">
           <label>Потенциал в месяц</label>
           <select id="vPotential">
             <option value="">— не определён —</option>
@@ -671,19 +665,17 @@ async function api(method, payload) {
     console.warn('API URL не настроен — работаем локально');
     return [];
   }
-  if (method === 'GET') {
-    const params = new URLSearchParams(payload).toString();
-    const res = await fetch(API_URL + '?' + params);
-    return res.json();
-  } else {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
-    return json;
-  }
+  const res = await fetch(API_URL, {
+    method:   'POST',
+    redirect: 'follow',
+    body:     JSON.stringify(payload),
+    headers:  { 'Content-Type': 'text/plain;charset=utf-8' }
+  });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 100)); }
+  if (json && json.error) throw new Error(json.error);
+  return json;
 }
 
 // ══════════════════════════════════════════════════════════════
