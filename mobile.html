@@ -386,7 +386,7 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const API_URL = 'https://script.google.com/macros/s/AKfycbzk9vXnRs7W4JrJ9E5LQzO8G8gd4hqrQ4BuZ4-59N6X8xarmEaTP0bhPQi-Daxag-Nz/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
   'Подгузники S', 'Подгузники M',
@@ -410,27 +410,34 @@ const PRODUCT_PRICES = {
   'Минипак XXL':     { default: 450,  options: [450] },
 };
 
-const PASSWORDS = {
-  'Торгпред': '1234',   // имя: пароль — добавляй своих
-  'Самат':    'niette',
-};
-
 // ── STATE ──────────────────────────────────────────────────────
 let repName   = '';
 let clients   = [];
 let myVisits  = [];
 
 // ══════════════════════════════════════════════════════════════
-// AUTH
+// AUTH — проверка пароля на сервере (b2b_backend.gs → b2bAuth)
+// Пароли НЕ хранятся в этом файле.
 // ══════════════════════════════════════════════════════════════
-function login() {
+async function login() {
   const name = document.getElementById('loginName').value.trim();
   const pass = document.getElementById('loginPass').value;
   if (!name) return toast('Введи имя');
-  if (PASSWORDS[name] && PASSWORDS[name] !== pass) return toast('Неверный пароль');
-  repName = name;
-  localStorage.setItem('rep', name);
-  showApp();
+
+  const btn = document.querySelector('#loginScreen .btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+
+  try {
+    const res = await api('POST', { action: 'auth', name, pass });
+    if (!res.ok) return toast(res.reason || 'Неверный пароль');
+    repName = name;
+    localStorage.setItem('rep', name);
+    showApp();
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Войти'; }
+  }
 }
 
 function logout() {
@@ -861,11 +868,15 @@ function validatePhone(phone) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// BOOT
+// BOOT — всегда показываем логин, даже если rep сохранён
 // ══════════════════════════════════════════════════════════════
 const savedRep = localStorage.getItem('rep');
-if (savedRep) { repName = savedRep; showApp(); }
-else { document.getElementById('loginScreen').style.display = 'flex'; }
+if (savedRep) {
+  // Подставляем имя в поле, но не пускаем без пароля
+  document.getElementById('loginName').value = savedRep;
+  document.getElementById('loginPass').focus();
+}
+document.getElementById('loginScreen').style.display = 'flex';
 </script>
 </body>
 </html>
