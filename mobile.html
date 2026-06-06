@@ -233,9 +233,19 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
             <option value="">— выбери клиента —</option>
           </select>
         </div>
-        <div class="field" id="vNewClientWrap" style="display:none">
-          <label>Название новой аптеки</label>
-          <input id="vNewClientName" type="text" placeholder="Например: Аптека Алоэ">
+        <div id="vNewClientWrap" style="display:none">
+          <div class="field">
+            <label>Название новой аптеки *</label>
+            <input id="vNewClientName" type="text" placeholder="Например: Аптека Алоэ">
+          </div>
+          <div class="field">
+            <label>Город</label>
+            <input id="vNewClientCity" type="text" placeholder="Алматы">
+          </div>
+          <div class="field">
+            <label>Адрес</label>
+            <input id="vNewClientAddress" type="text" placeholder="ул. Абая 10">
+          </div>
         </div>
         <div class="field">
           <label>Адрес</label>
@@ -386,7 +396,7 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyGGO145Z52TdlQMi-qL_xLodqAucbSOYtf1sFNA5ZV1dav5HEkiIkVfiCmXG5Kr9XH/exec';
 
 const PRODUCTS = [
   'Подгузники S', 'Подгузники M',
@@ -575,17 +585,20 @@ async function submitVisit() {
     // Новая аптека — сначала создаём клиента в CRM
     let resolvedClientId = clientId;
     if (clientId === '__new__') {
+      const newCity    = document.getElementById('vNewClientCity').value.trim();
+      const newAddress = document.getElementById('vNewClientAddress').value.trim();
       const res = await api('POST', { action: 'addClient', data: {
         name:    clientName,
         type:    'Аптека',
         stage:   'Новый',
-        city:    '',
+        city:    newCity,
+        address: newAddress,
         contact, phone,
         rep:     repName,
       }});
       resolvedClientId = res.id;
       // Добавляем в локальный список чтобы сразу появилась в Отгрузках
-      clients.push({ 'ID': resolvedClientId, 'Название': clientName, 'Тип': 'Аптека', 'Город': '', 'Контакт': contact, 'Телефон': phone });
+      clients.push({ 'ID': resolvedClientId, 'Название': clientName, 'Тип': 'Аптека', 'Город': newCity, 'Адрес': newAddress, 'Контакт': contact, 'Телефон': phone });
       populateClientDropdowns();
     }
 
@@ -728,7 +741,9 @@ function resetVisitForm() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  document.getElementById('vNewClientName').value = '';
+  document.getElementById('vNewClientName').value    = '';
+  document.getElementById('vNewClientCity').value    = '';
+  document.getElementById('vNewClientAddress').value = '';
   document.getElementById('vNewClientWrap').style.display = 'none';
   setDefaultDates();
 }
