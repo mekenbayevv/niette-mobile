@@ -88,6 +88,16 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
 .check-item span { font-size: 13px; color: var(--dark); line-height: 1.2; }
 .check-item:has(input:checked) { border-color: var(--blue); background: #EFF6FF; }
 
+/* ── CLIENT TYPE FILTER ── */
+.client-type-btn {
+  flex: 1; padding: 8px 4px; border-radius: 8px; border: 1.5px solid var(--border);
+  background: var(--bg); color: var(--mid); font-size: 12px; font-weight: 700;
+  font-family: inherit; cursor: pointer; transition: all .15s;
+}
+.client-type-btn.active {
+  background: var(--dark); color: var(--white); border-color: var(--dark);
+}
+
 /* ── BUTTONS ── */
 .btn {
   width: 100%; padding: 15px; border-radius: var(--radius); border: none;
@@ -234,9 +244,22 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
           </select>
         </div>
         <div id="vNewClientWrap" style="display:none">
+          <div style="background:#eff6ff;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#1d4ed8;font-weight:600">
+            ➕ Новый клиент — заполни данные ниже
+          </div>
           <div class="field">
-            <label>Название новой аптеки *</label>
-            <input id="vNewClientName" type="text" placeholder="Например: Аптека Алоэ">
+            <label>Тип клиента *</label>
+            <select id="vNewClientType">
+              <option value="Аптека">💊 Аптека</option>
+              <option value="Оптовик">🏭 Оптовик</option>
+              <option value="Детский магазин">🧸 Детский магазин</option>
+              <option value="Магазин">🛒 Магазин</option>
+              <option value="Прочие">📦 Прочие</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Название *</label>
+            <input id="vNewClientName" type="text" placeholder="Например: Аптека Алоэ / Оптовик Медтовары">
           </div>
           <div class="field">
             <label>Город</label>
@@ -305,6 +328,15 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
         <div class="card-sub">Фиксируй позиции и количество</div>
       </div>
       <div class="card-body">
+        <!-- Фильтр типа клиента -->
+        <div class="field">
+          <label>Тип клиента</label>
+          <div style="display:flex;gap:8px;margin-bottom:4px">
+            <button class="client-type-btn active" data-type="all"      onclick="setClientTypeFilter('all',this)">Все</button>
+            <button class="client-type-btn"         data-type="Аптека"  onclick="setClientTypeFilter('Аптека',this)">💊 Аптеки</button>
+            <button class="client-type-btn"         data-type="Оптовик" onclick="setClientTypeFilter('Оптовик',this)">🏭 Оптовики</button>
+          </div>
+        </div>
         <div class="field">
           <label>Клиент *</label>
           <select id="sClient" onchange="onClientChange('s')">
@@ -347,6 +379,67 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
     </div>
   </div>
 
+  <!-- ── ЭКРАН: Оплата (только admin) ────────────────────────── -->
+  <div class="screen" id="screen-payment">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">💳 Зафиксировать оплату</div>
+        <div class="card-sub">Только для администратора</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Клиент *</label>
+          <select id="pClient" onchange="onPaymentClientChange()">
+            <option value="">— выбери клиента —</option>
+          </select>
+        </div>
+
+        <!-- Долг клиента -->
+        <div id="pDebtInfo" style="display:none;background:#fef2f2;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Текущий долг</div>
+          <div style="font-size:22px;font-weight:800;color:#dc2626" id="pDebtAmount">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px" id="pDebtSub"></div>
+        </div>
+
+        <div class="field">
+          <label>Сумма оплаты *</label>
+          <input id="pAmount" type="number" inputmode="numeric" placeholder="0" min="0">
+        </div>
+        <div class="field">
+          <label>Способ оплаты *</label>
+          <select id="pMethod">
+            <option value="Наличные">💵 Наличные</option>
+            <option value="Kaspi перевод">📱 Kaspi перевод</option>
+            <option value="Банковский перевод">🏦 Банковский перевод</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата оплаты *</label>
+          <input id="pDate" type="date">
+        </div>
+        <div class="field">
+          <label>№ платёжки / чека</label>
+          <input id="pReceipt" type="text" placeholder="ЧЕК-001">
+        </div>
+        <div class="field">
+          <label>ID поставки (если частичная)</label>
+          <input id="pShipmentId" type="text" placeholder="П-001">
+        </div>
+        <div class="field">
+          <label>Кто принял</label>
+          <input id="pReceiver" type="text" placeholder="Имя кассира">
+        </div>
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="pComment" placeholder="Доп. информация..."></textarea>
+        </div>
+        <button class="btn btn-success" id="btnSubmitPayment" onclick="submitPayment()">
+          ✅ Зафиксировать оплату
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── ЭКРАН: Клиенты ───────────────────────────────────────── -->
   <div class="screen" id="screen-clients">
     <div class="field" style="margin-bottom:12px">
@@ -373,7 +466,11 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
     </button>
     <button class="nav-btn" id="nav-clients" onclick="showTab('clients')">
       <span class="nav-icon">🏪</span>
-      <span class="nav-label">Аптеки</span>
+      <span class="nav-label">Клиенты</span>
+    </button>
+    <button class="nav-btn" id="nav-payment" onclick="showTab('payment')" style="display:none">
+      <span class="nav-icon">💳</span>
+      <span class="nav-label">Оплата</span>
     </button>
   </nav>
 
@@ -396,7 +493,7 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const API_URL = 'https://script.google.com/macros/s/AKfycbyGGO145Z52TdlQMi-qL_xLodqAucbSOYtf1sFNA5ZV1dav5HEkiIkVfiCmXG5Kr9XH/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
   'Подгузники S', 'Подгузники M',
@@ -421,9 +518,11 @@ const PRODUCT_PRICES = {
 };
 
 // ── STATE ──────────────────────────────────────────────────────
-let repName   = '';
-let clients   = [];
-let myVisits  = [];
+let repName        = '';
+let userRole       = 'rep';   // 'admin' | 'rep'
+let clients        = [];
+let myVisits       = [];
+let clientTypeFilter = 'all'; // 'all' | 'Аптека' | 'Оптовик' | ...
 
 // ══════════════════════════════════════════════════════════════
 // AUTH — проверка пароля на сервере (b2b_backend.gs → b2bAuth)
@@ -440,8 +539,10 @@ async function login() {
   try {
     const res = await api('POST', { action: 'auth', name, pass });
     if (!res.ok) return toast(res.reason || 'Неверный пароль');
-    repName = name;
+    repName  = name;
+    userRole = res.role || 'rep';
     localStorage.setItem('rep', name);
+    localStorage.setItem('role', userRole);
     showApp();
   } catch(e) {
     toast('Ошибка: ' + e.message);
@@ -452,6 +553,8 @@ async function login() {
 
 function logout() {
   localStorage.removeItem('rep');
+  localStorage.removeItem('role');
+  repName = ''; userRole = 'rep';
   document.getElementById('appWrap').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
 }
@@ -459,10 +562,14 @@ function logout() {
 function showApp() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appWrap').style.display = 'block';
-  document.getElementById('repNameBadge').textContent = repName;
+  document.getElementById('repNameBadge').textContent = repName + (userRole === 'admin' ? ' 👑' : '');
+  // Показать таб Оплата только admin
+  const payNav = document.getElementById('nav-payment');
+  if (payNav) payNav.style.display = userRole === 'admin' ? '' : 'none';
   initShipmentItems();
-  loadClients();
   setDefaultDates();
+  loadClients();
+  loadVisits();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -479,28 +586,63 @@ function setDefaultDates() {
 
 async function loadClients() {
   try {
-    const res  = await api('POST', { action: 'clients' });
-    clients    = res || [];
-    populateClientDropdowns();
-    renderClientList();
-    updateTodayStats();
+    const res = await api('POST', { action: 'clients' });
+    clients = Array.isArray(res) ? res : [];
+    if (!clients.length) toast('Аптек в CRM пока нет');
   } catch(e) {
-    // Работаем офлайн — показываем пустой список
     clients = [];
-    populateClientDropdowns();
+    toast('Ошибка загрузки аптек: ' + e.message);
   }
+  populateClientDropdowns();
+  renderClientList();
+}
+
+async function loadVisits() {
+  try {
+    const res = await api('POST', { action: 'myVisits', rep: repName });
+    myVisits = (Array.isArray(res) ? res : []).map(v => ({
+      ...v,
+      date:       String(v['Дата'] || v.date || '').slice(0, 10),
+      clientName: v['Клиент']    || v.clientName || '—',
+      result:     v['Результат'] || v.result     || '',
+    })).sort((a, b) => b.date.localeCompare(a.date));
+  } catch(e) {
+    myVisits = [];
+    toast('Ошибка загрузки визитов: ' + e.message);
+  }
+  updateTodayStats();
 }
 
 function populateClientDropdowns() {
-  const opts = clients.map(c =>
-    `<option value="${c['ID']}" data-type="${c['Тип']}" data-contact="${c['Контакт']}" data-phone="${c['Телефон']}">${c['Название']} · ${c['Город']}</option>`
-  ).join('');
-  const newOpt = '<option value="__new__">+ Новая аптека</option>';
+  const makeOpt = c =>
+    `<option value="${c['ID']}" data-type="${c['Тип']||''}" data-contact="${c['Контакт']||''}" data-phone="${c['Телефон']||''}">${c['Название']} · ${c['Город']||''} ${c['Тип'] ? '· '+c['Тип'] : ''}</option>`;
+
+  const allOpts      = clients.map(makeOpt).join('');
+  const filteredOpts = clients
+    .filter(c => clientTypeFilter === 'all' || c['Тип'] === clientTypeFilter)
+    .map(makeOpt).join('');
 
   document.getElementById('vClient').innerHTML =
-    '<option value="">— выбери клиента —</option>' + opts + newOpt;
+    '<option value="">— выбери клиента —</option>' + allOpts + '<option value="__new__">+ Новый клиент</option>';
   document.getElementById('sClient').innerHTML =
-    '<option value="">— выбери клиента —</option>' + opts;
+    '<option value="">— выбери клиента —</option>' + filteredOpts;
+
+  // Dropdown для оплаты (только admin видит экран)
+  const pSel = document.getElementById('pClient');
+  if (pSel) pSel.innerHTML = '<option value="">— выбери клиента —</option>' + allOpts;
+}
+
+function setClientTypeFilter(type, btn) {
+  clientTypeFilter = type;
+  document.querySelectorAll('.client-type-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // Перефильтруем только dropdown отгрузки
+  const filteredOpts = clients
+    .filter(c => type === 'all' || c['Тип'] === type)
+    .map(c => `<option value="${c['ID']}" data-type="${c['Тип']||''}">${c['Название']} · ${c['Город']||''} ${c['Тип'] ? '· '+c['Тип'] : ''}</option>`)
+    .join('');
+  document.getElementById('sClient').innerHTML =
+    '<option value="">— выбери клиента —</option>' + filteredOpts;
 }
 
 function onClientChange(prefix) {
@@ -541,9 +683,13 @@ function renderClientList() {
 
 function updateTodayStats() {
   const todayStr = new Date().toISOString().slice(0, 10);
-  const todayV   = myVisits.filter(v => v.date === todayStr);
-  document.getElementById('kpiVisitsToday').textContent  = todayV.length;
-  document.getElementById('kpiVisitsMonth').textContent  = myVisits.length;
+  const monthStr = todayStr.slice(0, 7); // "2026-06"
+
+  const todayV = myVisits.filter(v => v.date === todayStr);
+  const monthV = myVisits.filter(v => v.date.slice(0, 7) === monthStr);
+
+  document.getElementById('kpiVisitsToday').textContent = todayV.length;
+  document.getElementById('kpiVisitsMonth').textContent = monthV.length;
 
   const listEl = document.getElementById('todayVisitsList');
   if (!todayV.length) {
@@ -554,8 +700,8 @@ function updateTodayStats() {
     <div class="client-item">
       <div class="client-avatar">📝</div>
       <div class="client-info">
-        <div class="client-name">${v.clientName}</div>
-        <div class="client-meta">${v.result}</div>
+        <div class="client-name">${v.clientName || '—'}</div>
+        <div class="client-meta">${v.result || ''}</div>
       </div>
     </div>`).join('');
 }
@@ -587,9 +733,10 @@ async function submitVisit() {
     if (clientId === '__new__') {
       const newCity    = document.getElementById('vNewClientCity').value.trim();
       const newAddress = document.getElementById('vNewClientAddress').value.trim();
+      const newType = document.getElementById('vNewClientType')?.value || 'Аптека';
       const res = await api('POST', { action: 'addClient', data: {
         name:    clientName,
-        type:    'Аптека',
+        type:    newType,
         stage:   'Новый',
         city:    newCity,
         address: newAddress,
@@ -598,7 +745,7 @@ async function submitVisit() {
       }});
       resolvedClientId = res.id;
       // Добавляем в локальный список чтобы сразу появилась в Отгрузках
-      clients.push({ 'ID': resolvedClientId, 'Название': clientName, 'Тип': 'Аптека', 'Город': newCity, 'Адрес': newAddress, 'Контакт': contact, 'Телефон': phone });
+      clients.push({ 'ID': resolvedClientId, 'Название': clientName, 'Тип': newType, 'Город': newCity, 'Адрес': newAddress, 'Контакт': contact, 'Телефон': phone });
       populateClientDropdowns();
     }
 
@@ -615,7 +762,8 @@ async function submitVisit() {
     };
 
     await api('POST', { action: 'addVisit', data });
-    myVisits.unshift(data);
+    // Добавляем локально сразу — не ждём перезагрузки
+    myVisits.unshift({ ...data, clientName: data.clientName, result: data.result });
     updateTodayStats();
     resetVisitForm();
     showSuccess('📝', 'Визит записан!', clientName);
@@ -668,41 +816,134 @@ async function submitShipment() {
 
 // ══════════════════════════════════════════════════════════════
 // API
+// Два режима:
 // ══════════════════════════════════════════════════════════════
-async function api(method, payload, _retry = true) {
-  if (API_URL === 'ВСТАВЬ_EXEC_URL_APPS_SCRIPT') {
-    console.warn('API URL не настроен — работаем локально');
-    return [];
-  }
+// ЭКРАН ОПЛАТЫ
+// ══════════════════════════════════════════════════════════════
+
+function setDefaultPaymentDate() {
+  const el = document.getElementById('pDate');
+  if (el && !el.value) el.value = new Date().toISOString().slice(0, 10);
+}
+
+async function onPaymentClientChange() {
+  const sel      = document.getElementById('pClient');
+  const clientId = sel.value;
+  const infoEl   = document.getElementById('pDebtInfo');
+  const amtEl    = document.getElementById('pDebtAmount');
+  const subEl    = document.getElementById('pDebtSub');
+  if (!clientId) { infoEl.style.display = 'none'; return; }
+
+  amtEl.textContent = '⏳';
+  infoEl.style.display = 'block';
   try {
-    const res = await fetch(API_URL, {
-      method:   'POST',
-      redirect: 'follow',
-      body:     JSON.stringify(payload),
-      headers:  { 'Content-Type': 'text/plain;charset=utf-8' }
-    });
-    const text = await res.text();
-    let json;
-    try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 100)); }
-    if (json && json.error) throw new Error(json.error);
-    return json;
-  } catch(e) {
-    if (_retry) {
-      await new Promise(r => setTimeout(r, 1500));
-      return api(method, payload, false);
+    const res = await api('POST', { action: 'clientDebt', clientId });
+    const d   = Array.isArray(res) ? res[0] : null;
+    if (d && d.debt > 0) {
+      amtEl.textContent = d.debt.toLocaleString('ru') + ' ₸';
+      subEl.textContent = `Поставлено: ${d.shipped.toLocaleString('ru')} ₸  ·  Оплачено: ${d.paid.toLocaleString('ru')} ₸`;
+    } else {
+      amtEl.textContent = 'Долга нет';
+      amtEl.style.color = '#059669';
+      subEl.textContent = '';
     }
-    throw e;
+  } catch(e) {
+    amtEl.textContent = '—';
+    subEl.textContent = e.message;
   }
+}
+
+async function submitPayment() {
+  if (userRole !== 'admin') return toast('Нет доступа');
+  const sel      = document.getElementById('pClient');
+  const clientId = sel.value;
+  const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const amount   = parseFloat(document.getElementById('pAmount').value) || 0;
+  const method   = document.getElementById('pMethod').value;
+  const date     = document.getElementById('pDate').value;
+
+  if (!clientId) return toast('Выбери клиента');
+  if (amount <= 0) return toast('Укажи сумму оплаты');
+  if (!date)       return toast('Укажи дату оплаты');
+
+  const data = {
+    clientId,
+    clientName,
+    date,
+    amount,
+    method,
+    receiptNum:  document.getElementById('pReceipt').value,
+    shipmentId:  document.getElementById('pShipmentId').value,
+    receiver:    document.getElementById('pReceiver').value || repName,
+    comment:     document.getElementById('pComment').value,
+  };
+
+  setBtnLoading('btnSubmitPayment', true);
+  try {
+    await api('POST', { action: 'addPayment', data });
+    // Сброс формы
+    ['pClient','pMethod','pDate','pReceipt','pShipmentId','pReceiver','pComment'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = el.tagName === 'SELECT' ? el.options[0]?.value || '' : '';
+    });
+    document.getElementById('pAmount').value = '';
+    document.getElementById('pDebtInfo').style.display = 'none';
+    showSuccess('💳', 'Оплата зафиксирована!', clientName + '\n' + amount.toLocaleString('ru') + ' ₸');
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitPayment', false);
+  }
+}
+
+//   1. Страница открыта через Apps Script (?page=mobile)
+//      → google.script.run — нет CORS, нет авторизации
+//   2. Открыта локально (file://) → fetch (для разработки)
+// ══════════════════════════════════════════════════════════════
+function api(method, payload) {
+  return new Promise((resolve, reject) => {
+
+    // Режим 1: google.script.run (страница внутри Apps Script)
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(result => {
+          if (result && result.error) return reject(new Error(result.error));
+          resolve(result);
+        })
+        .withFailureHandler(err => reject(new Error(err.message || String(err))))
+        .mobileBridge(JSON.stringify(payload));
+      return;
+    }
+
+    // Режим 2: fetch (локальная разработка)
+    fetch(API_URL, {
+      method:  'POST',
+      redirect: 'follow',
+      body:    JSON.stringify(payload),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    })
+    .then(r => r.text())
+    .then(text => {
+      let json;
+      try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 120)); }
+      if (json && json.error) throw new Error(json.error);
+      resolve(json);
+    })
+    .catch(reject);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
 // UI HELPERS
 // ══════════════════════════════════════════════════════════════
 function showTab(tab) {
+  if (tab === 'payment' && userRole !== 'admin') return toast('Нет доступа');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('screen-' + tab)?.classList.add('active');
   document.getElementById('nav-' + tab)?.classList.add('active');
+  if (tab === 'payment') setDefaultPaymentDate();
   window.scrollTo(0, 0);
 }
 
@@ -744,6 +985,8 @@ function resetVisitForm() {
   document.getElementById('vNewClientName').value    = '';
   document.getElementById('vNewClientCity').value    = '';
   document.getElementById('vNewClientAddress').value = '';
+  const typeEl = document.getElementById('vNewClientType');
+  if (typeEl) typeEl.value = 'Аптека';
   document.getElementById('vNewClientWrap').style.display = 'none';
   setDefaultDates();
 }
@@ -885,11 +1128,13 @@ function validatePhone(phone) {
 // ══════════════════════════════════════════════════════════════
 // BOOT — всегда показываем логин, даже если rep сохранён
 // ══════════════════════════════════════════════════════════════
-const savedRep = localStorage.getItem('rep');
+const savedRep  = localStorage.getItem('rep');
+const savedRole = localStorage.getItem('role');
 if (savedRep) {
-  // Подставляем имя в поле, но не пускаем без пароля
   document.getElementById('loginName').value = savedRep;
   document.getElementById('loginPass').focus();
+  // Восстанавливаем роль чтобы таб Оплата показывался правильно после входа
+  if (savedRole) userRole = savedRole;
 }
 document.getElementById('loginScreen').style.display = 'flex';
 </script>
