@@ -243,6 +243,12 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
             <option value="">— выбери клиента —</option>
           </select>
         </div>
+        <div class="field" id="vBranchWrap" style="display:none">
+          <label>Филиал (адрес)</label>
+          <select id="vBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+        </div>
         <div id="vNewClientWrap" style="display:none">
           <div style="background:#eff6ff;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#1d4ed8;font-weight:600">
             ➕ Новый клиент — заполни данные ниже
@@ -310,6 +316,12 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
           <input id="vNextDate" type="date">
         </div>
         <div class="field">
+          <label>Фото и файлы (выкладка, договор)</label>
+          <input id="vFiles" type="file" accept="image/*,.pdf,.doc,.docx" multiple
+            style="border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:inherit;background:var(--bg);width:100%">
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📸 Фото выкладки, PDF договора</div>
+        </div>
+        <div class="field">
           <label>Комментарий</label>
           <textarea id="vComment" placeholder="Возражения, детали, пожелания..."></textarea>
         </div>
@@ -343,6 +355,13 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
             <option value="">— выбери клиента —</option>
           </select>
         </div>
+        <div class="field" id="sBranchWrap" style="display:none">
+          <label>Филиал (адрес) *</label>
+          <select id="sBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📍 Несколько адресов у этой аптеки</div>
+        </div>
 
         <!-- Позиции -->
         <div class="field">
@@ -360,13 +379,57 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
           <label>Дата отгрузки *</label>
           <input id="sShipDate" type="date">
         </div>
-        <div class="field">
-          <label>Ожидаемая дата оплаты</label>
-          <input id="sDueDate" type="date">
+
+        <!-- Оплата -->
+        <div style="background:var(--bg);border-radius:10px;padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--border)">
+          <div style="font-size:11px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">💳 Условия оплаты</div>
+          <div class="field" style="margin-bottom:10px">
+            <label>Тип оплаты</label>
+            <select id="sPayType" onchange="onPayTypeChange()">
+              <option value="once">Разовая — конкретная дата</option>
+              <option value="monthly">Ежемесячно — в определённую дату</option>
+              <option value="weekly">Еженедельно — в определённый день</option>
+              <option value="consignment">По реализации (По факту)</option>
+            </select>
+          </div>
+          <div id="sPayOnceWrap">
+            <div class="field" style="margin-bottom:0">
+              <label>Дата оплаты</label>
+              <input id="sDueDate" type="date">
+            </div>
+          </div>
+          <div id="sPayMonthlyWrap" style="display:none">
+            <div class="field" style="margin-bottom:0">
+              <label>Число месяца (1–28)</label>
+              <input id="sPayMonthDay" type="number" min="1" max="28" placeholder="15"
+                style="border:1.5px solid var(--border);border-radius:8px;padding:11px 12px;font-size:15px;font-family:inherit;color:var(--dark);background:var(--white);outline:none;width:100%">
+            </div>
+          </div>
+          <div id="sPayWeeklyWrap" style="display:none">
+            <div class="field" style="margin-bottom:0">
+              <label>День недели</label>
+              <select id="sPayWeekDay">
+                <option value="1">Понедельник</option>
+                <option value="2">Вторник</option>
+                <option value="3">Среда</option>
+                <option value="4">Четверг</option>
+                <option value="5">Пятница</option>
+                <option value="6">Суббота</option>
+                <option value="0">Воскресенье</option>
+              </select>
+            </div>
+          </div>
         </div>
+
         <div class="field">
           <label>№ накладной</label>
           <input id="sInvoice" type="text" placeholder="НК-006">
+        </div>
+        <div class="field">
+          <label>Фото и файлы (договор, акты)</label>
+          <input id="sFiles" type="file" accept="image/*,.pdf,.doc,.docx" multiple
+            style="border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:inherit;background:var(--bg);width:100%">
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📸 Фото, PDF, Word — договор, акт</div>
         </div>
         <div class="field">
           <label>Комментарий</label>
@@ -450,6 +513,86 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
     </div>
   </div>
 
+  <!-- ── ЭКРАН: История (визиты + отгрузки) ───────────────────── -->
+  <div class="screen" id="screen-visits">
+    <!-- Табы Визиты / Отгрузки -->
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="histTabVisits" onclick="switchHistTab('visits')"
+        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--blue);background:var(--blue);color:#fff;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+        📝 Визиты
+      </button>
+      <button id="histTabShipments" onclick="switchHistTab('shipments')"
+        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--mid);font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+        📦 Отгрузки
+      </button>
+    </div>
+
+    <!-- Визиты -->
+    <div id="histPanelVisits">
+      <input id="searchVisits" type="search" placeholder="🔍 Поиск по визитам..." oninput="renderVisitsList()"
+        style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;color:var(--dark);background:var(--white);outline:none;margin-bottom:10px;box-sizing:border-box">
+      <div id="visitsListWrap">
+        <div style="padding:20px;text-align:center;color:var(--light)">Нет визитов</div>
+      </div>
+    </div>
+
+    <!-- Отгрузки -->
+    <div id="histPanelShipments" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <button onclick="loadShipments().then(renderShipmentsList)"
+          style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:inherit;color:var(--mid);cursor:pointer">↻ Обновить</button>
+      </div>
+      <div id="shipmentsListWrap">
+        <div style="padding:20px;text-align:center;color:var(--light)">Нет отгрузок</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Обход (Обход аптеки) ────────────────────────── -->
+  <div class="screen" id="screen-round">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🔄 Обход аптеки</div>
+        <div class="card-sub">Фиксируй что продалось при обходе</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Аптека *</label>
+          <select id="rClient" onchange="onClientChange('r')">
+            <option value="">— выбери аптеку —</option>
+          </select>
+        </div>
+        <div class="field" id="rBranchWrap" style="display:none">
+          <label>Филиал (адрес)</label>
+          <select id="rBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата обхода *</label>
+          <input id="rDate" type="date">
+        </div>
+
+        <div class="section-title" style="margin-bottom:8px">Что продалось</div>
+        <div id="rItemsWrap" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+
+        <!-- Итого продано -->
+        <div style="background:#eff6ff;border-radius:10px;padding:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;font-weight:700;color:#1d4ed8">Выставить счёт</span>
+          <span style="font-size:20px;font-weight:800;color:#1d4ed8" id="rTotalDisplay">0 ₸</span>
+        </div>
+
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="rComment" placeholder="Остатки, замечания..."></textarea>
+        </div>
+        <button class="btn btn-primary" id="btnSubmitRound" onclick="submitRound()">
+          📋 Зафиксировать обход
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── BOTTOM NAV ──────────────────────────────────────────── -->
   <nav class="bottom-nav">
     <button class="nav-btn active" id="nav-today" onclick="showTab('today')">
@@ -464,9 +607,13 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
       <span class="nav-icon">📦</span>
       <span class="nav-label">Отгрузка</span>
     </button>
-    <button class="nav-btn" id="nav-clients" onclick="showTab('clients')">
-      <span class="nav-icon">🏪</span>
-      <span class="nav-label">Клиенты</span>
+    <button class="nav-btn" id="nav-round" onclick="showTab('round')">
+      <span class="nav-icon">🔄</span>
+      <span class="nav-label">Обход</span>
+    </button>
+    <button class="nav-btn" id="nav-visits" onclick="showTab('visits')">
+      <span class="nav-icon">📋</span>
+      <span class="nav-label">История</span>
     </button>
     <button class="nav-btn" id="nav-payment" onclick="showTab('payment')" style="display:none">
       <span class="nav-icon">💳</span>
@@ -475,6 +622,19 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
   </nav>
 
 </div><!-- /appWrap -->
+
+<!-- ── DETAIL OVERLAY (визит / отгрузка) ── -->
+<div id="detailOverlay" onclick="closeDetail(event)"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:flex-end;justify-content:center">
+  <div id="detailSheet"
+    style="background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:0 0 32px 0;box-shadow:0 -4px 24px rgba(0,0,0,.15);transform:translateY(100%);transition:transform .28s cubic-bezier(.25,.46,.45,.94)">
+    <!-- Handle -->
+    <div style="display:flex;justify-content:center;padding:12px 0 4px">
+      <div style="width:40px;height:4px;background:#e2e8f0;border-radius:99px"></div>
+    </div>
+    <div id="detailBody" style="padding:0 18px 8px"></div>
+  </div>
+</div>
 
 <!-- ── SUCCESS OVERLAY ── -->
 <div class="success-overlay" id="successOverlay">
@@ -522,6 +682,7 @@ let repName        = '';
 let userRole       = 'rep';   // 'admin' | 'rep'
 let clients        = [];
 let myVisits       = [];
+let myShipments    = [];
 let clientTypeFilter = 'all'; // 'all' | 'Аптека' | 'Оптовик' | ...
 
 // ══════════════════════════════════════════════════════════════
@@ -567,9 +728,11 @@ function showApp() {
   const payNav = document.getElementById('nav-payment');
   if (payNav) payNav.style.display = userRole === 'admin' ? '' : 'none';
   initShipmentItems();
+  initRoundItems();
   setDefaultDates();
   loadClients();
   loadVisits();
+  loadShipments();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -582,6 +745,8 @@ function setDefaultDates() {
   document.getElementById('sShipDate').value = today;
   document.getElementById('sDueDate').value  = plus7;
   document.getElementById('vNextDate').value = plus7;
+  const rDate = document.getElementById('rDate');
+  if (rDate) rDate.value = today;
 }
 
 async function loadClients() {
@@ -602,9 +767,22 @@ async function loadVisits() {
     const res = await api('POST', { action: 'myVisits', rep: repName });
     myVisits = (Array.isArray(res) ? res : []).map(v => ({
       ...v,
-      date:       String(v['Дата'] || v.date || '').slice(0, 10),
-      clientName: v['Клиент']    || v.clientName || '—',
-      result:     v['Результат'] || v.result     || '',
+      date:          String(v['Дата'] || v.date || '').slice(0, 10),
+      clientName:    v['Клиент']             || v.clientName || '—',
+      result:        v['Результат']          || v.result     || '',
+      contact:       v['Контакт']            || v.contact    || '',
+      phone:         v['Телефон']            || v.phone      || '',
+      city:          v['Город']              || v.city       || '',
+      address:       v['Адрес']              || v.address    || '',
+      potential:     v['Потенциал ₸']        || v.potential  || '',
+      nextDate:      String(v['Дата след. контакта'] || v.nextDate || '').slice(0, 10),
+      comment:       v['Комментарий']        || v.comment    || '',
+      branchAddress: v['Адрес филиала']      || v.branchAddress || '',
+      files:         (() => {
+        const raw = v['Файлы'] || v['fileUrls'] || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(u => ({ name: u.split('/').pop()?.split('?')[0] || 'файл', url: u }));
+      })(),
     })).sort((a, b) => b.date.localeCompare(a.date));
   } catch(e) {
     myVisits = [];
@@ -630,6 +808,13 @@ function populateClientDropdowns() {
   // Dropdown для оплаты (только admin видит экран)
   const pSel = document.getElementById('pClient');
   if (pSel) pSel.innerHTML = '<option value="">— выбери клиента —</option>' + allOpts;
+
+  // Dropdown для обхода (только аптеки, без оптовиков)
+  const pharmacyOpts = clients
+    .filter(c => c['Тип'] !== 'Оптовик')
+    .map(makeOpt).join('');
+  const rSel = document.getElementById('rClient');
+  if (rSel) rSel.innerHTML = '<option value="">— выбери аптеку —</option>' + pharmacyOpts;
 }
 
 function setClientTypeFilter(type, btn) {
@@ -645,6 +830,8 @@ function setClientTypeFilter(type, btn) {
     '<option value="">— выбери клиента —</option>' + filteredOpts;
 }
 
+let _branchCache = {}; // clientId → [{id,name,address}]
+
 function onClientChange(prefix) {
   const sel = document.getElementById(prefix + 'Client');
   const val = sel.value;
@@ -656,6 +843,48 @@ function onClientChange(prefix) {
       document.getElementById('vPhone').value   = opt.dataset.phone   || '';
     }
   }
+  // Branch selector for s / v / r prefixes
+  if (['s','v','r'].includes(prefix) && val && val !== '__new__') {
+    loadBranchesForClient(val, prefix);
+  } else {
+    hideBranchWrap(prefix);
+  }
+}
+
+async function loadBranchesForClient(clientId, prefix) {
+  // Use cache if available
+  let branches = _branchCache[clientId];
+  if (!branches) {
+    try {
+      const res = await api('POST', { action: 'branches', clientId });
+      branches = Array.isArray(res) ? res : [];
+      _branchCache[clientId] = branches;
+    } catch(e) {
+      branches = [];
+    }
+  }
+  const wrap = document.getElementById(prefix + 'BranchWrap');
+  const sel  = document.getElementById(prefix + 'Branch');
+  if (!wrap || !sel) return;
+  if (!branches.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  sel.innerHTML = '<option value="">— выбери адрес —</option>' +
+    branches.map(b => `<option value="${b.id}" data-address="${b.address||''}">${b.address || b.name}</option>`).join('');
+  wrap.style.display = '';
+}
+
+function hideBranchWrap(prefix) {
+  const wrap = document.getElementById(prefix + 'BranchWrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+function getBranchAddress(prefix) {
+  const sel = document.getElementById(prefix + 'Branch');
+  if (!sel || !sel.value) return '';
+  const opt = sel.options[sel.selectedIndex];
+  return opt?.dataset?.address || opt?.text || '';
 }
 
 function renderClientList() {
@@ -726,6 +955,9 @@ async function submitVisit() {
 
   if (phone && !validatePhone(phone)) return toast('Телефон должен быть в формате +7 (xxx) xxx xx xx');
 
+  // Читаем файлы до блокировки кнопки
+  const vFilesData = await readFilesAsBase64('vFiles');
+
   setBtnLoading('btnSubmitVisit', true);
   try {
     // Новая аптека — сначала создаём клиента в CRM
@@ -753,12 +985,15 @@ async function submitVisit() {
       date:      new Date().toISOString().slice(0, 10),
       clientId:  resolvedClientId,
       clientName, result, contact, phone,
-      address:   document.getElementById('vAddress').value,
-      potential: document.getElementById('vPotential').value,
-      nextDate:  document.getElementById('vNextDate').value,
-      comment:   document.getElementById('vComment').value,
-      rep:       repName,
-      city:      clients.find(c => c['ID'] === resolvedClientId)?.['Город'] || '',
+      address:       document.getElementById('vAddress').value,
+      potential:     document.getElementById('vPotential').value,
+      nextDate:      document.getElementById('vNextDate').value,
+      comment:       document.getElementById('vComment').value,
+      rep:           repName,
+      city:          clients.find(c => c['ID'] === resolvedClientId)?.['Город'] || '',
+      branchId:      document.getElementById('vBranch')?.value || '',
+      branchAddress: getBranchAddress('v'),
+      files:         vFilesData,
     };
 
     await api('POST', { action: 'addVisit', data });
@@ -788,18 +1023,36 @@ async function submitShipment() {
   if (!items.length)   return toast('Добавь хотя бы одну позицию');
   if (amount === 0)    return toast('Укажи количество и цену');
 
-  const client = clients.find(c => c['ID'] === clientId) || {};
+  const client  = clients.find(c => c['ID'] === clientId) || {};
+  const payType = document.getElementById('sPayType').value;
+  let   dueDate = '', paySchedule = '';
+  if (payType === 'once')        dueDate     = document.getElementById('sDueDate').value;
+  if (payType === 'monthly')     paySchedule = 'monthly:' + (document.getElementById('sPayMonthDay').value || '');
+  if (payType === 'weekly')      paySchedule = 'weekly:'  + (document.getElementById('sPayWeekDay').value  || '');
+  if (payType === 'consignment') paySchedule = 'consignment';
+
+  const branchSel  = document.getElementById('sBranch');
+  const branchId   = branchSel?.value   || '';
+  const branchAddr = getBranchAddress('s');
+
   const data = {
     clientId, clientName,
+    branchId, branchAddress: branchAddr,
     clientType: client['Тип'] || '',
     shipDate,
-    dueDate:    document.getElementById('sDueDate').value,
+    dueDate,
+    payType,
+    paySchedule,
     amount,
     items,
     invoiceNum: document.getElementById('sInvoice').value,
     comment:    document.getElementById('sComment').value,
-    status:     'Отгружено',
+    status:     payType === 'consignment' ? 'Реализация' : 'Отгружено',
+    rep:        repName,
   };
+
+  // Читаем файлы до блокировки кнопки
+  data.files = await readFilesAsBase64('sFiles');
 
   setBtnLoading('btnSubmitShipment', true);
   try {
@@ -937,13 +1190,34 @@ function api(method, payload) {
 // ══════════════════════════════════════════════════════════════
 // UI HELPERS
 // ══════════════════════════════════════════════════════════════
+let _histTab = 'visits';
+
+function switchHistTab(which) {
+  _histTab = which;
+  const active   = { bg: 'var(--blue)', color: '#fff', border: 'var(--blue)' };
+  const inactive = { bg: 'var(--bg)',   color: 'var(--mid)', border: 'var(--border)' };
+  ['visits','shipments'].forEach(t => {
+    const btn = document.getElementById('histTab' + t.charAt(0).toUpperCase() + t.slice(1));
+    const s   = t === which ? active : inactive;
+    if (btn) { btn.style.background = s.bg; btn.style.color = s.color; btn.style.borderColor = s.border; }
+    const panel = document.getElementById('histPanel' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (panel) panel.style.display = t === which ? '' : 'none';
+  });
+  if (which === 'visits')    renderVisitsList();
+  if (which === 'shipments') renderShipmentsList();
+}
+
 function showTab(tab) {
   if (tab === 'payment' && userRole !== 'admin') return toast('Нет доступа');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('screen-' + tab)?.classList.add('active');
-  document.getElementById('nav-' + tab)?.classList.add('active');
+  // screen-shipments redirect → merged into screen-visits
+  const screenId = tab === 'shipments' ? 'visits' : tab;
+  document.getElementById('screen-' + screenId)?.classList.add('active');
+  document.getElementById('nav-' + screenId)?.classList.add('active');
   if (tab === 'payment') setDefaultPaymentDate();
+  if (tab === 'visits')    { switchHistTab('visits'); }
+  if (tab === 'shipments') { switchHistTab('shipments'); }
   window.scrollTo(0, 0);
 }
 
@@ -988,6 +1262,9 @@ function resetVisitForm() {
   const typeEl = document.getElementById('vNewClientType');
   if (typeEl) typeEl.value = 'Аптека';
   document.getElementById('vNewClientWrap').style.display = 'none';
+  const vf = document.getElementById('vFiles');
+  if (vf) vf.value = '';
+  hideBranchWrap('v');
   setDefaultDates();
 }
 
@@ -998,6 +1275,9 @@ function resetShipmentForm() {
   });
   initShipmentItems();
   document.getElementById('sTotalDisplay').textContent = '0 ₸';
+  const sf = document.getElementById('sFiles');
+  if (sf) sf.value = '';
+  hideBranchWrap('s');
   setDefaultDates();
 }
 
@@ -1123,6 +1403,429 @@ function formatPhone(input) {
 function validatePhone(phone) {
   const digits = phone.replace(/\D/g, '');
   return digits.length === 11;
+}
+
+// ══════════════════════════════════════════════════════════════
+// FILE UPLOAD HELPERS
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Сжимает изображение через Canvas до maxW пикселей по ширине.
+ * PDF/doc не трогает — возвращает как есть.
+ * Результат: File с типом image/jpeg.
+ */
+async function _compressImage(file, maxW = 1280, quality = 0.72) {
+  if (!file.type.startsWith('image/')) return file;
+  return new Promise(resolve => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const ratio  = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => {
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+/**
+ * Читает файлы из <input type="file">, сжимает фото, возвращает
+ * [{ name, type, data }] где data — base64 без префикса.
+ * Лимит: 5 МБ на файл после сжатия, макс 5 файлов.
+ */
+async function readFilesAsBase64(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input || !input.files.length) return [];
+  const MAX_FILES  = 5;
+  const MAX_BYTES  = 5 * 1024 * 1024; // 5 МБ после сжатия
+  const results    = [];
+  const files      = Array.from(input.files).slice(0, MAX_FILES);
+  if (input.files.length > MAX_FILES)
+    toast(`Выбрано ${input.files.length} файлов — отправим первые ${MAX_FILES}`);
+
+  for (const raw of files) {
+    try {
+      const file   = await _compressImage(raw);
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = e => resolve(e.target.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const sizeKb = Math.round(base64.length * 0.75 / 1024);
+      if (base64.length * 0.75 > MAX_BYTES) {
+        toast(`${raw.name} слишком большой даже после сжатия (${sizeKb} КБ) — пропускаем`);
+        continue;
+      }
+      results.push({ name: file.name, type: file.type, data: base64 });
+    } catch(e) {
+      toast(`Не удалось прочитать ${raw.name}`);
+    }
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAYMENT TYPE TOGGLE (форма отгрузки)
+// ══════════════════════════════════════════════════════════════
+function onPayTypeChange() {
+  const type = document.getElementById('sPayType').value;
+  document.getElementById('sPayOnceWrap').style.display    = type === 'once'   ? '' : 'none';
+  document.getElementById('sPayMonthlyWrap').style.display = type === 'monthly' ? '' : 'none';
+  document.getElementById('sPayWeeklyWrap').style.display  = type === 'weekly'  ? '' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// VISITS LIST
+// ══════════════════════════════════════════════════════════════
+let _renderedVisits    = [];
+let _renderedShipments = [];
+
+function renderVisitsList() {
+  const wrap  = document.getElementById('visitsListWrap');
+  if (!wrap) return;
+  const query = (document.getElementById('searchVisits')?.value || '').toLowerCase();
+  _renderedVisits = myVisits.filter(v =>
+    !query ||
+    (v.clientName || '').toLowerCase().includes(query) ||
+    (v.comment    || '').toLowerCase().includes(query) ||
+    (v.result     || '').toLowerCase().includes(query)
+  );
+  if (!_renderedVisits.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:40px 0;color:var(--light);font-size:14px">
+      ${myVisits.length ? 'Ничего не найдено 🔍' : 'Визитов ещё нет 📋'}
+    </div>`;
+    return;
+  }
+  const RESULT_COLOR = {
+    'Продажа':       '#059669',
+    'Договорённость':'#2563eb',
+    'Отказ':         '#dc2626',
+    'Повторный':     '#d97706',
+  };
+  wrap.innerHTML = _renderedVisits.map((v, i) => {
+    const col = RESULT_COLOR[v.result] || 'var(--light)';
+    return `
+    <div onclick="openVisitDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;active:opacity:.85;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName}</div>
+        <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
+      </div>
+      <div style="font-size:12px;color:var(--light);margin-top:4px">📅 ${v.date || '—'}</div>
+      ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
+      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// SHIPMENTS LIST
+// ══════════════════════════════════════════════════════════════
+async function loadShipments() {
+  try {
+    const res = await api('POST', { action: 'myShipments', rep: repName });
+    myShipments = (Array.isArray(res) ? res : []).map(s => ({
+      ...s,
+      shipDate:      String(s['Дата поставки'] || s['Дата отгрузки'] || s.shipDate || '').slice(0, 10),
+      clientName:    s['Клиент']          || s.clientName    || '—',
+      amount:        parseFloat(s['Сумма товара ₸'] || s['Сумма'] || s.amount || 0),
+      status:        s['Статус поставки'] || s['Статус']     || s.status      || '',
+      dueDate:       String(s['Дата ожид. оплаты'] || s['Дата оплаты'] || s.dueDate || '').slice(0, 10),
+      payType:       s['Тип оплаты']      || s.payType       || '',
+      paySchedule:   s['График оплаты']   || s.paySchedule   || '',
+      invoiceNum:    s['№ накладной']     || s.invoiceNum    || '',
+      branchAddress: s['Адрес филиала']   || s.branchAddress || '',
+      comment:       s['Комментарий']     || s.comment       || '',
+      items: (() => {
+        const raw = s['Товары'] || s.items || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(line => {
+          // формат: "Товар × 5 шт × 1000 ₸"
+          const m = line.match(/^(.+?)\s*×\s*(\d+)\s*шт\s*×\s*([\d\s]+)\s*₸/);
+          if (m) return { product: m[1].trim(), qty: +m[2], price: +m[3].replace(/\s/g,''), sum: +m[2] * +m[3].replace(/\s/g,'') };
+          return { product: line, qty: '', price: 0, sum: 0 };
+        });
+      })(),
+      files: (() => {
+        const raw = s['Файлы'] || s['fileUrls'] || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(u => ({ name: u.split('/').pop()?.split('?')[0] || 'файл', url: u }));
+      })(),
+    })).sort((a, b) => b.shipDate.localeCompare(a.shipDate));
+  } catch(e) {
+    myShipments = [];
+  }
+}
+
+function renderShipmentsList() {
+  const wrap = document.getElementById('shipmentsListWrap');
+  if (!wrap) return;
+  if (!myShipments.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:40px 0;color:var(--light);font-size:14px">Отгрузок ещё нет 📦</div>`;
+    return;
+  }
+  const STATUS_COLOR = {
+    'Отгружено':   '#d97706',
+    'Оплачено':    '#059669',
+    'Реализация':  '#7c3aed',
+    'Просрочено':  '#dc2626',
+  };
+  _renderedShipments = myShipments;
+  wrap.innerHTML = _renderedShipments.map((s, i) => {
+    const col = STATUS_COLOR[s.status] || 'var(--light)';
+    return `
+    <div onclick="openShipmentDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${s.clientName}</div>
+        <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${s.status || '—'}</span>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:var(--dark);margin-top:6px">${Number(s.amount).toLocaleString('ru')} ₸</div>
+      ${s.branchAddress ? `<div style="font-size:12px;color:var(--blue);margin-top:3px">📍 ${s.branchAddress}</div>` : ''}
+      <div style="font-size:12px;color:var(--light);margin-top:4px">📦 ${s.shipDate || '—'}${s.invoiceNum ? ' · №' + s.invoiceNum : ''}</div>
+      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// ROUND (ОБХОД)
+// ══════════════════════════════════════════════════════════════
+function initRoundItems() {
+  const wrap = document.getElementById('rItemsWrap');
+  if (!wrap) return;
+  wrap.innerHTML = PRODUCTS.map((p, i) => `
+    <div id="rRow_${i}" style="background:var(--white);border-radius:10px;border:1.5px solid var(--border);padding:12px;transition:border-color .15s">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="rChk_${i}" onchange="toggleRoundRow(${i})"
+          style="width:20px;height:20px;accent-color:var(--blue);flex-shrink:0;cursor:pointer">
+        <label for="rChk_${i}" style="font-size:14px;font-weight:600;color:var(--dark);cursor:pointer;flex:1">${p}</label>
+        <span id="rRowSum_${i}" style="font-size:13px;font-weight:700;color:var(--light)">—</span>
+      </div>
+      <div id="rRowDetail_${i}" style="display:none;margin-top:10px">
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--light);margin-bottom:4px">ПРОДАНО ШТ</div>
+          <input type="number" id="rQty_${i}" inputmode="numeric" placeholder="0" min="0"
+            oninput="calcRoundTotal()"
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:16px;font-family:inherit;color:var(--dark);background:var(--bg)">
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function toggleRoundRow(i) {
+  const checked = document.getElementById('rChk_' + i).checked;
+  const detail  = document.getElementById('rRowDetail_' + i);
+  const row     = document.getElementById('rRow_' + i);
+  detail.style.display = checked ? 'block' : 'none';
+  row.style.borderColor = checked ? 'var(--blue)' : 'var(--border)';
+  if (checked) document.getElementById('rQty_' + i).focus();
+  else {
+    document.getElementById('rQty_' + i).value = '';
+    const sumEl = document.getElementById('rRowSum_' + i);
+    sumEl.textContent = '—';
+    sumEl.style.color = 'var(--light)';
+  }
+  calcRoundTotal();
+}
+
+function calcRoundTotal() {
+  // Цена берётся из стандартного прайса (default)
+  let total = 0;
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('rChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('rQty_' + i)?.value) || 0;
+    const cfg   = PRODUCT_PRICES[p] || { default: 7700 };
+    const price = cfg.default;
+    const sum   = qty * price;
+    const sumEl = document.getElementById('rRowSum_' + i);
+    if (sumEl) {
+      sumEl.textContent = sum > 0 ? sum.toLocaleString('ru') + ' ₸' : '0 ₸';
+      sumEl.style.color = sum > 0 ? 'var(--green)' : 'var(--light)';
+    }
+    total += sum;
+  });
+  const el = document.getElementById('rTotalDisplay');
+  if (el) el.textContent = total.toLocaleString('ru') + ' ₸';
+}
+
+function getRoundItems() {
+  const items = [];
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('rChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('rQty_' + i)?.value) || 0;
+    const cfg   = PRODUCT_PRICES[p] || { default: 7700 };
+    const price = cfg.default;
+    if (qty > 0) items.push({ product: p, qty, price, sum: qty * price });
+  });
+  return items;
+}
+
+async function submitRound() {
+  const sel        = document.getElementById('rClient');
+  const clientId   = sel.value;
+  const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const roundDate  = document.getElementById('rDate').value;
+  const items      = getRoundItems();
+  const amount     = items.reduce((s, i) => s + i.sum, 0);
+
+  if (!clientId)    return toast('Выбери аптеку');
+  if (!roundDate)   return toast('Укажи дату обхода');
+  if (!items.length) return toast('Отметь хотя бы 1 проданную позицию');
+
+  setBtnLoading('btnSubmitRound', true);
+  try {
+    await api('POST', {
+      action: 'addRound',
+      data: {
+        clientId, clientName, roundDate, items, amount,
+        comment:       document.getElementById('rComment').value,
+        branchId:      document.getElementById('rBranch')?.value || '',
+        branchAddress: getBranchAddress('r'),
+        rep: repName,
+      }
+    });
+    // Сброс формы
+    document.getElementById('rClient').value  = '';
+    document.getElementById('rComment').value = '';
+    PRODUCTS.forEach((p, i) => {
+      const chk = document.getElementById('rChk_' + i);
+      if (chk && chk.checked) { chk.checked = false; toggleRoundRow(i); }
+    });
+    showSuccess('🔄', 'Обход записан!', clientName + '\nПродано на ' + Number(amount).toLocaleString('ru') + ' ₸');
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitRound', false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// DETAIL OVERLAY
+// ══════════════════════════════════════════════════════════════
+
+function _detailRow(icon, label, value) {
+  if (!value) return '';
+  return `<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+    <span style="font-size:16px;flex-shrink:0">${icon}</span>
+    <div>
+      <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">${label}</div>
+      <div style="font-size:14px;color:var(--dark)">${value}</div>
+    </div>
+  </div>`;
+}
+
+function _detailFiles(files) {
+  if (!files?.length) return '';
+  return `<div style="margin-top:12px">
+    <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📎 ФАЙЛЫ</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${files.map(f => `<a href="${f.url}" target="_blank"
+        style="display:block;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--blue);text-decoration:none">
+        📎 ${f.name || 'файл'}</a>`).join('')}
+    </div>
+  </div>`;
+}
+
+function openVisitDetail(i) {
+  const v = _renderedVisits[i];
+  if (!v) return;
+  const RESULT_COLOR = { 'Продажа':'#059669','Договорённость':'#2563eb','Отказ':'#dc2626','Повторный':'#d97706' };
+  const col = RESULT_COLOR[v.result] || 'var(--light)';
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:800;color:var(--dark)">${v.clientName}</div>
+        <div style="font-size:12px;color:var(--light);margin-top:2px">📝 Визит</div>
+      </div>
+      <span style="font-size:12px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:4px 12px">${v.result || '—'}</span>
+    </div>
+    ${_detailRow('📅', 'Дата', v.date)}
+    ${_detailRow('👤', 'Контакт', v.contact ? v.contact + (v.phone ? ' · ' + v.phone : '') : '')}
+    ${_detailRow('🏙', 'Город / Адрес', [v.city, v.address].filter(Boolean).join(', '))}
+    ${_detailRow('📍', 'Филиал', v.branchAddress)}
+    ${_detailRow('🎯', 'Потенциал', v.potential)}
+    ${_detailRow('📆', 'Следующий визит', v.nextDate)}
+    ${v.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${v.comment}"</div>` : ''}
+    ${_detailFiles(v.files)}
+  `;
+  _openDetailOverlay();
+}
+
+function openShipmentDetail(i) {
+  const s = _renderedShipments[i];
+  if (!s) return;
+  const STATUS_COLOR = { 'Отгружено':'#d97706','Оплачено':'#059669','Реализация':'#7c3aed','Просрочено':'#dc2626' };
+  const col = STATUS_COLOR[s.status] || 'var(--light)';
+
+  let payInfo = '';
+  if (s.payType === 'consignment')   payInfo = 'По реализации (По факту)';
+  else if (s.payType === 'monthly' && s.paySchedule) {
+    const day = s.paySchedule.split(':')[1];
+    payInfo = `Ежемесячно${day ? ', ' + day + '-го числа' : ''}`;
+  } else if (s.payType === 'weekly' && s.paySchedule) {
+    const days = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
+    payInfo = `Еженедельно — ${days[parseInt(s.paySchedule.split(':')[1])] || ''}`;
+  } else if (s.dueDate) {
+    payInfo = s.dueDate;
+  }
+
+  // Позиции из items если есть, иначе из строки
+  const itemsHtml = Array.isArray(s.items) && s.items.length
+    ? `<div style="margin-top:12px">
+        <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📋 ПОЗИЦИИ</div>
+        ${s.items.map(it => `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span>${it.product}</span>
+          <span style="color:var(--light)">${it.qty} шт × ${it.price.toLocaleString('ru')} ₸ = <b style="color:var(--dark)">${it.sum.toLocaleString('ru')} ₸</b></span>
+        </div>`).join('')}
+      </div>`
+    : '';
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:800;color:var(--dark)">${s.clientName}</div>
+        <div style="font-size:12px;color:var(--light);margin-top:2px">📦 Отгрузка</div>
+      </div>
+      <span style="font-size:12px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:4px 12px">${s.status || '—'}</span>
+    </div>
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;text-align:center">
+      <div style="font-size:24px;font-weight:800;color:var(--dark)">${Number(s.amount).toLocaleString('ru')} ₸</div>
+    </div>
+    ${_detailRow('📦', 'Дата отгрузки', s.shipDate)}
+    ${_detailRow('📍', 'Филиал', s.branchAddress)}
+    ${_detailRow('📄', '№ накладной', s.invoiceNum)}
+    ${_detailRow('💳', 'Оплата', payInfo)}
+    ${itemsHtml}
+    ${s.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${s.comment}"</div>` : ''}
+    ${_detailFiles(s.files)}
+  `;
+  _openDetailOverlay();
+}
+
+function _openDetailOverlay() {
+  const ov = document.getElementById('detailOverlay');
+  ov.style.display = 'flex';
+  // Небольшая задержка для анимации
+  requestAnimationFrame(() => {
+    document.getElementById('detailSheet').style.transform = 'translateY(0)';
+  });
+}
+
+function closeDetail(e) {
+  // Закрываем только по клику на тёмный фон, не по самому листу
+  if (e && e.target !== document.getElementById('detailOverlay')) return;
+  document.getElementById('detailOverlay').style.display = 'none';
 }
 
 // ══════════════════════════════════════════════════════════════
