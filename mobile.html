@@ -227,6 +227,11 @@ html, body { height: 100%; font-family: -apple-system, 'Inter', sans-serif; back
         Визитов пока нет
       </div>
     </div>
+
+    <div class="section-title" style="margin-top:4px">История по дням</div>
+    <div class="card" id="dailyStatsList">
+      <div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Загрузка...</div>
+    </div>
   </div>
 
   <!-- ── ЭКРАН: Визит ─────────────────────────────────────────── -->
@@ -923,16 +928,136 @@ function updateTodayStats() {
   const listEl = document.getElementById('todayVisitsList');
   if (!todayV.length) {
     listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Визитов пока нет</div>';
+  } else {
+    listEl.innerHTML = todayV.map(v => `
+      <div class="client-item">
+        <div class="client-avatar">📝</div>
+        <div class="client-info">
+          <div class="client-name">${v.clientName || '—'}</div>
+          <div class="client-meta">${v.result || ''}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  renderDailyStats();
+}
+
+// ══════════════════════════════════════════════════════════════
+// DAILY STATS — история по дням
+// ══════════════════════════════════════════════════════════════
+function declVisit(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return 'визитов';
+  if (mod10 === 1) return 'визит';
+  if (mod10 >= 2 && mod10 <= 4) return 'визита';
+  return 'визитов';
+}
+
+function renderDailyStats() {
+  const el = document.getElementById('dailyStatsList');
+  if (!el) return;
+
+  // Группируем визиты по датам
+  const grouped = {};
+  myVisits.forEach(v => {
+    const d = v.date || '';
+    if (!d) return;
+    if (!grouped[d]) grouped[d] = [];
+    grouped[d].push(v);
+  });
+
+  const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+  if (!dates.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Нет визитов</div>';
     return;
   }
-  listEl.innerHTML = todayV.map(v => `
-    <div class="client-item">
-      <div class="client-avatar">📝</div>
-      <div class="client-info">
-        <div class="client-name">${v.clientName || '—'}</div>
-        <div class="client-meta">${v.result || ''}</div>
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const DAYS = ['вс','пн','вт','ср','чт','пт','сб'];
+  const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+
+  el.innerHTML = dates.map(dateStr => {
+    const visits  = grouped[dateStr];
+    const count   = visits.length;
+    const d       = new Date(dateStr + 'T00:00:00');
+    const isToday = dateStr === todayStr;
+    const dayNum  = d.getDate();
+    const mon     = MONTHS[d.getMonth()];
+    const weekDay = DAYS[d.getDay()];
+
+    const bgAvatar  = isToday ? 'var(--blue)'  : '#EFF6FF';
+    const colAvatar = isToday ? '#fff'          : 'var(--blue)';
+    const colSub    = isToday ? 'rgba(255,255,255,.7)' : 'var(--light)';
+
+    return `
+    <div onclick="openDayVisits('${dateStr}')"
+      style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s"
+      ontouchstart="this.style.background='var(--bg)'" ontouchend="this.style.background=''">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:42px;height:42px;border-radius:10px;background:${bgAvatar};color:${colAvatar};display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:14px;font-weight:800;line-height:1">${dayNum}</span>
+          <span style="font-size:9px;font-weight:600;text-transform:uppercase;color:${colSub};line-height:1.4">${mon}</span>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--dark)">
+            ${String(dayNum).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')} · ${weekDay}
+            ${isToday ? '<span style="font-size:11px;color:var(--blue);font-weight:600;margin-left:4px">сегодня</span>' : ''}
+          </div>
+          <div style="font-size:12px;color:var(--light);margin-top:2px">${count} ${declVisit(count)}</div>
+        </div>
       </div>
-    </div>`).join('');
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:22px;font-weight:800;color:${isToday ? 'var(--blue)' : 'var(--dark)'}">${count}</span>
+        <span style="color:var(--light);font-size:18px;line-height:1">›</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+let _dayVisits = [];
+
+function openDayVisits(dateStr) {
+  const visits = myVisits.filter(v => v.date === dateStr);
+  if (!visits.length) return;
+
+  _dayVisits = visits;
+
+  const d       = new Date(dateStr + 'T00:00:00');
+  const MONTHS_FULL = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  const dayLabel = d.getDate() + ' ' + MONTHS_FULL[d.getMonth()];
+
+  const RESULT_COLOR = {
+    'Продажа':'#059669','Договорённость':'#2563eb','Отказ':'#dc2626','Повторный':'#d97706',
+  };
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="margin-bottom:16px">
+      <div style="font-size:18px;font-weight:800;color:var(--dark)">📅 ${dayLabel}</div>
+      <div style="font-size:12px;color:var(--light);margin-top:2px">${visits.length} ${declVisit(visits.length)}</div>
+    </div>
+    ${visits.map((v, i) => {
+      const col = RESULT_COLOR[v.result] || 'var(--light)';
+      return `
+      <div onclick="openVisitDetailFromDay(${i})"
+        style="background:var(--bg);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s"
+        ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName || '—'}</div>
+          <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
+        </div>
+        ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
+        <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Подробнее →</div>
+      </div>`;
+    }).join('')}
+  `;
+  _openDetailOverlay();
+}
+
+function openVisitDetailFromDay(i) {
+  const v = _dayVisits[i];
+  if (!v) return;
+  _showVisitDetail(v);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1739,6 +1864,10 @@ function _detailFiles(files) {
 function openVisitDetail(i) {
   const v = _renderedVisits[i];
   if (!v) return;
+  _showVisitDetail(v);
+}
+
+function _showVisitDetail(v) {
   const RESULT_COLOR = { 'Продажа':'#059669','Договорённость':'#2563eb','Отказ':'#dc2626','Повторный':'#d97706' };
   const col = RESULT_COLOR[v.result] || 'var(--light)';
 
