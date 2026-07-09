@@ -689,6 +689,7 @@ let clients        = [];
 let myVisits       = [];
 let myShipments    = [];
 let clientTypeFilter = 'all'; // 'all' | 'Аптека' | 'Оптовик' | ...
+let _authToken     = null;    // серверный токен сессии (выдаёт b2bAuth_)
 
 // ══════════════════════════════════════════════════════════════
 // AUTH — проверка пароля на сервере (b2b_backend.gs → b2bAuth)
@@ -703,12 +704,15 @@ async function login() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
 
   try {
-    const res = await api('POST', { action: 'auth', name, pass });
-    if (!res.ok) return toast(res.reason || 'Неверный пароль');
-    repName  = name;
-    userRole = res.role || 'rep';
-    localStorage.setItem('rep', name);
+    const info = { deviceType: 'mobile', deviceIcon: '📱', browser: navigator.userAgent.slice(0, 90) };
+    const res  = await api('POST', { action: 'auth', name, pass, info });
+    if (!res.ok || !res.token) return toast(res.reason || 'Неверное имя или пароль');
+    repName    = res.name || name;
+    userRole   = res.role || 'rep';
+    _authToken = res.token;
+    localStorage.setItem('rep', repName);
     localStorage.setItem('role', userRole);
+    localStorage.setItem('token', _authToken);
     showApp();
   } catch(e) {
     toast('Ошибка: ' + e.message);
@@ -718,6 +722,9 @@ async function login() {
 }
 
 function logout() {
+  if (_authToken) api('POST', { action: 'logout' }).catch(() => {}); // убиваем сессию на сервере
+  _authToken = null;
+  localStorage.removeItem('token');
   localStorage.removeItem('rep');
   localStorage.removeItem('role');
   repName = ''; userRole = 'rep';
@@ -1279,13 +1286,28 @@ async function submitPayment() {
 //      → google.script.run — нет CORS, нет авторизации
 //   2. Открыта локально (file://) → fetch (для разработки)
 // ══════════════════════════════════════════════════════════════
+// Сессия истекла/невалидна — назад на логин
+function _authFail() {
+  _authToken = null;
+  try { localStorage.removeItem('token'); } catch(e) {}
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  toast('Сессия истекла — войди заново');
+}
+
+function _isAuthErr(o) {
+  return o && (o.error === 'AUTH_REQUIRED' || o.error === 'SESSION_EXPIRED');
+}
+
 function api(method, payload) {
+  payload = Object.assign({ token: _authToken || '' }, payload); // токен — в каждый запрос
   return new Promise((resolve, reject) => {
 
     // Режим 1: google.script.run (страница внутри Apps Script)
     if (typeof google !== 'undefined' && google.script && google.script.run) {
       google.script.run
         .withSuccessHandler(result => {
+          if (_isAuthErr(result)) { _authFail(); return reject(new Error('Сессия истекла')); }
           if (result && result.error) return reject(new Error(result.error));
           resolve(result);
         })
@@ -1305,6 +1327,7 @@ function api(method, payload) {
     .then(text => {
       let json;
       try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 120)); }
+      if (_isAuthErr(json)) { _authFail(); throw new Error('Сессия истекла'); }
       if (json && json.error) throw new Error(json.error);
       resolve(json);
     })
@@ -1958,17 +1981,32 @@ function closeDetail(e) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// BOOT — всегда показываем логин, даже если rep сохранён
+// BOOT — показываем логин; если есть живой серверный токен,
+// сервер подтверждает сессию (pingSession) и пускает без пароля.
+// Роль берём ТОЛЬКО из ответа сервера, не из localStorage.
 // ══════════════════════════════════════════════════════════════
-const savedRep  = localStorage.getItem('rep');
-const savedRole = localStorage.getItem('role');
+const savedRep = localStorage.getItem('rep');
 if (savedRep) {
   document.getElementById('loginName').value = savedRep;
   document.getElementById('loginPass').focus();
-  // Восстанавливаем роль чтобы таб Оплата показывался правильно после входа
-  if (savedRole) userRole = savedRole;
 }
 document.getElementById('loginScreen').style.display = 'flex';
+
+const savedTok = localStorage.getItem('token');
+if (savedTok) {
+  _authToken = savedTok;
+  api('POST', { action: 'pingSession' })
+    .then(r => {
+      if (r && r.ok) {
+        repName  = r.name;
+        userRole = r.role || 'rep';
+        localStorage.setItem('rep', repName);
+        localStorage.setItem('role', userRole);
+        showApp();
+      }
+    })
+    .catch(() => {}); // токен мёртв — остаёмся на логине
+}
 </script>
 </body>
 </html>
