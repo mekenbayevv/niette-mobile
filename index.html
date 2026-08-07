@@ -1045,7 +1045,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -1402,56 +1402,104 @@ function renderPulse() {
   if (!box) return;
   if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
 
+  // Живой день догружаем отдельно: запрос к Kaspi API идёт с пагинацией и
+  // занимает секунды. Если тянуть его вместе с историей, весь экран ждёт
+  // самого медленного куска — и выглядит пустым.
   loadWithCache('pulse', () => dataCall('pulse'), (data, meta) => {
-    if (!data) {
-      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '⚡');
-      return;
+    _renderPulseInto(box, data, meta);
+    if (data && !meta.loading) loadPulseLive(data);
+  });
+}
+
+/** Рисует экран Пульса. Вынесено отдельно, потому что вызывается дважды:
+    на истории и ещё раз, когда подъезжает живой день. */
+function _renderPulseInto(box, data, meta) {
+  if (!data) {
+    box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '⚡');
+    return;
+  }
+  box.dataset.filled = '1';
+  const m = data.month || {}, w = data.week || {}, t = data.today || {};
+
+  const hero = `
+    <div class="pulse-hero">
+      <div class="ph-label">Продажи · этот месяц</div>
+      <div class="ph-value">${fmtNum(m.revenue)} ₸</div>
+      <div class="ph-sub">${deltaText(m.deltaPct)} к прошлому месяцу · ${fmtNum(m.orders)} заказов</div>
+      <div class="ph-spark">${uiSpark(data.spark, { color: '#84a98c', h: 40 })}</div>
+    </div>`;
+
+  const kpis = `
+    <div class="kpi-strip">
+      ${tapKpi('Неделя',   fmtM(w.revenue) + ' ₸', w.deltaPct, 'pulse', fmtNum(w.orders) + ' заказов')}
+      ${tapKpi(t.live ? 'Сегодня · live' : 'Сегодня',
+               t.live ? fmtM(t.revenue) + ' ₸' : '—',
+               t.live ? t.deltaPct : null, 'pulse',
+               t.live ? (fmtNum(t.orders) + ' выдано') : 'загружаю…')}
+      ${tapKpi('Новые клиенты',  fmtNum(data.clients.new.value),    data.clients.new.deltaPct,    'clients')}
+      ${tapKpi('Повторные',      fmtNum(data.clients.repeat.value), data.clients.repeat.deltaPct, 'clients')}
+      ${tapKpi('Выручка в день', fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse')}
+      ${tapKpi('Средний чек',    fmtM(data.aov.value) + ' ₸',       data.aov.deltaPct,       'pulse')}
+    </div>`;
+
+  const ch = (data.channels || []).map(c => ({
+    label: c.label + ' · ' + c.share + '%',
+    value: c.revenue,
+    display: fmtM(c.revenue) + ' ₸',
+    color: CH_COLOR[c.key] || '#006B45',
+  }));
+  const channels = `
+    <div class="sec-title">Доли каналов · этот месяц</div>
+    <div class="card" style="padding:6px 0">${uiBars(ch)}</div>`;
+
+  // Что прямо сейчас в работе — только Kaspi, данные из API
+  const pl = data.pipeline;
+  const pipeline = pl ? `
+    <div class="sec-title">Сейчас в работе · Kaspi</div>
+    <div class="card">
+      ${uiRow({ icon: '📦', title: 'На упаковке', value: fmtNum(pl.packaging.count), vsub: fmtM(pl.packaging.sum) + ' ₸' })}
+      ${uiRow({ icon: '🚚', title: 'В доставке',  value: fmtNum(pl.delivery.count),  vsub: fmtM(pl.delivery.sum)  + ' ₸' })}
+      ${pl.awaiting.count ? uiRow({ icon: '⏳', title: 'Ждут выдачи', value: fmtNum(pl.awaiting.count) }) : ''}
+      ${pl.cancelledToday ? uiRow({ icon: '❌', title: 'Отменено сегодня', value: fmtNum(pl.cancelledToday) }) : ''}
+    </div>` : '';
+
+  box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading);
+}
+
+/**
+ * Сегодняшний день и очередь заказов — из Kaspi API. Приезжает после истории
+ * и дорисовывает карточку «Сегодня», а также прибавляет живой день к неделе
+ * и месяцу: в «Базе продаж» сегодняшних заказов ещё нет.
+ */
+function loadPulseLive(base) {
+  loadWithCache('live', () => dataCall('liveCounts'), (live) => {
+    if (!live || live.error) return;
+    const box = document.getElementById('pulseBody');
+    if (!box || !base) return;
+
+    const todayRev = Math.round(live.issuedSum   || 0);
+    const todayOrd = Math.round(live.issuedCount || 0);
+    const prevDay  = (base.today && base.today.prevRevenue) || 0;
+    const dPct     = prevDay > 0 ? ((todayRev - prevDay) / prevDay) * 100 : null;
+
+    const merged = JSON.parse(JSON.stringify(base));
+    merged.today = { revenue: todayRev, orders: todayOrd, prevRevenue: prevDay, deltaPct: dPct, live: true };
+    merged.month.revenue += todayRev; merged.month.orders += todayOrd;
+    merged.week.revenue  += todayRev; merged.week.orders  += todayOrd;
+    if (merged.month.prevRevenue > 0) {
+      merged.month.deltaPct = ((merged.month.revenue - merged.month.prevRevenue) / merged.month.prevRevenue) * 100;
     }
-    box.dataset.filled = '1';
-    const m = data.month || {}, w = data.week || {}, t = data.today || {};
-
-    const hero = `
-      <div class="pulse-hero">
-        <div class="ph-label">Продажи · этот месяц</div>
-        <div class="ph-value">${fmtNum(m.revenue)} ₸</div>
-        <div class="ph-sub">${deltaText(m.deltaPct)} к прошлому месяцу · ${fmtNum(m.orders)} заказов</div>
-        <div class="ph-spark">${uiSpark(data.spark, { color: '#84a98c', h: 40 })}</div>
-      </div>`;
-
-    const kpis = `
-      <div class="kpi-strip">
-        ${tapKpi('Неделя',   fmtM(w.revenue) + ' ₸', w.deltaPct, 'pulse', fmtNum(w.orders) + ' заказов')}
-        ${tapKpi('Сегодня' + (t.live ? ' · live' : ''), fmtM(t.revenue) + ' ₸', t.deltaPct, 'pulse', fmtNum(t.orders) + ' выдано')}
-        ${tapKpi('Новые клиенты',    fmtNum(data.clients.new.value),    data.clients.new.deltaPct,    'clients')}
-        ${tapKpi('Повторные',        fmtNum(data.clients.repeat.value), data.clients.repeat.deltaPct, 'clients')}
-        ${tapKpi('Выручка в день',   fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse')}
-        ${tapKpi('Средний чек',      fmtM(data.aov.value) + ' ₸',       data.aov.deltaPct,       'pulse')}
-      </div>`;
-
-    const ch = (data.channels || []).map(c => ({
-      label: c.label + ' · ' + c.share + '%',
-      value: c.revenue,
-      display: fmtM(c.revenue) + ' ₸',
-      color: CH_COLOR[c.key] || '#006B45',
-    }));
-    const channels = `
-      <div class="sec-title">Доли каналов · этот месяц</div>
-      <div class="card" style="padding:6px 0">${uiBars(ch)}</div>`;
-
-    // Что прямо сейчас в работе — только Kaspi, данные из API
-    const pl = data.pipeline;
-    const pipeline = pl ? `
-      <div class="sec-title">Сейчас в работе · Kaspi</div>
-      <div class="card">
-        ${uiRow({ icon: '📦', title: 'На упаковке', value: fmtNum(pl.packaging.count),
-                  vsub: fmtM(pl.packaging.sum) + ' ₸' })}
-        ${uiRow({ icon: '🚚', title: 'В доставке',  value: fmtNum(pl.delivery.count),
-                  vsub: fmtM(pl.delivery.sum) + ' ₸' })}
-        ${pl.awaiting.count ? uiRow({ icon: '⏳', title: 'Ждут выдачи', value: fmtNum(pl.awaiting.count) }) : ''}
-        ${pl.cancelledToday ? uiRow({ icon: '❌', title: 'Отменено сегодня', value: fmtNum(pl.cancelledToday) }) : ''}
-      </div>` : '';
-
-    box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading);
+    if (merged.week.prevRevenue > 0) {
+      merged.week.deltaPct = ((merged.week.revenue - merged.week.prevRevenue) / merged.week.prevRevenue) * 100;
+    }
+    if (Array.isArray(merged.spark)) merged.spark = merged.spark.concat([todayRev]);
+    merged.pipeline = {
+      packaging: { count: live.packagingCount || 0, sum: Math.round(live.packagingSum || 0) },
+      delivery:  { count: live.deliveryCount  || 0, sum: Math.round(live.deliverySum  || 0) },
+      awaiting:  { count: live.awaitingCount  || 0 },
+      cancelledToday: live.cancelledToday || 0,
+    };
+    _renderPulseInto(box, merged, { ts: Date.now(), loading: false });
   });
 }
 
@@ -1782,10 +1830,16 @@ if ('serviceWorker' in navigator) {
    браузер получает редирект на страницу входа Google и падает на CORS. */
 function explainNetErr(e) {
   const m = String((e && e.message) || e);
+  if (/Unknown action/i.test(m)) {
+    return 'Сервер ещё не обновлён. В Apps Script: Deploy → Manage deployments → '
+         + '✏️ → New version → Deploy. Без этого новые экраны данных не получают.';
+  }
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
     return 'Нет связи с сервером. Проверь интернет, а если он есть — в Apps Script '
          + 'Deploy → Manage deployments должно стоять «Who has access: Anyone».';
   }
+  if (/TAB_FORBIDDEN/i.test(m)) return 'Нет доступа к этому разделу.';
+  if (/AUTH_REQUIRED|SESSION_EXPIRED/i.test(m)) return 'Сессия истекла — войди заново.';
   return m;
 }
 
