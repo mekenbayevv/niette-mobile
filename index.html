@@ -1024,7 +1024,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.3.2';
+const APP_VERSION = '0.3.3';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -1091,7 +1091,6 @@ const MORE_LINKS = [
 
 let _tabs        = [];          // права: список табов с сервера
 let _section     = null;        // текущий корневой раздел
-let _b2bSub      = 'today';     // последний под-экран B2B
 
 function hasTab(id) { return _tabs.indexOf(id) !== -1; }
 function sectionAllowed(s) { return !s.tabs || s.tabs.some(hasTab); }
@@ -1352,7 +1351,11 @@ function showSection(id) {
   document.getElementById('sec-' + id)?.classList.add('active');
   buildSubNav(id);
 
-  if (id === 'b2b') { showTab(_b2bSub); return; }   // под-экраны торгпреда
+  // B2B всегда открывается с дашборда: это сводка по партнёрам, а формы
+  // визитов и отгрузок — действия, за которыми приходят осознанно. Раньше
+  // раздел помнил последний под-экран, и после заполнения визита при
+  // следующем заходе снова открывалась пустая форма вместо цифр.
+  if (id === 'b2b') { showTab('b2bdash'); return; }
 
   document.querySelectorAll('.screen').forEach(x => x.classList.remove('active'));
   document.getElementById('screen-' + id)?.classList.add('active');
@@ -2386,7 +2389,6 @@ function showTab(tab) {
   const screenId = tab === 'shipments' ? 'visits' : tab;
   document.getElementById('screen-' + screenId)?.classList.add('active');
   document.getElementById('subnav-' + screenId)?.classList.add('active');
-  _b2bSub = screenId;
   // Корневая кнопка B2B остаётся подсвеченной, пока мы внутри её под-экранов
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sec-b2b')?.classList.add('active');
