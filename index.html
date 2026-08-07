@@ -820,8 +820,11 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     </div>
   </div>
 
-  <!-- ── ЭКРАН: Клиенты ───────────────────────────────────────── -->
-  <div class="screen" id="screen-clients">
+  <!-- ── ЭКРАН: Список аптек (B2B, для торгпреда) ─────────────────
+       Раньше он назывался screen-clients и конфликтовал с разделом
+       клиентской аналитики: два элемента с одним id, а getElementById
+       отдаёт первый — в «Клиентах» открывался этот список. -->
+  <div class="screen" id="screen-b2bclients">
     <div class="field" style="margin-bottom:12px">
       <input id="searchClients" type="search" placeholder="🔍 Поиск аптеки..." oninput="renderClientList()">
     </div>
@@ -1021,7 +1024,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.3.2';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -1064,7 +1067,8 @@ const SECTIONS = [
      отгрузка, обход, оплата) остались, но ушли в конец сегментов: ими
      пользуются в поле, а с телефона на них смотрят реже, чем на цифры. */
   { id: 'b2b',     label: 'B2B',     icon: '🤝', tabs: ['b2b'], sub: [
-      { id: 'b2bdash',  label: '📊 Дашборд'  },
+      { id: 'b2bdash',    label: '📊 Дашборд' },
+      { id: 'b2bclients', label: '💊 Партнёры' },
       { id: 'today',    label: '🏠 Сегодня'  },
       { id: 'visit',    label: '📝 Визит'    },
       { id: 'shipment', label: '📦 Отгрузка' },
@@ -2387,6 +2391,7 @@ function showTab(tab) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sec-b2b')?.classList.add('active');
   if (tab === 'b2bdash') renderB2bDash();
+  if (tab === 'b2bclients' && typeof renderClientList === 'function') renderClientList();
   if (tab === 'payment') setDefaultPaymentDate();
   if (tab === 'visits')    { switchHistTab('visits'); }
   if (tab === 'shipments') { switchHistTab('shipments'); }
