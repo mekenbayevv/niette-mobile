@@ -21,32 +21,70 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', sans-serif; background: #F1F5F9; color: #0F172A; -webkit-tap-highlight-color: transparent; }
 
-/* ── VARIABLES ── */
+/* ── ТОКЕНЫ ──────────────────────────────────────────────────
+   Взяты из Dashboard.html один в один: фирменная зелёная гамма плюс
+   семантические цвета. Сырой hex в разметке не используем — иначе
+   элемент не поедет за темой. */
 :root {
-  --blue:   #2563EB;
-  --green:  #16A34A;
-  --red:    #DC2626;
-  --yellow: #D97706;
-  --dark:   #0F172A;
-  --mid:    #475569;
-  --light:  #94A3B8;
-  --border: #E2E8F0;
-  --bg:     #F1F5F9;
-  --white:  #FFFFFF;
+  /* бренд */
+  --brand-darkest: #082415;
+  --brand-deep:    #0F3320;
+  --brand-mid:     #1A4D2E;
+  --brand-green:   #006B45;
+  --brand-green2:  #005538;
+  --brand-gold:    #C4A265;
+  --brand-gold-lt: #D4B07A;
+  --brand-sage:    #52796F;
+  --brand-sage-lt: #84a98c;
+
+  /* поверхности и текст */
+  --bg:        #f1f5f9;
+  --surface:   #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --border:      #e2e8f0;
+  --border-soft: #f1f5f9;
+  --text:       #0f172a;
+  --text-2:     #374151;
+  --text-3:     #64748b;
+  --text-muted: #94a3b8;
+  --on-accent:  #ffffff;
+  --shadow:     rgba(0,0,0,.06);
+  --shadow-lg:  rgba(0,0,0,.10);
+
+  /* семантика */
+  --green: #059669; --green-lt: #10b981; --green-deep: #166534;
+  --green-tint: #f0fdf4; --green-tint2: #dcfce7;
+  --red: #dc2626; --red-lt: #ef4444; --red-tint: #fef2f2; --red-tint2: #fee2e2;
+  --amber: #d97706; --amber-lt: #f59e0b; --amber-tint: #fffbeb; --amber-tint2: #fef3c7;
+  --blue: #2563eb; --blue-lt: #3b82f6; --blue-br: #60a5fa;
+  --blue-tint: #eff6ff; --blue-tint2: #dbeafe;
+  --violet: #7c3aed; --violet-tint2: #ede9fe;
+  --orange: #ea580c; --orange-tint2: #ffedd5;
+  --cyan: #0891b2; --cyan-tint2: #cffafe;
+
+  /* совместимость со старой разметкой экранов торгпреда */
+  --dark:  #0f172a;
+  --mid:   #475569;
+  --light: #94a3b8;
+  --white: #ffffff;
+  --yellow: #d97706;
   --radius: 12px;
+  color-scheme: light;
 }
 
 /* ── HEADER ── */
 .app-header {
-  background: var(--dark); color: var(--white);
+  background: linear-gradient(160deg, var(--brand-deep) 0%, var(--brand-darkest) 100%);
+  color: var(--on-accent);
   padding: 14px 16px 10px;
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 100;
 }
 .app-logo { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; }
-.app-logo span { color: #60A5FA; }
-.rep-name { font-size: 12px; color: #64748B; }
-.btn-logout { background: none; border: none; color: #64748B; font-size: 20px; cursor: pointer; padding: 4px; }
+.app-logo span { color: var(--brand-gold); }
+.rep-name { font-size: 12px; color: var(--brand-sage-lt); }
+.btn-logout { background: none; border: none; color: var(--brand-sage); font-size: 20px; cursor: pointer; padding: 4px; }
 
 /* ── BOTTOM NAV ── */
 .bottom-nav {
@@ -61,7 +99,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   align-items: center; gap: 3px; font-family: inherit;
   color: var(--light); transition: color .15s;
 }
-.nav-btn.active { color: var(--blue); }
+.nav-btn.active { color: var(--brand-green); }
 .nav-btn .nav-icon { font-size: 22px; line-height: 1; }
 .nav-btn .nav-label { font-size: 10px; font-weight: 600; }
 
@@ -89,16 +127,16 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   transition: border-color .15s; appearance: none;
 }
 .field input:focus, .field select:focus, .field textarea:focus {
-  border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+  border-color: var(--brand-green); box-shadow: 0 0 0 3px rgba(0,107,69,.15);
 }
 .field textarea { resize: vertical; min-height: 80px; }
 
 /* Checkbox group */
 .checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .check-item { display: flex; align-items: center; gap: 8px; background: var(--bg); border-radius: 8px; padding: 10px 12px; cursor: pointer; border: 1.5px solid transparent; transition: all .15s; }
-.check-item input { width: 18px; height: 18px; accent-color: var(--blue); flex-shrink: 0; }
+.check-item input { width: 18px; height: 18px; accent-color: var(--brand-green); flex-shrink: 0; }
 .check-item span { font-size: 13px; color: var(--dark); line-height: 1.2; }
-.check-item:has(input:checked) { border-color: var(--blue); background: #EFF6FF; }
+.check-item:has(input:checked) { border-color: var(--brand-green); background: var(--green-tint); }
 
 /* ── CLIENT TYPE FILTER ── */
 .client-type-btn {
@@ -107,7 +145,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   font-family: inherit; cursor: pointer; transition: all .15s;
 }
 .client-type-btn.active {
-  background: var(--dark); color: var(--white); border-color: var(--dark);
+  background: var(--brand-green); color: var(--on-accent); border-color: var(--brand-green);
 }
 
 /* ── BUTTONS ── */
@@ -116,8 +154,8 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   font-size: 15px; font-weight: 700; font-family: inherit; cursor: pointer;
   transition: all .15s; display: flex; align-items: center; justify-content: center; gap: 8px;
 }
-.btn-primary { background: var(--blue); color: var(--white); }
-.btn-primary:active { background: #1D4ED8; transform: scale(.98); }
+.btn-primary { background: var(--brand-green); color: var(--on-accent); box-shadow: 0 4px 20px rgba(0,107,69,.25); }
+.btn-primary:active { background: var(--brand-green2); transform: scale(.98); }
 .btn-success { background: var(--green); color: var(--white); }
 .btn-success:active { background: #15803D; transform: scale(.98); }
 .btn-secondary { background: var(--bg); color: var(--dark); border: 1.5px solid var(--border); }
@@ -135,7 +173,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .client-item { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; cursor: pointer; transition: background .1s; }
 .client-item:last-child { border-bottom: none; }
 .client-item:active { background: var(--bg); }
-.client-avatar { width: 40px; height: 40px; border-radius: 10px; background: #EFF6FF; color: var(--blue); font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.client-avatar { width: 40px; height: 40px; border-radius: 10px; background: var(--green-tint2); color: var(--brand-green); font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .client-info { flex: 1; min-width: 0; }
 .client-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .client-meta { font-size: 12px; color: var(--light); margin-top: 1px; }
@@ -148,7 +186,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .badge-green  { background: #DCFCE7; color: #15803D; }
 .badge-yellow { background: #FEF3C7; color: #92400E; }
 .badge-red    { background: #FEE2E2; color: #991B1B; }
-.badge-blue   { background: #DBEAFE; color: #1D4ED8; }
+.badge-blue   { background: var(--green-tint2); color: var(--brand-green2); }
 
 /* ── SUCCESS SCREEN ── */
 .success-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; padding: 24px; }
@@ -158,13 +196,51 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .success-title { font-size: 20px; font-weight: 800; color: var(--dark); }
 .success-sub { font-size: 14px; color: var(--light); margin-top: 8px; margin-bottom: 24px; }
 
-/* ── LOGIN ── */
-.login-wrap { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--dark); }
-.login-logo { font-size: 32px; font-weight: 900; color: var(--white); letter-spacing: -1px; margin-bottom: 4px; }
-.login-logo span { color: #60A5FA; }
-.login-sub { font-size: 14px; color: #64748B; margin-bottom: 40px; }
-.login-card { background: var(--white); border-radius: 20px; padding: 28px 24px; width: 100%; max-width: 360px; }
-.login-title { font-size: 18px; font-weight: 800; color: var(--dark); margin-bottom: 20px; }
+/* ── ЭКРАН ВХОДА ──────────────────────────────────────────────
+   Повторяет десктопный: фирменный градиент, точечная сетка, плавающие
+   орбы и тот же логотип (он вшит в страницу base64 — внешних запросов
+   и зависимости от CDN нет). */
+.login-wrap {
+  min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 24px; position: relative; overflow: hidden;
+  background: linear-gradient(160deg, var(--brand-deep) 0%, var(--brand-darkest) 100%);
+}
+.login-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.login-orb { position: absolute; border-radius: 50%; pointer-events: none; }
+.login-orb-1 {
+  width: 260px; height: 260px; top: -70px; right: -70px;
+  background: radial-gradient(circle, rgba(0,107,69,.45), transparent 70%);
+  animation: orbFloat 9s ease-in-out infinite;
+}
+.login-orb-2 {
+  width: 200px; height: 200px; bottom: 40px; left: -50px;
+  background: radial-gradient(circle, rgba(196,162,101,.22), transparent 70%);
+  animation: orbFloat 13s ease-in-out infinite reverse;
+}
+@keyframes orbFloat { 0%,100% { transform: translate(0,0); } 50% { transform: translate(18px,-22px); } }
+.login-mark {
+  width: 96px; height: 96px; border-radius: 28px; object-fit: cover;
+  margin-bottom: 18px; z-index: 1;
+  box-shadow: 0 24px 60px rgba(0,107,69,.55);
+}
+.login-sub { font-size: 13px; color: var(--brand-sage); margin-bottom: 34px; z-index: 1; letter-spacing: .3px; }
+.login-card {
+  background: rgba(255,255,255,.05); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 20px;
+  padding: 26px 22px; width: 100%; max-width: 360px; z-index: 1;
+}
+.login-title { font-size: 18px; font-weight: 800; color: var(--on-accent); margin-bottom: 20px; }
+.login-card .field label { color: var(--brand-sage); }
+.login-card .field input {
+  background: var(--brand-darkest); border-color: var(--brand-mid);
+  color: var(--on-accent); caret-color: var(--brand-gold);
+}
+.login-card .field input::placeholder { color: rgba(132,169,140,.5); }
+.login-card .field input:focus { border-color: var(--brand-green); box-shadow: 0 0 0 3px rgba(0,107,69,.2); }
 
 /* ── TOAST ── */
 .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--dark); color: var(--white); padding: 12px 20px; border-radius: 30px; font-size: 13px; font-weight: 600; opacity: 0; transition: all .3s; z-index: 300; white-space: nowrap; }
@@ -198,7 +274,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   background: var(--bg); color: var(--mid); font-size: 13px; font-weight: 700;
   font-family: inherit; cursor: pointer; white-space: nowrap; transition: all .15s;
 }
-.subnav-btn.active { background: var(--dark); color: var(--white); border-color: var(--dark); }
+.subnav-btn.active { background: var(--brand-green); color: var(--on-accent); border-color: var(--brand-green); }
 
 /* ── Полоска периода (открывает bottom sheet) ── */
 .period-bar {
@@ -228,7 +304,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   font-size: 15px; color: var(--dark);
 }
 .sheet-opt:active { background: var(--bg); }
-.sheet-opt.active { color: var(--blue); font-weight: 700; }
+.sheet-opt.active { color: var(--brand-green); font-weight: 700; }
 
 /* ── KPI-карточка с дельтой ── */
 .kpi-card .kpi-delta { font-size: 11px; font-weight: 700; margin-top: 4px; display: flex; align-items: center; gap: 3px; }
@@ -274,6 +350,57 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .empty { text-align: center; padding: 34px 20px; color: var(--light); font-size: 13px; }
 .empty-icon { font-size: 34px; display: block; margin-bottom: 8px; opacity: .5; }
 
+/* ── Центральная кнопка «Пульс» ──────────────────────────────
+   Приподнята над панелью и крупнее соседей: это главный экран, куда
+   заходят чаще всего. Молния — инлайн-SVG, чтобы не зависеть от того,
+   как система нарисует эмодзи. */
+.nav-pulse { position: relative; }
+.pulse-fab {
+  position: absolute; left: 50%; top: -22px; transform: translateX(-50%);
+  width: 62px; height: 62px; border-radius: 50%;
+  background: linear-gradient(150deg, var(--brand-green) 0%, var(--brand-green2) 100%);
+  border: 4px solid var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 22px rgba(0,107,69,.42);
+  transition: transform .15s, box-shadow .15s;
+}
+.pulse-fab svg { width: 26px; height: 26px; }
+.nav-btn.active .pulse-fab {
+  box-shadow: 0 10px 28px rgba(0,107,69,.55), 0 0 0 6px rgba(0,107,69,.12);
+  transform: translateX(-50%) translateY(-2px);
+}
+.nav-btn:active .pulse-fab { transform: translateX(-50%) scale(.94); }
+.nav-pulse .nav-label { margin-top: 42px; }
+/* мягкая пульсация — заметно, но не мельтешит */
+.pulse-fab::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 50%;
+  border: 2px solid rgba(0,107,69,.35); animation: pulseRing 2.6s ease-out infinite;
+}
+@keyframes pulseRing {
+  0%   { transform: scale(1);    opacity: .7; }
+  70%  { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* ── Карточки Пульса ── */
+.pulse-hero {
+  background: linear-gradient(160deg, var(--brand-deep) 0%, var(--brand-darkest) 100%);
+  border-radius: 18px; padding: 18px 18px 14px; margin-bottom: 14px; color: var(--on-accent);
+  position: relative; overflow: hidden;
+}
+.pulse-hero .ph-label { font-size: 10px; font-weight: 700; color: var(--brand-sage); text-transform: uppercase; letter-spacing: .6px; }
+.pulse-hero .ph-value { font-size: 34px; font-weight: 800; letter-spacing: -1px; margin-top: 4px; }
+.pulse-hero .ph-sub   { font-size: 12px; color: var(--brand-sage-lt); margin-top: 2px; }
+.pulse-hero .ph-spark { margin-top: 10px; opacity: .9; }
+.kpi-card.tap { cursor: pointer; transition: transform .12s, box-shadow .12s; }
+.kpi-card.tap:active { transform: scale(.98); box-shadow: 0 2px 10px var(--shadow); }
+.kpi-card .kpi-go { position: absolute; top: 12px; right: 12px; color: var(--text-faint, #cbd5e1); font-size: 14px; }
+.kpi-card { position: relative; }
+.sec-title {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .6px; margin: 18px 2px 8px;
+}
+
 /* ── Список ссылок в разделе «Ещё» ── */
 .more-link {
   display: flex; align-items: center; gap: 12px; padding: 15px 16px;
@@ -289,7 +416,12 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 
 <!-- ══ LOGIN ══════════════════════════════════════════════════════ -->
 <div id="loginScreen" class="login-wrap">
-  <div class="login-logo">NIE<span>TTE</span></div>
+  <!-- Орбы и точечная сетка — как на экране входа десктопа -->
+  <div class="login-grid"></div>
+  <div class="login-orb login-orb-1"></div>
+  <div class="login-orb login-orb-2"></div>
+  <img class="login-mark" alt="NIETTE"
+       src="data:image/webp;base64,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">
   <div class="login-sub">Мобильный кабинет</div>
   <div class="login-card">
     <div class="login-title">Вход</div>
@@ -645,7 +777,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     <!-- Табы Визиты / Отгрузки -->
     <div style="display:flex;gap:6px;margin-bottom:12px">
       <button id="histTabVisits" onclick="switchHistTab('visits')"
-        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--blue);background:var(--blue);color:#fff;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--brand-green);background:var(--brand-green);color:#fff;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
         📝 Визиты
       </button>
       <button id="histTabShipments" onclick="switchHistTab('shipments')"
@@ -720,31 +852,26 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     </div>
   </div>
 
-  <!-- ══ НОВЫЕ РАЗДЕЛЫ КАБИНЕТА (этап 0 — каркас) ══════════════
-       Содержимое появится на этапах 1–5. Сейчас экраны показывают
-       skeleton и заглушку, чтобы навигацию и права можно было
-       проверить на живом телефоне до наполнения данными. -->
+  <!-- ══ РАЗДЕЛЫ КАБИНЕТА ═══════════════════════════════════════ -->
 
-  <div class="screen" id="screen-overview">
-    <button class="period-bar" onclick="openPeriodSheet()">
-      <span>
-        <span class="pb-label">Период</span>
-        <span class="pb-value" id="pbValue-overview">Этот месяц</span>
-      </span>
-      <span class="pb-chev">›</span>
-    </button>
-    <div id="ovBody"></div>
+  <!-- Главная: что требует внимания сегодня + быстрые переходы -->
+  <div class="screen" id="screen-home">
+    <div id="homeBody"></div>
   </div>
 
-  <div class="screen" id="screen-sales">
-    <div id="salesBody"></div>
+  <!-- Клиенты: новые/повторные, удержание -->
+  <div class="screen" id="screen-clients">
+    <div id="clientsBody"></div>
   </div>
 
-  <div class="screen" id="screen-stock">
-    <div id="stockBody"></div>
+  <!-- Пульс: главный экран. Все карточки кликабельны и ведут вглубь. -->
+  <div class="screen" id="screen-pulse">
+    <div id="pulseBody"></div>
   </div>
 
+  <!-- Ещё: профиль, редкие разделы, выход -->
   <div class="screen" id="screen-more">
+    <div class="card" id="profileCard" style="margin-bottom:14px"></div>
     <div class="card" style="margin-bottom:14px">
       <div id="moreLinks"></div>
     </div>
@@ -764,14 +891,20 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
        пальца. Кнопки строятся из прав (см. buildNav()), поэтому
        display здесь по умолчанию none — покажет только доступные. -->
   <nav class="bottom-nav" id="bottomNav">
-    <button class="nav-btn" id="sec-overview" style="display:none" onclick="showSection('overview')">
-      <span class="nav-icon">📊</span><span class="nav-label">Обзор</span>
+    <button class="nav-btn" id="sec-home" style="display:none" onclick="showSection('home')">
+      <span class="nav-icon">🏠</span><span class="nav-label">Главная</span>
     </button>
-    <button class="nav-btn" id="sec-sales" style="display:none" onclick="showSection('sales')">
-      <span class="nav-icon">💰</span><span class="nav-label">Продажи</span>
+    <button class="nav-btn" id="sec-clients" style="display:none" onclick="showSection('clients')">
+      <span class="nav-icon">👥</span><span class="nav-label">Клиенты</span>
     </button>
-    <button class="nav-btn" id="sec-stock" style="display:none" onclick="showSection('stock')">
-      <span class="nav-icon">📦</span><span class="nav-label">Склад</span>
+    <button class="nav-btn nav-pulse" id="sec-pulse" style="display:none" onclick="showSection('pulse')">
+      <span class="pulse-fab">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M13.2 2 4 13.6h6.1L9.8 22 20 9.9h-6.4L13.2 2Z"
+                fill="#fff" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="nav-label">Пульс</span>
     </button>
     <button class="nav-btn" id="sec-b2b" style="display:none" onclick="showSection('b2b')">
       <span class="nav-icon">🤝</span><span class="nav-label">B2B</span>
@@ -822,7 +955,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -858,10 +991,10 @@ const PRODUCT_PRICES = {
    <div class="screen" id="screen-…">, поэтому старые экраны торгпреда
    переехали внутрь раздела B2B без единой правки их разметки. */
 const SECTIONS = [
-  { id: 'overview', label: 'Обзор',    icon: '📊', tabs: ['overview'] },
-  { id: 'sales',    label: 'Продажи',  icon: '💰', tabs: ['kaspi','wbcab','ozcab','analytics'] },
-  { id: 'stock',    label: 'Склад',    icon: '📦', tabs: ['inventory'] },
-  { id: 'b2b',      label: 'B2B',      icon: '🤝', tabs: ['b2b'], sub: [
+  { id: 'home',    label: 'Главная', icon: '🏠', tabs: null },   // доступна всем
+  { id: 'clients', label: 'Клиенты', icon: '👥', tabs: ['clients'] },
+  { id: 'pulse',   label: 'Пульс',   icon: '⚡', tabs: ['overview','kaspi'] },
+  { id: 'b2b',     label: 'B2B',     icon: '🤝', tabs: ['b2b'], sub: [
       { id: 'today',    label: '🏠 Сегодня'  },
       { id: 'visit',    label: '📝 Визит'    },
       { id: 'shipment', label: '📦 Отгрузка' },
@@ -869,15 +1002,17 @@ const SECTIONS = [
       { id: 'visits',   label: '📋 История'  },
       { id: 'payment',  label: '💳 Оплата', ownerOnly: true },
   ]},
-  { id: 'more',     label: 'Ещё',      icon: '⋯',  tabs: null },  // всегда доступен
+  { id: 'more',    label: 'Ещё',     icon: '⋯',  tabs: null },
 ];
 
-/* Разделы «Ещё»: то, что открывают редко. Экранов пока нет — этап 5. */
+/* Раздел «Ещё»: то, что открывают редко. Экраны появятся по мере надобности —
+   пока пункт ведёт в полную версию на нужный таб, чтобы не было тупика. */
 const MORE_LINKS = [
-  { id: 'clients',  label: 'Клиенты',   icon: '👥', tab: 'clients'  },
-  { id: 'planfact', label: 'План-Факт', icon: '🎯', tab: 'planfact' },
-  { id: 'forecast', label: 'Прогноз',   icon: '🔮', tab: 'forecast' },
-  { id: 'settings', label: 'Настройки', icon: '⚙️', tab: 'settings' },
+  { id: 'inventory', label: 'Склад',     icon: '📦', tab: 'inventory' },
+  { id: 'analytics', label: 'Аналитика', icon: '📈', tab: 'analytics' },
+  { id: 'planfact',  label: 'План-Факт', icon: '🎯', tab: 'planfact'  },
+  { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tab: 'forecast'  },
+  { id: 'settings',  label: 'Настройки', icon: '⚙️', tab: 'settings'  },
 ];
 
 let _tabs        = [];          // права: список табов с сервера
@@ -935,6 +1070,7 @@ function setPeriod(id) {
   document.getElementById('periodSheet').classList.remove('show');
   document.querySelectorAll('[id^="pbValue-"]').forEach(el => { el.textContent = getPeriod().label; });
   window.dispatchEvent(new CustomEvent('periodchange'));
+  if (_section) renderSection(_section);
 }
 
 /* ── КЭШ ───────────────────────────────────────────────────────
@@ -1065,7 +1201,7 @@ function uiSpark(points, opts) {
   const xy = pts.map((v, i) => [pad + i * step, h - pad - ((v - min) / span) * (h - pad * 2)]);
   const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
   const area = line + ` L${(pad + (pts.length-1)*step).toFixed(1)} ${h - pad} L${pad} ${h - pad} Z`;
-  const c = o.color || '#2563EB';
+  const c = o.color || '#006B45';
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="динамика">
     <path d="${area}" fill="${c}" opacity=".10"/>
     <path d="${line}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
@@ -1079,7 +1215,7 @@ function uiBars(items) {
   const max = Math.max(...list.map(x => Number(x.value))) || 1;
   return list.map(x => `<div class="bar-row">
     <div class="bar-head"><span class="bar-name">${x.label}</span><span class="bar-val">${x.display || fmtM(x.value)}</span></div>
-    <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, Number(x.value)/max*100).toFixed(1)}%;background:${x.color || '#2563EB'}"></div></div>
+    <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, Number(x.value)/max*100).toFixed(1)}%;background:${x.color || '#006B45'}"></div></div>
   </div>`).join('');
 }
 
@@ -1113,7 +1249,7 @@ function buildNav() {
   if (box) {
     const links = MORE_LINKS.filter(l => hasTab(l.tab));
     box.innerHTML = links.length
-      ? links.map(l => `<div class="more-link" onclick="toast('Раздел появится в следующем обновлении')">
+      ? links.map(l => `<div class="more-link" onclick="openTab('${l.id}')">
            <span class="more-icon">${l.icon}</span><span>${l.label}</span><span class="more-chev">›</span>
          </div>`).join('')
       : uiEmpty('Дополнительных разделов нет', '📭');
@@ -1150,34 +1286,175 @@ function showSection(id) {
   renderSection(id);
 }
 
-/* Наполнение разделов. Этап 0: заглушки со skeleton — чтобы каркас
-   можно было щупать на телефоне до появления данных. */
+/* ── РЕНДЕР РАЗДЕЛОВ ───────────────────────────────────────── */
+
 function renderSection(id) {
-  if (id === 'overview') {
-    const el = document.getElementById('ovBody');
-    if (el && !el.dataset.filled) {
-      el.innerHTML = uiSkeleton('kpi') + uiEmpty('Цифры появятся на следующем шаге — сейчас проверяем каркас', '📊');
+  if (id === 'pulse')   return renderPulse();
+  if (id === 'home')    return renderHome();
+  if (id === 'clients') return renderClients();
+  if (id === 'more')    return renderMore();
+}
+
+/* ── ПУЛЬС ─────────────────────────────────────────────────────
+   Все числа приходят готовыми с сервера (действие pulse): периоды и
+   сравнения считаются там, чтобы телефон и десктоп не разошлись.
+   Каждая карточка — вход вглубь: тап уводит в соответствующий раздел. */
+function renderPulse() {
+  const box = document.getElementById('pulseBody');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('pulse', () => dataCall('pulse'), (data, meta) => {
+    if (!data) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '⚡');
+      return;
     }
+    box.dataset.filled = '1';
+    const m = data.month || {}, w = data.week || {}, t = data.today || {};
+
+    const hero = `
+      <div class="pulse-hero">
+        <div class="ph-label">Продажи · этот месяц</div>
+        <div class="ph-value">${fmtNum(m.revenue)} ₸</div>
+        <div class="ph-sub">${deltaText(m.deltaPct)} к прошлому месяцу · ${fmtNum(m.orders)} заказов</div>
+        <div class="ph-spark">${uiSpark(data.spark, { color: '#84a98c', h: 40 })}</div>
+      </div>`;
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${tapKpi('Неделя',   fmtM(w.revenue) + ' ₸', w.deltaPct, 'pulse', fmtNum(w.orders) + ' заказов')}
+        ${tapKpi('Сегодня',  fmtM(t.revenue) + ' ₸', t.deltaPct, 'pulse', fmtNum(t.orders) + ' заказов')}
+        ${tapKpi('Новые клиенты',    fmtNum(data.clients.new.value),    data.clients.new.deltaPct,    'clients')}
+        ${tapKpi('Повторные',        fmtNum(data.clients.repeat.value), data.clients.repeat.deltaPct, 'clients')}
+        ${tapKpi('Выручка в день',   fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse')}
+        ${tapKpi('Средний чек',      fmtM(data.aov.value) + ' ₸',       data.aov.deltaPct,       'pulse')}
+      </div>`;
+
+    const ch = (data.channels || []).map(c => ({
+      label: c.label + ' · ' + c.share + '%',
+      value: c.revenue,
+      display: fmtM(c.revenue) + ' ₸',
+      color: CH_COLOR[c.key] || '#006B45',
+    }));
+    const channels = `
+      <div class="sec-title">Доли каналов · этот месяц</div>
+      <div class="card" style="padding:6px 0">${uiBars(ch)}</div>`;
+
+    box.innerHTML = hero + kpis + channels + stampHtml(meta.ts, meta.loading);
+  });
+}
+
+const CH_COLOR = { kaspi: '#006B45', wb: '#7c3aed', ozon: '#ea580c', teez: '#0891b2' };
+
+/** KPI-карточка, которая ведёт в раздел. */
+function tapKpi(label, value, delta, section, sub) {
+  const inner = uiKpi({ label: label, value: value, delta: delta, sub: sub });
+  return inner.replace('<div class="kpi-card"',
+    `<div class="kpi-card tap" onclick="goSection('${section}')"`).replace('</div>', '<div class="kpi-go">›</div></div>', 1);
+}
+
+function goSection(id) {
+  const s = SECTIONS.find(x => x.id === id);
+  if (!s || !sectionAllowed(s)) return toast('Нет доступа к разделу');
+  showSection(id);
+}
+
+/** «+12%» / «−4%» / «столько же» — без ложной точности. */
+function deltaText(pct) {
+  if (pct === null || pct === undefined || !isFinite(pct)) return 'нет данных';
+  const v = Math.round(pct);
+  if (v === 0) return 'столько же';
+  return (v > 0 ? '+' : '−') + Math.abs(v) + '%';
+}
+
+/* ── ГЛАВНАЯ ───────────────────────────────────────────────────
+   Не дублирует Пульс: показывает то, что требует реакции сегодня,
+   и быстрые входы. Цифры берёт из кэша Пульса — лишнего запроса нет. */
+function renderHome() {
+  const box = document.getElementById('homeBody');
+  if (!box) return;
+  const hour = new Date().getHours();
+  const hi   = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
+
+  const cached = cacheGet('pulse');
+  let news = '';
+  if (cached && cached.data) {
+    const d = cached.data, t = d.today || {}, m = d.month || {};
+    const top = (d.channels || [])[0];
+    news = `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+        <div class="row-title">Сегодня продано ${fmtM(t.revenue)} ₸</div>
+        <div class="row-sub">${deltaText(t.deltaPct)} ко вчера · с начала месяца ${fmtM(m.revenue)} ₸ (${deltaText(m.deltaPct)})</div>
+        ${top ? `<div class="row-sub" style="margin-top:4px">Лидер канала: ${top.label} — ${top.share}%</div>` : ''}
+      </div>`;
+  } else {
+    news = `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+        <div class="row-sub">Открой «Пульс» — и сводка появится здесь.</div>
+      </div>`;
   }
-  if (id === 'sales') {
-    const el = document.getElementById('salesBody');
-    if (el && !el.dataset.filled) {
-      const ch = [
-        { id:'kaspi', label:'Kaspi',       tab:'kaspi'     },
-        { id:'wb',    label:'Wildberries', tab:'wbcab'     },
-        { id:'ozon',  label:'Ozon',        tab:'ozcab'     },
-        { id:'an',    label:'Аналитика',   tab:'analytics' },
-      ].filter(c => hasTab(c.tab));
-      el.innerHTML = `<div class="card">${ch.map(c => uiRow({
-        title: c.label, sub: 'выручка, заказы, выкуп', value: '›',
-        onclick: `toast('Экран появится в следующем обновлении')`
-      })).join('')}</div>` + uiEmpty('Данные подключим на этапе 2', '💰');
-    }
+
+  // Напоминания: визиты на сегодня из уже загруженных данных B2B
+  let reminders = '';
+  if (hasTab('b2b')) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todays = (typeof myVisits !== 'undefined' ? myVisits : []).filter(v => v.date === todayStr);
+    reminders = `<div class="sec-title">Напоминания</div>
+      <div class="card">${
+        todays.length
+          ? todays.slice(0, 5).map(v => uiRow({ icon: '📝', title: v.client || 'Визит', sub: v.result || '', value: '' })).join('')
+          : uiEmpty('Визитов на сегодня не записано', '📋')
+      }</div>`;
   }
-  if (id === 'stock') {
-    const el = document.getElementById('stockBody');
-    if (el && !el.dataset.filled) el.innerHTML = uiSkeleton('rows') + uiEmpty('Остатки подключим на этапе 3', '📦');
+
+  const quick = SECTIONS.filter(x => x.id !== 'home' && x.id !== 'more' && sectionAllowed(x));
+  const links = `<div class="sec-title">Быстрый переход</div>
+    <div class="card">${quick.map(x => uiRow({
+      icon: x.icon, title: x.label, value: '›', onclick: `goSection('${x.id}')`
+    })).join('')}</div>`;
+
+  box.innerHTML = `<div class="sec-title" style="margin-top:0">${hi}, ${_currentName()}</div>` + news + reminders + links;
+}
+
+function _currentName() { return (typeof repName === 'string' && repName) ? repName : 'коллега'; }
+
+/* ── КЛИЕНТЫ ─────────────────────────────────────────────────── */
+function renderClients() {
+  const box = document.getElementById('clientsBody');
+  if (!box) return;
+  const cached = cacheGet('pulse');
+  const d = cached && cached.data;
+  if (!d) { box.innerHTML = uiSkeleton('kpi') + uiEmpty('Открой «Пульс», чтобы подтянуть цифры', '👥'); return; }
+  const c = d.clients || {};
+  const total = (c.new.value || 0) + (c.repeat.value || 0);
+  const share = total ? Math.round((c.repeat.value / total) * 100) : 0;
+  box.innerHTML = `
+    <div class="kpi-strip">
+      ${uiKpi({ label: 'Новые · месяц',    value: fmtNum(c.new.value),    delta: c.new.deltaPct })}
+      ${uiKpi({ label: 'Повторные · месяц', value: fmtNum(c.repeat.value), delta: c.repeat.deltaPct })}
+      ${uiKpi({ label: 'Доля повторных',    value: share + '%', wide: true, sub: 'от всех покупателей за месяц' })}
+    </div>
+    <div class="sec-title">Подробнее</div>
+    <div class="card">
+      ${uiRow({ icon: '📊', title: 'Клиентская аналитика', sub: 'когорты, удержание, LTV', value: '›', onclick: "openTab('clients')" })}
+    </div>` + stampHtml(cached.ts, false);
+}
+
+/* ── ЕЩЁ ───────────────────────────────────────────────────────── */
+function renderMore() {
+  const prof = document.getElementById('profileCard');
+  if (prof) {
+    prof.innerHTML = `<div style="display:flex;align-items:center;gap:14px;padding:16px">
+      <div class="client-avatar" style="width:48px;height:48px;font-size:20px">${(_currentName()[0] || '·').toUpperCase()}</div>
+      <div style="flex:1;min-width:0">
+        <div class="row-title">${_currentName()}${isOwner ? ' 👑' : ''}</div>
+        <div class="row-sub">${_tabs.length} ${_tabs.length === 1 ? 'раздел' : 'разделов'} доступно</div>
+      </div>
+    </div>`;
   }
+}
+
+/** Открыть конкретный таб в полной версии — для того, чего нет в мобильном. */
+function openTab(tab) {
+  window.open(API_URL + '?desktop=1#' + tab, '_blank');
 }
 
 /** «Полная версия» — увести на десктопный дашборд и запомнить выбор. */
@@ -1276,7 +1553,9 @@ function showApp() {
   let start = null;
   try { start = localStorage.getItem('m_section'); } catch(e) {}
   const startSec = SECTIONS.find(s => s.id === start && sectionAllowed(s));
-  showSection(startSec ? start : firstAllowed);
+  // Пульс — главный экран: если он доступен и прошлый выбор не сохранён, открываем его
+  const pulseOk = sectionAllowed(SECTIONS.find(s => s.id === 'pulse'));
+  showSection(startSec ? start : (pulseOk ? 'pulse' : firstAllowed));
 
   const ver = document.getElementById('moreVersion');
   if (ver) ver.textContent = 'NIETTE · мобильный кабинет · v' + APP_VERSION;
@@ -1538,8 +1817,8 @@ function renderDailyStats() {
     const mon     = MONTHS[d.getMonth()];
     const weekDay = DAYS[d.getDay()];
 
-    const bgAvatar  = isToday ? 'var(--blue)'  : '#EFF6FF';
-    const colAvatar = isToday ? '#fff'          : 'var(--blue)';
+    const bgAvatar  = isToday ? 'var(--brand-green)'  : 'var(--green-tint2)';
+    const colAvatar = isToday ? '#fff'          : 'var(--brand-green)';
     const colSub    = isToday ? 'rgba(255,255,255,.7)' : 'var(--light)';
 
     return `
@@ -1554,13 +1833,13 @@ function renderDailyStats() {
         <div>
           <div style="font-size:14px;font-weight:700;color:var(--dark)">
             ${String(dayNum).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')} · ${weekDay}
-            ${isToday ? '<span style="font-size:11px;color:var(--blue);font-weight:600;margin-left:4px">сегодня</span>' : ''}
+            ${isToday ? '<span style="font-size:11px;color:var(--brand-green);font-weight:600;margin-left:4px">сегодня</span>' : ''}
           </div>
           <div style="font-size:12px;color:var(--light);margin-top:2px">${count} ${declVisit(count)}</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:22px;font-weight:800;color:${isToday ? 'var(--blue)' : 'var(--dark)'}">${count}</span>
+        <span style="font-size:22px;font-weight:800;color:${isToday ? 'var(--brand-green)' : 'var(--dark)'}">${count}</span>
         <span style="color:var(--light);font-size:18px;line-height:1">›</span>
       </div>
     </div>`;
@@ -1593,13 +1872,13 @@ function openDayVisits(dateStr) {
       return `
       <div onclick="openVisitDetailFromDay(${i})"
         style="background:var(--bg);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s"
-        ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+        ontouchstart="this.style.boxShadow='0 0 0 2px var(--brand-green)'" ontouchend="this.style.boxShadow=''">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName || '—'}</div>
           <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
         </div>
         ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
-        <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Подробнее →</div>
+        <div style="font-size:11px;color:var(--brand-green);margin-top:6px;font-weight:600">Подробнее →</div>
       </div>`;
     }).join('')}
   `;
@@ -1887,7 +2166,7 @@ let _histTab = 'visits';
 
 function switchHistTab(which) {
   _histTab = which;
-  const active   = { bg: 'var(--blue)', color: '#fff', border: 'var(--blue)' };
+  const active   = { bg: 'var(--brand-green)', color: '#fff', border: 'var(--brand-green)' };
   const inactive = { bg: 'var(--bg)',   color: 'var(--mid)', border: 'var(--border)' };
   ['visits','shipments'].forEach(t => {
     const btn = document.getElementById('histTab' + t.charAt(0).toUpperCase() + t.slice(1));
@@ -1998,7 +2277,7 @@ function initShipmentItems() {
     <div id="sRow_${i}" style="background:var(--white);border-radius:10px;border:1.5px solid var(--border);padding:12px;transition:border-color .15s">
       <div style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" id="sChk_${i}" onchange="toggleShipRow(${i})"
-          style="width:20px;height:20px;accent-color:var(--blue);flex-shrink:0;cursor:pointer">
+          style="width:20px;height:20px;accent-color:var(--brand-green);flex-shrink:0;cursor:pointer">
         <label for="sChk_${i}" style="font-size:14px;font-weight:600;color:var(--dark);cursor:pointer;flex:1">${p}</label>
         <span id="sRowSum_${i}" style="font-size:13px;font-weight:700;color:var(--light)">—</span>
       </div>
@@ -2018,7 +2297,7 @@ function initShipmentItems() {
             </select>
             <input type="number" id="sCustomPrice_${i}" inputmode="numeric" placeholder="Введи цену"
               oninput="calcShipmentTotal()"
-              style="display:none;width:100%;border:1.5px solid var(--blue);border-radius:8px;padding:10px;font-size:15px;font-family:inherit;color:var(--dark);background:var(--bg);margin-top:6px">
+              style="display:none;width:100%;border:1.5px solid var(--brand-green);border-radius:8px;padding:10px;font-size:15px;font-family:inherit;color:var(--dark);background:var(--bg);margin-top:6px">
           </div>
         </div>
       </div>
@@ -2031,7 +2310,7 @@ function toggleShipRow(i) {
   const detail  = document.getElementById('sRowDetail_' + i);
   const row     = document.getElementById('sRow_' + i);
   detail.style.display = checked ? 'block' : 'none';
-  row.style.borderColor = checked ? 'var(--blue)' : 'var(--border)';
+  row.style.borderColor = checked ? 'var(--brand-green)' : 'var(--border)';
   if (checked) document.getElementById('sQty_' + i).focus();
   else {
     document.getElementById('sQty_' + i).value = '';
@@ -2215,14 +2494,14 @@ function renderVisitsList() {
   wrap.innerHTML = _renderedVisits.map((v, i) => {
     const col = RESULT_COLOR[v.result] || 'var(--light)';
     return `
-    <div onclick="openVisitDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;active:opacity:.85;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+    <div onclick="openVisitDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;active:opacity:.85;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--brand-green)'" ontouchend="this.style.boxShadow=''">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName}</div>
         <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
       </div>
       <div style="font-size:12px;color:var(--light);margin-top:4px">📅 ${v.date || '—'}</div>
       ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
-      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+      <div style="font-size:11px;color:var(--brand-green);margin-top:6px;font-weight:600">Открыть →</div>
     </div>`;
   }).join('');
 }
@@ -2283,15 +2562,15 @@ function renderShipmentsList() {
   wrap.innerHTML = _renderedShipments.map((s, i) => {
     const col = STATUS_COLOR[s.status] || 'var(--light)';
     return `
-    <div onclick="openShipmentDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+    <div onclick="openShipmentDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--brand-green)'" ontouchend="this.style.boxShadow=''">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${s.clientName}</div>
         <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${s.status || '—'}</span>
       </div>
       <div style="font-size:13px;font-weight:700;color:var(--dark);margin-top:6px">${Number(s.amount).toLocaleString('ru')} ₸</div>
-      ${s.branchAddress ? `<div style="font-size:12px;color:var(--blue);margin-top:3px">📍 ${s.branchAddress}</div>` : ''}
+      ${s.branchAddress ? `<div style="font-size:12px;color:var(--brand-green);margin-top:3px">📍 ${s.branchAddress}</div>` : ''}
       <div style="font-size:12px;color:var(--light);margin-top:4px">📦 ${s.shipDate || '—'}${s.invoiceNum ? ' · №' + s.invoiceNum : ''}</div>
-      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+      <div style="font-size:11px;color:var(--brand-green);margin-top:6px;font-weight:600">Открыть →</div>
     </div>`;
   }).join('');
 }
@@ -2306,7 +2585,7 @@ function initRoundItems() {
     <div id="rRow_${i}" style="background:var(--white);border-radius:10px;border:1.5px solid var(--border);padding:12px;transition:border-color .15s">
       <div style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" id="rChk_${i}" onchange="toggleRoundRow(${i})"
-          style="width:20px;height:20px;accent-color:var(--blue);flex-shrink:0;cursor:pointer">
+          style="width:20px;height:20px;accent-color:var(--brand-green);flex-shrink:0;cursor:pointer">
         <label for="rChk_${i}" style="font-size:14px;font-weight:600;color:var(--dark);cursor:pointer;flex:1">${p}</label>
         <span id="rRowSum_${i}" style="font-size:13px;font-weight:700;color:var(--light)">—</span>
       </div>
@@ -2326,7 +2605,7 @@ function toggleRoundRow(i) {
   const detail  = document.getElementById('rRowDetail_' + i);
   const row     = document.getElementById('rRow_' + i);
   detail.style.display = checked ? 'block' : 'none';
-  row.style.borderColor = checked ? 'var(--blue)' : 'var(--border)';
+  row.style.borderColor = checked ? 'var(--brand-green)' : 'var(--border)';
   if (checked) document.getElementById('rQty_' + i).focus();
   else {
     document.getElementById('rQty_' + i).value = '';
@@ -2432,7 +2711,7 @@ function _detailFiles(files) {
     <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📎 ФАЙЛЫ</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
       ${files.map(f => `<a href="${f.url}" target="_blank"
-        style="display:block;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--blue);text-decoration:none">
+        style="display:block;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--brand-green);text-decoration:none">
         📎 ${f.name || 'файл'}</a>`).join('')}
     </div>
   </div>`;
@@ -2462,7 +2741,7 @@ function _showVisitDetail(v) {
     ${_detailRow('📍', 'Филиал', v.branchAddress)}
     ${_detailRow('🎯', 'Потенциал', v.potential)}
     ${_detailRow('📆', 'Следующий визит', v.nextDate)}
-    ${v.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${v.comment}"</div>` : ''}
+    ${v.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--brand-green)">"${v.comment}"</div>` : ''}
     ${_detailFiles(v.files)}
   `;
   _openDetailOverlay();
@@ -2513,7 +2792,7 @@ function openShipmentDetail(i) {
     ${_detailRow('📄', '№ накладной', s.invoiceNum)}
     ${_detailRow('💳', 'Оплата', payInfo)}
     ${itemsHtml}
-    ${s.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${s.comment}"</div>` : ''}
+    ${s.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--brand-green)">"${s.comment}"</div>` : ''}
     ${_detailFiles(s.files)}
   `;
   _openDetailOverlay();
