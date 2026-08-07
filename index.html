@@ -1,0 +1,2568 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>NIETTE</title>
+
+<!-- PWA. Работает только вне Apps Script: там страница живёт в iframe
+     googleusercontent.com, где ни manifest, ни service worker не поднять,
+     а position:fixed и 100vh считаются от iframe, а не от экрана —
+     из-за этого нижняя панель и «плавала» на телефоне. -->
+<meta name="theme-color" content="#0F172A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NIETTE">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="icon" type="image/png" href="./icons/icon-192.png">
+<style>
+/* ── RESET ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', sans-serif; background: #F1F5F9; color: #0F172A; -webkit-tap-highlight-color: transparent; }
+
+/* ── VARIABLES ── */
+:root {
+  --blue:   #2563EB;
+  --green:  #16A34A;
+  --red:    #DC2626;
+  --yellow: #D97706;
+  --dark:   #0F172A;
+  --mid:    #475569;
+  --light:  #94A3B8;
+  --border: #E2E8F0;
+  --bg:     #F1F5F9;
+  --white:  #FFFFFF;
+  --radius: 12px;
+}
+
+/* ── HEADER ── */
+.app-header {
+  background: var(--dark); color: var(--white);
+  padding: 14px 16px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.app-logo { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; }
+.app-logo span { color: #60A5FA; }
+.rep-name { font-size: 12px; color: #64748B; }
+.btn-logout { background: none; border: none; color: #64748B; font-size: 20px; cursor: pointer; padding: 4px; }
+
+/* ── BOTTOM NAV ── */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--white); border-top: 1px solid var(--border);
+  display: flex; z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.nav-btn {
+  flex: 1; background: none; border: none; cursor: pointer;
+  padding: 10px 4px 8px; display: flex; flex-direction: column;
+  align-items: center; gap: 3px; font-family: inherit;
+  color: var(--light); transition: color .15s;
+}
+.nav-btn.active { color: var(--blue); }
+.nav-btn .nav-icon { font-size: 22px; line-height: 1; }
+.nav-btn .nav-label { font-size: 10px; font-weight: 600; }
+
+/* ── SCREENS ── */
+.screen { display: none; padding: 16px 16px calc(96px + env(safe-area-inset-bottom)); }
+.screen.active { display: block; }
+
+/* ── CARDS ── */
+.card {
+  background: var(--white); border-radius: var(--radius);
+  border: 1px solid var(--border); margin-bottom: 12px; overflow: hidden;
+}
+.card-header { padding: 14px 16px 0; }
+.card-title { font-size: 14px; font-weight: 700; color: var(--dark); }
+.card-sub   { font-size: 11px; color: var(--light); margin-top: 2px; }
+.card-body  { padding: 14px 16px; }
+
+/* ── FORM ── */
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 11px; font-weight: 700; color: var(--light); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.field input, .field select, .field textarea {
+  width: 100%; border: 1.5px solid var(--border); border-radius: 8px;
+  padding: 11px 12px; font-size: 15px; font-family: inherit;
+  color: var(--dark); background: var(--white); outline: none;
+  transition: border-color .15s; appearance: none;
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.field textarea { resize: vertical; min-height: 80px; }
+
+/* Checkbox group */
+.checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check-item { display: flex; align-items: center; gap: 8px; background: var(--bg); border-radius: 8px; padding: 10px 12px; cursor: pointer; border: 1.5px solid transparent; transition: all .15s; }
+.check-item input { width: 18px; height: 18px; accent-color: var(--blue); flex-shrink: 0; }
+.check-item span { font-size: 13px; color: var(--dark); line-height: 1.2; }
+.check-item:has(input:checked) { border-color: var(--blue); background: #EFF6FF; }
+
+/* ── CLIENT TYPE FILTER ── */
+.client-type-btn {
+  flex: 1; padding: 8px 4px; border-radius: 8px; border: 1.5px solid var(--border);
+  background: var(--bg); color: var(--mid); font-size: 12px; font-weight: 700;
+  font-family: inherit; cursor: pointer; transition: all .15s;
+}
+.client-type-btn.active {
+  background: var(--dark); color: var(--white); border-color: var(--dark);
+}
+
+/* ── BUTTONS ── */
+.btn {
+  width: 100%; padding: 15px; border-radius: var(--radius); border: none;
+  font-size: 15px; font-weight: 700; font-family: inherit; cursor: pointer;
+  transition: all .15s; display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-primary { background: var(--blue); color: var(--white); }
+.btn-primary:active { background: #1D4ED8; transform: scale(.98); }
+.btn-success { background: var(--green); color: var(--white); }
+.btn-success:active { background: #15803D; transform: scale(.98); }
+.btn-secondary { background: var(--bg); color: var(--dark); border: 1.5px solid var(--border); }
+
+/* ── KPI STRIP ── */
+.kpi-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+.kpi-card { background: var(--white); border-radius: var(--radius); padding: 14px; border: 1px solid var(--border); }
+.kpi-label { font-size: 10px; font-weight: 700; color: var(--light); text-transform: uppercase; letter-spacing: .5px; }
+.kpi-value { font-size: 22px; font-weight: 800; color: var(--dark); margin-top: 4px; }
+.kpi-value.green  { color: var(--green); }
+.kpi-value.red    { color: var(--red); }
+.kpi-value.yellow { color: var(--yellow); }
+
+/* ── CLIENT LIST ── */
+.client-item { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; cursor: pointer; transition: background .1s; }
+.client-item:last-child { border-bottom: none; }
+.client-item:active { background: var(--bg); }
+.client-avatar { width: 40px; height: 40px; border-radius: 10px; background: #EFF6FF; color: var(--blue); font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.client-info { flex: 1; min-width: 0; }
+.client-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.client-meta { font-size: 12px; color: var(--light); margin-top: 1px; }
+.client-debt { text-align: right; }
+.client-debt-amount { font-size: 13px; font-weight: 700; color: var(--red); }
+.client-debt-label  { font-size: 10px; color: var(--light); }
+
+/* ── BADGE ── */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; }
+.badge-green  { background: #DCFCE7; color: #15803D; }
+.badge-yellow { background: #FEF3C7; color: #92400E; }
+.badge-red    { background: #FEE2E2; color: #991B1B; }
+.badge-blue   { background: #DBEAFE; color: #1D4ED8; }
+
+/* ── SUCCESS SCREEN ── */
+.success-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 200; align-items: center; justify-content: center; padding: 24px; }
+.success-overlay.show { display: flex; }
+.success-box { background: var(--white); border-radius: 20px; padding: 32px 24px; text-align: center; max-width: 320px; width: 100%; }
+.success-icon { font-size: 56px; margin-bottom: 12px; }
+.success-title { font-size: 20px; font-weight: 800; color: var(--dark); }
+.success-sub { font-size: 14px; color: var(--light); margin-top: 8px; margin-bottom: 24px; }
+
+/* ── LOGIN ── */
+.login-wrap { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--dark); }
+.login-logo { font-size: 32px; font-weight: 900; color: var(--white); letter-spacing: -1px; margin-bottom: 4px; }
+.login-logo span { color: #60A5FA; }
+.login-sub { font-size: 14px; color: #64748B; margin-bottom: 40px; }
+.login-card { background: var(--white); border-radius: 20px; padding: 28px 24px; width: 100%; max-width: 360px; }
+.login-title { font-size: 18px; font-weight: 800; color: var(--dark); margin-bottom: 20px; }
+
+/* ── TOAST ── */
+.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--dark); color: var(--white); padding: 12px 20px; border-radius: 30px; font-size: 13px; font-weight: 600; opacity: 0; transition: all .3s; z-index: 300; white-space: nowrap; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── DIVIDER ── */
+.divider { height: 1px; background: var(--border); margin: 16px 0; }
+.section-title { font-size: 12px; font-weight: 700; color: var(--light); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+
+/* ── SPINNER ── */
+.spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,.3); border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ══════════════════════════════════════════════════════════════
+   КАРКАС МОБИЛЬНОГО КАБИНЕТА (этап 0, 06.08.2026)
+   Пять корневых разделов вместо 11 табов десктопа. Внутри раздела —
+   сегментная под-навигация. Всё, что ниже, — общие примитивы: их
+   переиспользуют все экраны, чтобы не плодить разметку под каждый.
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Под-навигация раздела (сегменты) ── */
+.subnav {
+  display: flex; gap: 6px; overflow-x: auto; padding: 10px 16px 2px;
+  background: var(--white); border-bottom: 1px solid var(--border);
+  position: sticky; top: 52px; z-index: 90;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.subnav::-webkit-scrollbar { display: none; }
+.subnav-btn {
+  flex: 0 0 auto; padding: 8px 14px; border-radius: 20px; border: 1.5px solid var(--border);
+  background: var(--bg); color: var(--mid); font-size: 13px; font-weight: 700;
+  font-family: inherit; cursor: pointer; white-space: nowrap; transition: all .15s;
+}
+.subnav-btn.active { background: var(--dark); color: var(--white); border-color: var(--dark); }
+
+/* ── Полоска периода (открывает bottom sheet) ── */
+.period-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 11px 14px; margin-bottom: 12px; cursor: pointer; font-family: inherit;
+  width: 100%; text-align: left;
+}
+.period-bar .pb-label { font-size: 10px; font-weight: 700; color: var(--light); text-transform: uppercase; letter-spacing: .5px; }
+.period-bar .pb-value { font-size: 14px; font-weight: 700; color: var(--dark); margin-top: 2px; }
+.period-bar .pb-chev  { font-size: 18px; color: var(--light); }
+
+/* ── Bottom sheet (общий: период, детали, выборы) ── */
+.sheet-wrap { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 250; align-items: flex-end; justify-content: center; }
+.sheet-wrap.show { display: flex; }
+.sheet {
+  background: var(--white); border-radius: 20px 20px 0 0; width: 100%; max-width: 520px;
+  max-height: 88dvh; overflow-y: auto; padding: 0 0 calc(24px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 24px rgba(0,0,0,.15);
+}
+.sheet-handle { display: flex; justify-content: center; padding: 12px 0 4px; }
+.sheet-handle i { width: 40px; height: 4px; background: var(--border); border-radius: 99px; display: block; }
+.sheet-title { font-size: 16px; font-weight: 800; color: var(--dark); padding: 6px 18px 12px; }
+.sheet-opt {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-top: 1px solid var(--border); cursor: pointer;
+  font-size: 15px; color: var(--dark);
+}
+.sheet-opt:active { background: var(--bg); }
+.sheet-opt.active { color: var(--blue); font-weight: 700; }
+
+/* ── KPI-карточка с дельтой ── */
+.kpi-card .kpi-delta { font-size: 11px; font-weight: 700; margin-top: 4px; display: flex; align-items: center; gap: 3px; }
+.kpi-delta.up   { color: var(--green); }
+.kpi-delta.down { color: var(--red); }
+.kpi-delta.flat { color: var(--light); }
+.kpi-card.wide { grid-column: 1 / -1; }
+
+/* ── Строка-карточка (замена таблиц) ── */
+.row-item {
+  display: flex; align-items: center; gap: 12px; padding: 13px 16px;
+  border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.row-item:last-child { border-bottom: none; }
+.row-item:active { background: var(--bg); }
+.row-main  { flex: 1; min-width: 0; }
+.row-title { font-size: 14px; font-weight: 700; color: var(--dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-sub   { font-size: 12px; color: var(--light); margin-top: 2px; }
+.row-right { text-align: right; flex-shrink: 0; }
+.row-value { font-size: 14px; font-weight: 800; color: var(--dark); }
+.row-vsub  { font-size: 11px; color: var(--light); margin-top: 1px; }
+
+/* ── Горизонтальные бары (доли каналов, топ SKU) ── */
+.bar-row { padding: 9px 16px; }
+.bar-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+.bar-name { font-weight: 700; color: var(--dark); }
+.bar-val  { font-weight: 800; color: var(--dark); }
+.bar-track { height: 7px; background: var(--bg); border-radius: 99px; overflow: hidden; }
+.bar-fill  { height: 100%; border-radius: 99px; }
+
+/* ── Skeleton ── */
+.sk { background: linear-gradient(90deg, #E9EEF4 25%, #F4F7FA 50%, #E9EEF4 75%); background-size: 200% 100%; animation: skpulse 1.3s infinite; border-radius: 6px; }
+@keyframes skpulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.sk-line { height: 12px; margin: 8px 0; }
+.sk-kpi  { height: 74px; border-radius: var(--radius); }
+
+/* ── Метка свежести данных ── */
+.stamp { font-size: 11px; color: var(--light); text-align: center; padding: 6px 0 2px; }
+.stamp b { color: var(--mid); font-weight: 700; }
+.stamp.stale { color: var(--yellow); }
+
+/* ── Пустое состояние ── */
+.empty { text-align: center; padding: 34px 20px; color: var(--light); font-size: 13px; }
+.empty-icon { font-size: 34px; display: block; margin-bottom: 8px; opacity: .5; }
+
+/* ── Список ссылок в разделе «Ещё» ── */
+.more-link {
+  display: flex; align-items: center; gap: 12px; padding: 15px 16px;
+  border-bottom: 1px solid var(--border); cursor: pointer; font-size: 15px; color: var(--dark);
+}
+.more-link:last-child { border-bottom: none; }
+.more-link:active { background: var(--bg); }
+.more-icon { font-size: 20px; width: 26px; text-align: center; }
+.more-chev { margin-left: auto; color: var(--light); font-size: 18px; }
+</style>
+</head>
+<body>
+
+<!-- ══ LOGIN ══════════════════════════════════════════════════════ -->
+<div id="loginScreen" class="login-wrap">
+  <div class="login-logo">NIE<span>TTE</span></div>
+  <div class="login-sub">Мобильный кабинет</div>
+  <div class="login-card">
+    <div class="login-title">Вход</div>
+    <div class="field">
+      <label>Имя</label>
+      <input id="loginName" type="text" placeholder="Твоё имя" autocomplete="name">
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input id="loginPass" type="password" placeholder="••••••">
+    </div>
+    <button class="btn btn-primary" onclick="login()">Войти</button>
+  </div>
+</div>
+
+<!-- ══ APP ════════════════════════════════════════════════════════ -->
+<div id="appWrap" style="display:none">
+
+  <header class="app-header">
+    <div>
+      <div class="app-logo">NIE<span>TTE</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="rep-name" id="repNameBadge"></span>
+      <button class="btn-logout" onclick="logout()" title="Выйти">⬅</button>
+    </div>
+  </header>
+
+  <!-- Под-навигация раздела. Показывается только там, где разделу
+       есть что разветвлять (B2B, Продажи). Наполняется из buildSubNav(). -->
+  <div class="subnav" id="subNav" style="display:none"></div>
+
+  <!-- ── ЭКРАН: Сегодня ───────────────────────────────────────── -->
+  <div class="screen active" id="screen-today">
+    <div class="kpi-strip">
+      <div class="kpi-card">
+        <div class="kpi-label">Визитов сегодня</div>
+        <div class="kpi-value green" id="kpiVisitsToday">0</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Визитов за месяц</div>
+        <div class="kpi-value" id="kpiVisitsMonth">0</div>
+      </div>
+    </div>
+
+    <div class="section-title">Быстрые действия</div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn btn-primary" onclick="showTab('visit')">📝 &nbsp;Записать визит</button>
+        <button class="btn btn-success" onclick="showTab('shipment')">📦 &nbsp;Оформить отгрузку</button>
+      </div>
+    </div>
+
+    <div class="section-title">Мои визиты сегодня</div>
+    <div class="card" id="todayVisitsList">
+      <div style="padding:20px;text-align:center;color:var(--light);font-size:13px">
+        Визитов пока нет
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:4px">История по дням</div>
+    <div class="card" id="dailyStatsList">
+      <div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Загрузка...</div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Визит ─────────────────────────────────────────── -->
+  <div class="screen" id="screen-visit">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📝 Новый визит</div>
+        <div class="card-sub">Заполни после каждого визита</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Клиент *</label>
+          <select id="vClient" onchange="onClientChange('v')">
+            <option value="">— выбери клиента —</option>
+          </select>
+        </div>
+        <div class="field" id="vBranchWrap" style="display:none">
+          <label>Филиал (адрес)</label>
+          <select id="vBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+        </div>
+        <div id="vNewClientWrap" style="display:none">
+          <div style="background:#eff6ff;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#1d4ed8;font-weight:600">
+            ➕ Новый клиент — заполни данные ниже
+          </div>
+          <div class="field">
+            <label>Тип клиента *</label>
+            <select id="vNewClientType">
+              <option value="Аптека">💊 Аптека</option>
+              <option value="Оптовик">🏭 Оптовик</option>
+              <option value="Детский магазин">🧸 Детский магазин</option>
+              <option value="Магазин">🛒 Магазин</option>
+              <option value="Прочие">📦 Прочие</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Название *</label>
+            <input id="vNewClientName" type="text" placeholder="Например: Аптека Алоэ / Оптовик Медтовары">
+          </div>
+          <div class="field">
+            <label>Город</label>
+            <input id="vNewClientCity" type="text" placeholder="Алматы">
+          </div>
+          <div class="field">
+            <label>Адрес</label>
+            <input id="vNewClientAddress" type="text" placeholder="ул. Абая 10">
+          </div>
+        </div>
+        <div class="field">
+          <label>Адрес</label>
+          <input id="vAddress" type="text" placeholder="Улица, дом">
+        </div>
+        <div class="field">
+          <label>Контактное лицо</label>
+          <input id="vContact" type="text" placeholder="ФИО">
+        </div>
+        <div class="field">
+          <label>Телефон</label>
+          <input id="vPhone" type="tel" placeholder="+7 (xxx) xxx xx xx" oninput="formatPhone(this)" maxlength="18">
+        </div>
+        <div class="field">
+          <label>Результат визита *</label>
+          <select id="vResult">
+            <option value="">— выбери —</option>
+            <option>✅ Договорились — берут сразу</option>
+            <option>📋 Под консигнацию</option>
+            <option>🔄 Под реализацию</option>
+            <option>🕐 Думают — перезвонить</option>
+            <option>⚡ Дозаказ — уже клиент</option>
+            <option>❌ Отказали</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Потенциал в месяц</label>
+          <select id="vPotential">
+            <option value="">— не определён —</option>
+            <option value="50000">до 50 000 ₸</option>
+            <option value="150000">50 000 – 150 000 ₸</option>
+            <option value="500000">150 000 – 500 000 ₸</option>
+            <option value="1000000">500 000 – 1 000 000 ₸</option>
+            <option value="2000000">более 1 000 000 ₸</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата следующего контакта</label>
+          <input id="vNextDate" type="date">
+        </div>
+        <div class="field">
+          <label>Фото и файлы (выкладка, договор)</label>
+          <input id="vFiles" type="file" accept="image/*,.pdf,.doc,.docx" multiple
+            style="border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:inherit;background:var(--bg);width:100%">
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📸 Фото выкладки, PDF договора</div>
+        </div>
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="vComment" placeholder="Возражения, детали, пожелания..."></textarea>
+        </div>
+        <button class="btn btn-primary" id="btnSubmitVisit" onclick="submitVisit()">
+          Отправить визит
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Отгрузка ──────────────────────────────────────── -->
+  <div class="screen" id="screen-shipment">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📦 Новая отгрузка</div>
+        <div class="card-sub">Фиксируй позиции и количество</div>
+      </div>
+      <div class="card-body">
+        <!-- Фильтр типа клиента -->
+        <div class="field">
+          <label>Тип клиента</label>
+          <div style="display:flex;gap:8px;margin-bottom:4px">
+            <button class="client-type-btn active" data-type="all"      onclick="setClientTypeFilter('all',this)">Все</button>
+            <button class="client-type-btn"         data-type="Аптека"  onclick="setClientTypeFilter('Аптека',this)">💊 Аптеки</button>
+            <button class="client-type-btn"         data-type="Оптовик" onclick="setClientTypeFilter('Оптовик',this)">🏭 Оптовики</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Клиент *</label>
+          <select id="sClient" onchange="onClientChange('s')">
+            <option value="">— выбери клиента —</option>
+          </select>
+        </div>
+        <div class="field" id="sBranchWrap" style="display:none">
+          <label>Филиал (адрес) *</label>
+          <select id="sBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📍 Несколько адресов у этой аптеки</div>
+        </div>
+
+        <!-- Позиции -->
+        <div class="field">
+          <label>Позиции *</label>
+          <div id="sItemsWrap" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+
+        <!-- Итого -->
+        <div style="background:#f0fdf4;border-radius:10px;padding:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;font-weight:700;color:#15803d">Итого</span>
+          <span style="font-size:20px;font-weight:800;color:#15803d" id="sTotalDisplay">0 ₸</span>
+        </div>
+
+        <div class="field">
+          <label>Дата отгрузки *</label>
+          <input id="sShipDate" type="date">
+        </div>
+
+        <!-- Оплата -->
+        <div style="background:var(--bg);border-radius:10px;padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--border)">
+          <div style="font-size:11px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">💳 Условия оплаты</div>
+          <div class="field" style="margin-bottom:10px">
+            <label>Тип оплаты</label>
+            <select id="sPayType" onchange="onPayTypeChange()">
+              <option value="once">Разовая — конкретная дата</option>
+              <option value="monthly">Ежемесячно — в определённую дату</option>
+              <option value="weekly">Еженедельно — в определённый день</option>
+              <option value="consignment">По реализации (По факту)</option>
+            </select>
+          </div>
+          <div id="sPayOnceWrap">
+            <div class="field" style="margin-bottom:0">
+              <label>Дата оплаты</label>
+              <input id="sDueDate" type="date">
+            </div>
+          </div>
+          <div id="sPayMonthlyWrap" style="display:none">
+            <div class="field" style="margin-bottom:0">
+              <label>Число месяца (1–28)</label>
+              <input id="sPayMonthDay" type="number" min="1" max="28" placeholder="15"
+                style="border:1.5px solid var(--border);border-radius:8px;padding:11px 12px;font-size:15px;font-family:inherit;color:var(--dark);background:var(--white);outline:none;width:100%">
+            </div>
+          </div>
+          <div id="sPayWeeklyWrap" style="display:none">
+            <div class="field" style="margin-bottom:0">
+              <label>День недели</label>
+              <select id="sPayWeekDay">
+                <option value="1">Понедельник</option>
+                <option value="2">Вторник</option>
+                <option value="3">Среда</option>
+                <option value="4">Четверг</option>
+                <option value="5">Пятница</option>
+                <option value="6">Суббота</option>
+                <option value="0">Воскресенье</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>№ накладной</label>
+          <input id="sInvoice" type="text" placeholder="НК-006">
+        </div>
+        <div class="field">
+          <label>Фото и файлы (договор, акты)</label>
+          <input id="sFiles" type="file" accept="image/*,.pdf,.doc,.docx" multiple
+            style="border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:inherit;background:var(--bg);width:100%">
+          <div style="font-size:11px;color:var(--light);margin-top:4px">📸 Фото, PDF, Word — договор, акт</div>
+        </div>
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="sComment" placeholder="Особые условия..."></textarea>
+        </div>
+        <button class="btn btn-success" id="btnSubmitShipment" onclick="submitShipment()">
+          Оформить отгрузку
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Оплата (только владелец) ─────────────────────── -->
+  <div class="screen" id="screen-payment">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">💳 Зафиксировать оплату</div>
+        <div class="card-sub">Только для администратора</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Клиент *</label>
+          <select id="pClient" onchange="onPaymentClientChange()">
+            <option value="">— выбери клиента —</option>
+          </select>
+        </div>
+
+        <!-- Долг клиента -->
+        <div id="pDebtInfo" style="display:none;background:#fef2f2;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Текущий долг</div>
+          <div style="font-size:22px;font-weight:800;color:#dc2626" id="pDebtAmount">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px" id="pDebtSub"></div>
+        </div>
+
+        <div class="field">
+          <label>Сумма оплаты *</label>
+          <input id="pAmount" type="number" inputmode="numeric" placeholder="0" min="0">
+        </div>
+        <div class="field">
+          <label>Способ оплаты *</label>
+          <select id="pMethod">
+            <option value="Наличные">💵 Наличные</option>
+            <option value="Kaspi перевод">📱 Kaspi перевод</option>
+            <option value="Банковский перевод">🏦 Банковский перевод</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата оплаты *</label>
+          <input id="pDate" type="date">
+        </div>
+        <div class="field">
+          <label>№ платёжки / чека</label>
+          <input id="pReceipt" type="text" placeholder="ЧЕК-001">
+        </div>
+        <div class="field">
+          <label>ID поставки (если частичная)</label>
+          <input id="pShipmentId" type="text" placeholder="П-001">
+        </div>
+        <div class="field">
+          <label>Кто принял</label>
+          <input id="pReceiver" type="text" placeholder="Имя кассира">
+        </div>
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="pComment" placeholder="Доп. информация..."></textarea>
+        </div>
+        <button class="btn btn-success" id="btnSubmitPayment" onclick="submitPayment()">
+          ✅ Зафиксировать оплату
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Клиенты ───────────────────────────────────────── -->
+  <div class="screen" id="screen-clients">
+    <div class="field" style="margin-bottom:12px">
+      <input id="searchClients" type="search" placeholder="🔍 Поиск аптеки..." oninput="renderClientList()">
+    </div>
+    <div class="card" id="clientListWrap">
+      <div style="padding:20px;text-align:center;color:var(--light)">Загрузка...</div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: История (визиты + отгрузки) ───────────────────── -->
+  <div class="screen" id="screen-visits">
+    <!-- Табы Визиты / Отгрузки -->
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="histTabVisits" onclick="switchHistTab('visits')"
+        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--blue);background:var(--blue);color:#fff;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+        📝 Визиты
+      </button>
+      <button id="histTabShipments" onclick="switchHistTab('shipments')"
+        style="flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--mid);font-size:13px;font-weight:700;font-family:inherit;cursor:pointer">
+        📦 Отгрузки
+      </button>
+    </div>
+
+    <!-- Визиты -->
+    <div id="histPanelVisits">
+      <input id="searchVisits" type="search" placeholder="🔍 Поиск по визитам..." oninput="renderVisitsList()"
+        style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;color:var(--dark);background:var(--white);outline:none;margin-bottom:10px;box-sizing:border-box">
+      <div id="visitsListWrap">
+        <div style="padding:20px;text-align:center;color:var(--light)">Нет визитов</div>
+      </div>
+    </div>
+
+    <!-- Отгрузки -->
+    <div id="histPanelShipments" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <button onclick="loadShipments().then(renderShipmentsList)"
+          style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:inherit;color:var(--mid);cursor:pointer">↻ Обновить</button>
+      </div>
+      <div id="shipmentsListWrap">
+        <div style="padding:20px;text-align:center;color:var(--light)">Нет отгрузок</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ЭКРАН: Обход (Обход аптеки) ────────────────────────── -->
+  <div class="screen" id="screen-round">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🔄 Обход аптеки</div>
+        <div class="card-sub">Фиксируй что продалось при обходе</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Аптека *</label>
+          <select id="rClient" onchange="onClientChange('r')">
+            <option value="">— выбери аптеку —</option>
+          </select>
+        </div>
+        <div class="field" id="rBranchWrap" style="display:none">
+          <label>Филиал (адрес)</label>
+          <select id="rBranch">
+            <option value="">— выбери адрес —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата обхода *</label>
+          <input id="rDate" type="date">
+        </div>
+
+        <div class="section-title" style="margin-bottom:8px">Что продалось</div>
+        <div id="rItemsWrap" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+
+        <!-- Итого продано -->
+        <div style="background:#eff6ff;border-radius:10px;padding:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;font-weight:700;color:#1d4ed8">Выставить счёт</span>
+          <span style="font-size:20px;font-weight:800;color:#1d4ed8" id="rTotalDisplay">0 ₸</span>
+        </div>
+
+        <div class="field">
+          <label>Комментарий</label>
+          <textarea id="rComment" placeholder="Остатки, замечания..."></textarea>
+        </div>
+        <button class="btn btn-primary" id="btnSubmitRound" onclick="submitRound()">
+          📋 Зафиксировать обход
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ НОВЫЕ РАЗДЕЛЫ КАБИНЕТА (этап 0 — каркас) ══════════════
+       Содержимое появится на этапах 1–5. Сейчас экраны показывают
+       skeleton и заглушку, чтобы навигацию и права можно было
+       проверить на живом телефоне до наполнения данными. -->
+
+  <div class="screen" id="screen-overview">
+    <button class="period-bar" onclick="openPeriodSheet()">
+      <span>
+        <span class="pb-label">Период</span>
+        <span class="pb-value" id="pbValue-overview">Этот месяц</span>
+      </span>
+      <span class="pb-chev">›</span>
+    </button>
+    <div id="ovBody"></div>
+  </div>
+
+  <div class="screen" id="screen-sales">
+    <div id="salesBody"></div>
+  </div>
+
+  <div class="screen" id="screen-stock">
+    <div id="stockBody"></div>
+  </div>
+
+  <div class="screen" id="screen-more">
+    <div class="card" style="margin-bottom:14px">
+      <div id="moreLinks"></div>
+    </div>
+    <div class="card">
+      <div class="more-link" onclick="openFullVersion()">
+        <span class="more-icon">🖥️</span><span>Полная версия</span><span class="more-chev">›</span>
+      </div>
+      <div class="more-link" onclick="logout()">
+        <span class="more-icon">⬅</span><span>Выйти</span><span class="more-chev">›</span>
+      </div>
+    </div>
+    <div class="stamp" id="moreVersion" style="margin-top:14px"></div>
+  </div>
+
+  <!-- ── BOTTOM NAV: 5 корневых разделов ──────────────────────
+       Больше пяти кнопок не ставим: зона нажатия становится уже
+       пальца. Кнопки строятся из прав (см. buildNav()), поэтому
+       display здесь по умолчанию none — покажет только доступные. -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="nav-btn" id="sec-overview" style="display:none" onclick="showSection('overview')">
+      <span class="nav-icon">📊</span><span class="nav-label">Обзор</span>
+    </button>
+    <button class="nav-btn" id="sec-sales" style="display:none" onclick="showSection('sales')">
+      <span class="nav-icon">💰</span><span class="nav-label">Продажи</span>
+    </button>
+    <button class="nav-btn" id="sec-stock" style="display:none" onclick="showSection('stock')">
+      <span class="nav-icon">📦</span><span class="nav-label">Склад</span>
+    </button>
+    <button class="nav-btn" id="sec-b2b" style="display:none" onclick="showSection('b2b')">
+      <span class="nav-icon">🤝</span><span class="nav-label">B2B</span>
+    </button>
+    <button class="nav-btn" id="sec-more" onclick="showSection('more')">
+      <span class="nav-icon">⋯</span><span class="nav-label">Ещё</span>
+    </button>
+  </nav>
+
+</div><!-- /appWrap -->
+
+<!-- ── BOTTOM SHEET: период (общий на всё приложение) ── -->
+<div class="sheet-wrap" id="periodSheet" onclick="closePeriodSheet(event)">
+  <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet-handle"><i></i></div>
+    <div class="sheet-title">Период</div>
+    <div id="periodOpts"></div>
+  </div>
+</div>
+
+<!-- ── DETAIL OVERLAY (визит / отгрузка) ── -->
+<div id="detailOverlay" onclick="closeDetail(event)"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:flex-end;justify-content:center">
+  <div id="detailSheet"
+    style="background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:0 0 32px 0;box-shadow:0 -4px 24px rgba(0,0,0,.15);transform:translateY(100%);transition:transform .28s cubic-bezier(.25,.46,.45,.94)">
+    <!-- Handle -->
+    <div style="display:flex;justify-content:center;padding:12px 0 4px">
+      <div style="width:40px;height:4px;background:#e2e8f0;border-radius:99px"></div>
+    </div>
+    <div id="detailBody" style="padding:0 18px 8px"></div>
+  </div>
+</div>
+
+<!-- ── SUCCESS OVERLAY ── -->
+<div class="success-overlay" id="successOverlay">
+  <div class="success-box">
+    <div class="success-icon" id="successIcon">✅</div>
+    <div class="success-title" id="successTitle">Отправлено!</div>
+    <div class="success-sub" id="successSub">Данные сохранены</div>
+    <button class="btn btn-primary" onclick="closeSuccess()">Готово</button>
+  </div>
+</div>
+
+<!-- ── TOAST ── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG — вставь свой URL после деплоя Apps Script
+// ══════════════════════════════════════════════════════════════
+const APP_VERSION = '0.1.0';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
+
+const PRODUCTS = [
+  'Подгузники S', 'Подгузники M',
+  'Трусики L',    'Трусики XL',  'Трусики XXL',
+  'Салфетки влажные',
+  'Минипак S',    'Минипак M',   'Минипак L',  'Минипак XL', 'Минипак XXL',
+];
+
+// Цены по умолчанию и варианты для каждого товара
+const PRODUCT_PRICES = {
+  'Подгузники S':    { default: 7700, options: [7700, 7500, 7300, 7100] },
+  'Подгузники M':    { default: 7700, options: [7700, 7500, 7300, 7100] },
+  'Трусики L':       { default: 7700, options: [7700, 7500, 7300, 7100] },
+  'Трусики XL':      { default: 7700, options: [7700, 7500, 7300, 7100] },
+  'Трусики XXL':     { default: 7700, options: [7700, 7500, 7300, 7100] },
+  'Салфетки влажные':{ default: 690,  options: [690] },
+  'Минипак S':       { default: 450,  options: [450] },
+  'Минипак M':       { default: 450,  options: [450] },
+  'Минипак L':       { default: 450,  options: [450] },
+  'Минипак XL':      { default: 450,  options: [450] },
+  'Минипак XXL':     { default: 450,  options: [450] },
+};
+
+// ══════════════════════════════════════════════════════════════
+// КАРКАС КАБИНЕТА: разделы, права, компоненты, кэш
+// ══════════════════════════════════════════════════════════════
+
+/* Пять корневых разделов. tabs — какие права его открывают: раздел виден,
+   если у человека есть ХОТЯ БЫ ОДИН из них. Список прав приходит с сервера
+   (b2bAuth_ / pingSession), клиент их не выдумывает.
+   sub — сегментная под-навигация; id под-экранов совпадают с id блоков
+   <div class="screen" id="screen-…">, поэтому старые экраны торгпреда
+   переехали внутрь раздела B2B без единой правки их разметки. */
+const SECTIONS = [
+  { id: 'overview', label: 'Обзор',    icon: '📊', tabs: ['overview'] },
+  { id: 'sales',    label: 'Продажи',  icon: '💰', tabs: ['kaspi','wbcab','ozcab','analytics'] },
+  { id: 'stock',    label: 'Склад',    icon: '📦', tabs: ['inventory'] },
+  { id: 'b2b',      label: 'B2B',      icon: '🤝', tabs: ['b2b'], sub: [
+      { id: 'today',    label: '🏠 Сегодня'  },
+      { id: 'visit',    label: '📝 Визит'    },
+      { id: 'shipment', label: '📦 Отгрузка' },
+      { id: 'round',    label: '🔄 Обход'    },
+      { id: 'visits',   label: '📋 История'  },
+      { id: 'payment',  label: '💳 Оплата', ownerOnly: true },
+  ]},
+  { id: 'more',     label: 'Ещё',      icon: '⋯',  tabs: null },  // всегда доступен
+];
+
+/* Разделы «Ещё»: то, что открывают редко. Экранов пока нет — этап 5. */
+const MORE_LINKS = [
+  { id: 'clients',  label: 'Клиенты',   icon: '👥', tab: 'clients'  },
+  { id: 'planfact', label: 'План-Факт', icon: '🎯', tab: 'planfact' },
+  { id: 'forecast', label: 'Прогноз',   icon: '🔮', tab: 'forecast' },
+  { id: 'settings', label: 'Настройки', icon: '⚙️', tab: 'settings' },
+];
+
+let _tabs        = [];          // права: список табов с сервера
+let _section     = null;        // текущий корневой раздел
+let _b2bSub      = 'today';     // последний под-экран B2B
+
+function hasTab(id) { return _tabs.indexOf(id) !== -1; }
+function sectionAllowed(s) { return !s.tabs || s.tabs.some(hasTab); }
+
+/* ── ПЕРИОД ────────────────────────────────────────────────────
+   Один выбор на всё приложение: экраны читают getPeriod() и
+   перерисовываются по событию. Выбор переживает перезапуск. */
+const PERIODS = [
+  { id: 'today',  label: 'Сегодня'      },
+  { id: 'week',   label: 'Эта неделя'   },
+  { id: 'month',  label: 'Этот месяц'   },
+  { id: 'prev',   label: 'Прошлый месяц'},
+  { id: 'q',      label: 'Квартал'      },
+  { id: 'year',   label: 'Год'          },
+];
+let _period = 'month';
+
+function getPeriod() {
+  const p = PERIODS.find(x => x.id === _period) || PERIODS[2];
+  const now = new Date();
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  let from, to = now;
+  switch (p.id) {
+    case 'today': from = now; break;
+    case 'week':  from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay()+6)%7)); break;
+    case 'month': from = new Date(now.getFullYear(), now.getMonth(), 1); break;
+    case 'prev':  from = new Date(now.getFullYear(), now.getMonth()-1, 1);
+                  to   = new Date(now.getFullYear(), now.getMonth(), 0); break;
+    case 'q':     from = new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1); break;
+    case 'year':  from = new Date(now.getFullYear(), 0, 1); break;
+  }
+  return { id: p.id, label: p.label, from: iso(from), to: iso(to) };
+}
+
+function openPeriodSheet() {
+  const box = document.getElementById('periodOpts');
+  box.innerHTML = PERIODS.map(p =>
+    `<div class="sheet-opt ${p.id === _period ? 'active' : ''}" onclick="setPeriod('${p.id}')">
+       <span>${p.label}</span>${p.id === _period ? '<span>✓</span>' : ''}
+     </div>`).join('');
+  document.getElementById('periodSheet').classList.add('show');
+}
+function closePeriodSheet(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('periodSheet').classList.remove('show');
+}
+function setPeriod(id) {
+  _period = id;
+  try { localStorage.setItem('m_period', id); } catch(e) {}
+  document.getElementById('periodSheet').classList.remove('show');
+  document.querySelectorAll('[id^="pbValue-"]').forEach(el => { el.textContent = getPeriod().label; });
+  window.dispatchEvent(new CustomEvent('periodchange'));
+}
+
+/* ── КЭШ ───────────────────────────────────────────────────────
+   Apps Script отвечает 3–10 секунд — на телефоне это ощущается как
+   зависание. Поэтому экран рисуется сразу из последнего ответа с
+   меткой времени, а свежие данные подъезжают в фоне. */
+const CACHE_PREFIX = 'm_cache_';
+
+function cacheGet(key) {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return (o && o.ts && o.data !== undefined) ? o : null;
+  } catch(e) { return null; }
+}
+function cacheSet(key, data) {
+  try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ ts: Date.now(), data: data })); }
+  catch(e) {}   // квота переполнена — молча живём без кэша
+}
+function cacheClear() {
+  try {
+    Object.keys(localStorage).filter(k => k.indexOf(CACHE_PREFIX) === 0)
+      .forEach(k => localStorage.removeItem(k));
+  } catch(e) {}
+}
+
+/** Человеческая метка свежести: «данные на 14:32» / «обновляю…». */
+function stampHtml(ts, loading) {
+  if (loading) return '<div class="stamp">⏳ обновляю…</div>';
+  if (!ts)     return '';
+  const d   = new Date(ts);
+  const age = (Date.now() - ts) / 60000;
+  const hhmm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  const cls  = age > 60 ? 'stamp stale' : 'stamp';
+  return `<div class="${cls}">данные на <b>${hhmm}</b></div>`;
+}
+
+/**
+ * Загрузка экрана: мгновенно из кэша → запрос → перерисовка.
+ * render(data, meta) вызывается один или два раза; meta = {ts, loading, fromCache}.
+ */
+async function loadWithCache(key, loader, render) {
+  const cached = cacheGet(key);
+  if (cached) render(cached.data, { ts: cached.ts, loading: true, fromCache: true });
+  try {
+    const fresh = await loader();
+    cacheSet(key, fresh);
+    render(fresh, { ts: Date.now(), loading: false, fromCache: false });
+  } catch (e) {
+    if (!cached) render(null, { ts: 0, loading: false, error: e.message || String(e) });
+    else render(cached.data, { ts: cached.ts, loading: false, fromCache: true, error: e.message });
+  }
+}
+
+/**
+ * Данные дашборда. Единственный путь — действия роутера через api():
+ * внутри Apps Script оно пойдёт через mobileBridge, на GitHub Pages —
+ * обычным fetch. Прямой google.script.run не используем сознательно:
+ * вне Apps Script его просто нет, и экран молча оставался бы пустым.
+ *
+ * Действия объявлены в RULES (kaspi_script.js) и проверяют те же табы.
+ */
+function dataCall(action, extra) {
+  return api('POST', Object.assign({ action: action }, extra || {}));
+}
+
+/** Обзор за выбранный период. */
+function fetchDashboard(force) {
+  const p = getPeriod();
+  return dataCall('dashboard', {
+    filters: JSON.stringify({ dateFrom: p.from, dateTo: p.to }),
+    force: force === true,
+  });
+}
+
+/* ── КОМПОНЕНТЫ ────────────────────────────────────────────────
+   Шесть примитивов на всё приложение. Возвращают HTML-строку —
+   экраны собирают из них разметку, а не пишут свою. */
+
+const fmtNum = n => (Math.round(Number(n) || 0)).toLocaleString('ru-RU').replace(/,/g, ' ');
+const fmtM   = n => {
+  const v = Number(n) || 0;
+  if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1).replace('.0','') + ' млн';
+  if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + ' тыс';
+  return fmtNum(v);
+};
+
+/** KPI-карточка: число + подпись + дельта к прошлому периоду. */
+function uiKpi(o) {
+  const d = o.delta;
+  let deltaHtml = '';
+  if (d !== undefined && d !== null && isFinite(d)) {
+    const cls  = d > 0.5 ? 'up' : (d < -0.5 ? 'down' : 'flat');
+    const sign = d > 0 ? '↑ +' : (d < 0 ? '↓ ' : '→ ');
+    deltaHtml = `<div class="kpi-delta ${cls}">${sign}${Math.abs(d).toFixed(0)}%</div>`;
+  }
+  return `<div class="kpi-card${o.wide ? ' wide' : ''}">
+    <div class="kpi-label">${o.label}</div>
+    <div class="kpi-value${o.tone ? ' ' + o.tone : ''}">${o.value}</div>
+    ${deltaHtml}${o.sub ? `<div class="row-vsub">${o.sub}</div>` : ''}
+  </div>`;
+}
+
+/** Строка-карточка — замена таблицы. Тап раскрывает детали. */
+function uiRow(o) {
+  return `<div class="row-item"${o.onclick ? ` onclick="${o.onclick}"` : ''}>
+    ${o.icon ? `<div class="client-avatar">${o.icon}</div>` : ''}
+    <div class="row-main">
+      <div class="row-title">${o.title}</div>
+      ${o.sub ? `<div class="row-sub">${o.sub}</div>` : ''}
+    </div>
+    <div class="row-right">
+      <div class="row-value">${o.value || ''}</div>
+      ${o.vsub ? `<div class="row-vsub">${o.vsub}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+/** Спарклайн: инлайн-SVG вместо Chart.js — 0 КБ и без CDN. */
+function uiSpark(points, opts) {
+  const o = opts || {};
+  const pts = (points || []).map(Number).filter(v => isFinite(v));
+  if (pts.length < 2) return '';
+  const w = o.w || 320, h = o.h || 48, pad = 2;
+  const min = Math.min(...pts), max = Math.max(...pts), span = (max - min) || 1;
+  const step = (w - pad * 2) / (pts.length - 1);
+  const xy = pts.map((v, i) => [pad + i * step, h - pad - ((v - min) / span) * (h - pad * 2)]);
+  const line = xy.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1)).join(' ');
+  const area = line + ` L${(pad + (pts.length-1)*step).toFixed(1)} ${h - pad} L${pad} ${h - pad} Z`;
+  const c = o.color || '#2563EB';
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="динамика">
+    <path d="${area}" fill="${c}" opacity=".10"/>
+    <path d="${line}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+
+/** Горизонтальные бары: доли каналов, топ SKU. */
+function uiBars(items) {
+  const list = (items || []).filter(x => x && isFinite(Number(x.value)));
+  if (!list.length) return uiEmpty('Нет данных за период');
+  const max = Math.max(...list.map(x => Number(x.value))) || 1;
+  return list.map(x => `<div class="bar-row">
+    <div class="bar-head"><span class="bar-name">${x.label}</span><span class="bar-val">${x.display || fmtM(x.value)}</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, Number(x.value)/max*100).toFixed(1)}%;background:${x.color || '#2563EB'}"></div></div>
+  </div>`).join('');
+}
+
+/** Skeleton вместо пустоты на время первой загрузки. */
+function uiSkeleton(kind) {
+  if (kind === 'kpi') return `<div class="kpi-strip">${'<div class="sk sk-kpi"></div>'.repeat(4)}</div>`;
+  if (kind === 'rows') return `<div class="card">${'<div style="padding:14px 16px"><div class="sk sk-line" style="width:60%"></div><div class="sk sk-line" style="width:35%"></div></div>'.repeat(5)}</div>`;
+  return `<div class="card"><div class="card-body"><div class="sk sk-line"></div><div class="sk sk-line" style="width:70%"></div></div></div>`;
+}
+
+function uiEmpty(text, icon) {
+  return `<div class="empty"><span class="empty-icon">${icon || '🗂'}</span>${text}</div>`;
+}
+
+/* ── НАВИГАЦИЯ ─────────────────────────────────────────────────
+   Два уровня: корневой раздел (нижний таб-бар) и под-экран
+   (сегменты под шапкой). Старый showTab() остался для под-экранов
+   B2B — его вызывает showSection('b2b'). */
+
+function buildNav() {
+  let firstVisible = null;
+  SECTIONS.forEach(s => {
+    const btn = document.getElementById('sec-' + s.id);
+    if (!btn) return;
+    const ok = sectionAllowed(s);
+    btn.style.display = ok ? '' : 'none';
+    if (ok && !firstVisible) firstVisible = s.id;
+  });
+  // Ссылки раздела «Ещё» — тоже по правам
+  const box = document.getElementById('moreLinks');
+  if (box) {
+    const links = MORE_LINKS.filter(l => hasTab(l.tab));
+    box.innerHTML = links.length
+      ? links.map(l => `<div class="more-link" onclick="toast('Раздел появится в следующем обновлении')">
+           <span class="more-icon">${l.icon}</span><span>${l.label}</span><span class="more-chev">›</span>
+         </div>`).join('')
+      : uiEmpty('Дополнительных разделов нет', '📭');
+  }
+  return firstVisible || 'more';
+}
+
+function buildSubNav(section) {
+  const nav = document.getElementById('subNav');
+  const s   = SECTIONS.find(x => x.id === section);
+  const sub = s && s.sub ? s.sub.filter(x => !x.ownerOnly || isOwner) : null;
+  if (!sub || !sub.length) { nav.style.display = 'none'; nav.innerHTML = ''; return; }
+  nav.style.display = '';
+  nav.innerHTML = sub.map(x =>
+    `<button class="subnav-btn" id="subnav-${x.id}" onclick="showTab('${x.id}')">${x.label}</button>`).join('');
+}
+
+function showSection(id) {
+  const s = SECTIONS.find(x => x.id === id);
+  if (!s) return;
+  if (!sectionAllowed(s)) return toast('Нет доступа к разделу');
+  _section = id;
+  try { localStorage.setItem('m_section', id); } catch(e) {}
+
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sec-' + id)?.classList.add('active');
+  buildSubNav(id);
+
+  if (id === 'b2b') { showTab(_b2bSub); return; }   // под-экраны торгпреда
+
+  document.querySelectorAll('.screen').forEach(x => x.classList.remove('active'));
+  document.getElementById('screen-' + id)?.classList.add('active');
+  window.scrollTo(0, 0);
+  renderSection(id);
+}
+
+/* Наполнение разделов. Этап 0: заглушки со skeleton — чтобы каркас
+   можно было щупать на телефоне до появления данных. */
+function renderSection(id) {
+  if (id === 'overview') {
+    const el = document.getElementById('ovBody');
+    if (el && !el.dataset.filled) {
+      el.innerHTML = uiSkeleton('kpi') + uiEmpty('Цифры появятся на следующем шаге — сейчас проверяем каркас', '📊');
+    }
+  }
+  if (id === 'sales') {
+    const el = document.getElementById('salesBody');
+    if (el && !el.dataset.filled) {
+      const ch = [
+        { id:'kaspi', label:'Kaspi',       tab:'kaspi'     },
+        { id:'wb',    label:'Wildberries', tab:'wbcab'     },
+        { id:'ozon',  label:'Ozon',        tab:'ozcab'     },
+        { id:'an',    label:'Аналитика',   tab:'analytics' },
+      ].filter(c => hasTab(c.tab));
+      el.innerHTML = `<div class="card">${ch.map(c => uiRow({
+        title: c.label, sub: 'выручка, заказы, выкуп', value: '›',
+        onclick: `toast('Экран появится в следующем обновлении')`
+      })).join('')}</div>` + uiEmpty('Данные подключим на этапе 2', '💰');
+    }
+  }
+  if (id === 'stock') {
+    const el = document.getElementById('stockBody');
+    if (el && !el.dataset.filled) el.innerHTML = uiSkeleton('rows') + uiEmpty('Остатки подключим на этапе 3', '📦');
+  }
+}
+
+/** «Полная версия» — увести на десктопный дашборд и запомнить выбор. */
+function openFullVersion() {
+  // Десктопный дашборд живёт в Apps Script, а этот фронт — на Pages,
+  // поэтому уходим по абсолютному адресу и просим не редиректить обратно.
+  window.open(API_URL + '?desktop=1', '_blank');
+}
+
+/* ── PWA ───────────────────────────────────────────────────────
+   Service worker кэширует только оболочку (HTML/иконки). Данные он не
+   трогает: их кэширует сам экран в localStorage — так проще управлять
+   свежестью и не показывать вчерашние цифры как сегодняшние. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./sw.js').catch(function () {});
+  });
+}
+
+/* Понятная диагностика вместо «Failed to fetch». Самая частая причина —
+   развёртывание Apps Script закрыто («Who has access» ≠ Anyone), тогда
+   браузер получает редирект на страницу входа Google и падает на CORS. */
+function explainNetErr(e) {
+  const m = String((e && e.message) || e);
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
+    return 'Нет связи с сервером. Проверь интернет, а если он есть — в Apps Script '
+         + 'Deploy → Manage deployments должно стоять «Who has access: Anyone».';
+  }
+  return m;
+}
+
+// ── STATE ──────────────────────────────────────────────────────
+let repName        = '';
+let isOwner        = false;   // владелец: экран «Оплата» и полный доступ
+let clients        = [];
+let myVisits       = [];
+let myShipments    = [];
+let clientTypeFilter = 'all'; // 'all' | 'Аптека' | 'Оптовик' | ...
+let _authToken     = null;    // серверный токен сессии (выдаёт b2bAuth_)
+
+// ══════════════════════════════════════════════════════════════
+// AUTH — проверка пароля на сервере (b2b_backend.gs → b2bAuth)
+// Пароли НЕ хранятся в этом файле.
+// ══════════════════════════════════════════════════════════════
+async function login() {
+  const name = document.getElementById('loginName').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  if (!name) return toast('Введи имя');
+
+  const btn = document.querySelector('#loginScreen .btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+
+  try {
+    const info = { deviceType: 'mobile', deviceIcon: '📱', browser: navigator.userAgent.slice(0, 90) };
+    const res  = await api('POST', { action: 'auth', name, pass, info });
+    if (!res.ok || !res.token) return toast(res.reason || 'Неверное имя или пароль');
+    repName    = res.name || name;
+    isOwner    = res.owner === true;
+    _tabs      = Array.isArray(res.tabs) ? res.tabs : [];
+    _authToken = res.token;
+    localStorage.setItem('rep', repName);
+    localStorage.setItem('owner', isOwner ? '1' : '');
+    localStorage.setItem('tabs',  JSON.stringify(_tabs));
+    localStorage.setItem('token', _authToken);
+    showApp();
+  } catch(e) {
+    toast(explainNetErr(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Войти'; }
+  }
+}
+
+function logout() {
+  if (_authToken) api('POST', { action: 'logout' }).catch(() => {}); // убиваем сессию на сервере
+  _authToken = null;
+  localStorage.removeItem('token');
+  localStorage.removeItem('rep');
+  localStorage.removeItem('owner');
+  localStorage.removeItem('tabs');
+  cacheClear();                       // чужие цифры не должны пережить выход
+  repName = ''; isOwner = false; _tabs = [];
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+}
+
+function showApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appWrap').style.display = 'block';
+  document.getElementById('repNameBadge').textContent = repName + (isOwner ? ' 👑' : '');
+
+  // Восстанавливаем период и строим навигацию по правам с сервера
+  try { _period  = localStorage.getItem('m_period')  || 'month'; } catch(e) {}
+  document.querySelectorAll('[id^="pbValue-"]').forEach(el => { el.textContent = getPeriod().label; });
+
+  const firstAllowed = buildNav();
+  let start = null;
+  try { start = localStorage.getItem('m_section'); } catch(e) {}
+  const startSec = SECTIONS.find(s => s.id === start && sectionAllowed(s));
+  showSection(startSec ? start : firstAllowed);
+
+  const ver = document.getElementById('moreVersion');
+  if (ver) ver.textContent = 'NIETTE · мобильный кабинет · v' + APP_VERSION;
+
+  // Данные B2B нужны только тем, у кого есть этот раздел
+  if (hasTab('b2b')) {
+    initShipmentItems();
+    initRoundItems();
+    setDefaultDates();
+    loadClients();
+    loadVisits();
+    loadShipments();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════
+
+function setDefaultDates() {
+  const today = new Date().toISOString().slice(0, 10);
+  const plus7 = new Date(Date.now() + 7*86400000).toISOString().slice(0, 10);
+  document.getElementById('sShipDate').value = today;
+  document.getElementById('sDueDate').value  = plus7;
+  document.getElementById('vNextDate').value = plus7;
+  const rDate = document.getElementById('rDate');
+  if (rDate) rDate.value = today;
+}
+
+async function loadClients() {
+  try {
+    const res = await api('POST', { action: 'clients' });
+    clients = Array.isArray(res) ? res : [];
+    if (!clients.length) toast('Аптек в CRM пока нет');
+  } catch(e) {
+    clients = [];
+    toast('Ошибка загрузки аптек: ' + e.message);
+  }
+  populateClientDropdowns();
+  renderClientList();
+}
+
+async function loadVisits() {
+  try {
+    const res = await api('POST', { action: 'myVisits', rep: repName });
+    myVisits = (Array.isArray(res) ? res : []).map(v => ({
+      ...v,
+      date:          String(v['Дата'] || v.date || '').slice(0, 10),
+      clientName:    v['Клиент']             || v.clientName || '—',
+      result:        v['Результат']          || v.result     || '',
+      contact:       v['Контакт']            || v.contact    || '',
+      phone:         v['Телефон']            || v.phone      || '',
+      city:          v['Город']              || v.city       || '',
+      address:       v['Адрес']              || v.address    || '',
+      potential:     v['Потенциал ₸']        || v.potential  || '',
+      nextDate:      String(v['Дата след. контакта'] || v.nextDate || '').slice(0, 10),
+      comment:       v['Комментарий']        || v.comment    || '',
+      branchAddress: v['Адрес филиала']      || v.branchAddress || '',
+      files:         (() => {
+        const raw = v['Файлы'] || v['fileUrls'] || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(u => ({ name: u.split('/').pop()?.split('?')[0] || 'файл', url: u }));
+      })(),
+    })).sort((a, b) => b.date.localeCompare(a.date));
+  } catch(e) {
+    myVisits = [];
+    toast('Ошибка загрузки визитов: ' + e.message);
+  }
+  updateTodayStats();
+}
+
+function populateClientDropdowns() {
+  const makeOpt = c =>
+    `<option value="${c['ID']}" data-type="${c['Тип']||''}" data-contact="${c['Контакт']||''}" data-phone="${c['Телефон']||''}">${c['Название']} · ${c['Город']||''} ${c['Тип'] ? '· '+c['Тип'] : ''}</option>`;
+
+  const allOpts      = clients.map(makeOpt).join('');
+  const filteredOpts = clients
+    .filter(c => clientTypeFilter === 'all' || c['Тип'] === clientTypeFilter)
+    .map(makeOpt).join('');
+
+  document.getElementById('vClient').innerHTML =
+    '<option value="">— выбери клиента —</option>' + allOpts + '<option value="__new__">+ Новый клиент</option>';
+  document.getElementById('sClient').innerHTML =
+    '<option value="">— выбери клиента —</option>' + filteredOpts;
+
+  // Dropdown для оплаты (экран видит только владелец)
+  const pSel = document.getElementById('pClient');
+  if (pSel) pSel.innerHTML = '<option value="">— выбери клиента —</option>' + allOpts;
+
+  // Dropdown для обхода (только аптеки, без оптовиков)
+  const pharmacyOpts = clients
+    .filter(c => c['Тип'] !== 'Оптовик')
+    .map(makeOpt).join('');
+  const rSel = document.getElementById('rClient');
+  if (rSel) rSel.innerHTML = '<option value="">— выбери аптеку —</option>' + pharmacyOpts;
+}
+
+function setClientTypeFilter(type, btn) {
+  clientTypeFilter = type;
+  document.querySelectorAll('.client-type-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // Перефильтруем только dropdown отгрузки
+  const filteredOpts = clients
+    .filter(c => type === 'all' || c['Тип'] === type)
+    .map(c => `<option value="${c['ID']}" data-type="${c['Тип']||''}">${c['Название']} · ${c['Город']||''} ${c['Тип'] ? '· '+c['Тип'] : ''}</option>`)
+    .join('');
+  document.getElementById('sClient').innerHTML =
+    '<option value="">— выбери клиента —</option>' + filteredOpts;
+}
+
+let _branchCache = {}; // clientId → [{id,name,address}]
+
+function onClientChange(prefix) {
+  const sel = document.getElementById(prefix + 'Client');
+  const val = sel.value;
+  if (prefix === 'v') {
+    document.getElementById('vNewClientWrap').style.display = val === '__new__' ? 'block' : 'none';
+    if (val && val !== '__new__') {
+      const opt = sel.options[sel.selectedIndex];
+      document.getElementById('vContact').value = opt.dataset.contact || '';
+      document.getElementById('vPhone').value   = opt.dataset.phone   || '';
+    }
+  }
+  // Branch selector for s / v / r prefixes
+  if (['s','v','r'].includes(prefix) && val && val !== '__new__') {
+    loadBranchesForClient(val, prefix);
+  } else {
+    hideBranchWrap(prefix);
+  }
+}
+
+async function loadBranchesForClient(clientId, prefix) {
+  // Use cache if available
+  let branches = _branchCache[clientId];
+  if (!branches) {
+    try {
+      const res = await api('POST', { action: 'branches', clientId });
+      branches = Array.isArray(res) ? res : [];
+      _branchCache[clientId] = branches;
+    } catch(e) {
+      branches = [];
+    }
+  }
+  const wrap = document.getElementById(prefix + 'BranchWrap');
+  const sel  = document.getElementById(prefix + 'Branch');
+  if (!wrap || !sel) return;
+  if (!branches.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  sel.innerHTML = '<option value="">— выбери адрес —</option>' +
+    branches.map(b => `<option value="${b.id}" data-address="${b.address||''}">${b.address || b.name}</option>`).join('');
+  wrap.style.display = '';
+}
+
+function hideBranchWrap(prefix) {
+  const wrap = document.getElementById(prefix + 'BranchWrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+function getBranchAddress(prefix) {
+  const sel = document.getElementById(prefix + 'Branch');
+  if (!sel || !sel.value) return '';
+  const opt = sel.options[sel.selectedIndex];
+  return opt?.dataset?.address || opt?.text || '';
+}
+
+function renderClientList() {
+  const q    = (document.getElementById('searchClients').value || '').toLowerCase();
+  const list = clients.filter(c =>
+    !q || c['Название'].toLowerCase().includes(q) || (c['Город'] || '').toLowerCase().includes(q)
+  );
+  const wrap = document.getElementById('clientListWrap');
+  if (!list.length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--light)">Нет клиентов</div>';
+    return;
+  }
+  wrap.innerHTML = list.map(c => {
+    const icon = c['Тип'] === 'Аптека' ? '💊' : c['Тип'] === 'Оптовик' ? '🏭' : '🏪';
+    return `
+      <div class="client-item">
+        <div class="client-avatar">${icon}</div>
+        <div class="client-info">
+          <div class="client-name">${c['Название']}</div>
+          <div class="client-meta">${c['Город']} · ${c['Тип']}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function updateTodayStats() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const monthStr = todayStr.slice(0, 7); // "2026-06"
+
+  const todayV = myVisits.filter(v => v.date === todayStr);
+  const monthV = myVisits.filter(v => v.date.slice(0, 7) === monthStr);
+
+  document.getElementById('kpiVisitsToday').textContent = todayV.length;
+  document.getElementById('kpiVisitsMonth').textContent = monthV.length;
+
+  const listEl = document.getElementById('todayVisitsList');
+  if (!todayV.length) {
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Визитов пока нет</div>';
+  } else {
+    listEl.innerHTML = todayV.map(v => `
+      <div class="client-item">
+        <div class="client-avatar">📝</div>
+        <div class="client-info">
+          <div class="client-name">${v.clientName || '—'}</div>
+          <div class="client-meta">${v.result || ''}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  renderDailyStats();
+}
+
+// ══════════════════════════════════════════════════════════════
+// DAILY STATS — история по дням
+// ══════════════════════════════════════════════════════════════
+function declVisit(n) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return 'визитов';
+  if (mod10 === 1) return 'визит';
+  if (mod10 >= 2 && mod10 <= 4) return 'визита';
+  return 'визитов';
+}
+
+function renderDailyStats() {
+  const el = document.getElementById('dailyStatsList');
+  if (!el) return;
+
+  // Группируем визиты по датам
+  const grouped = {};
+  myVisits.forEach(v => {
+    const d = v.date || '';
+    if (!d) return;
+    if (!grouped[d]) grouped[d] = [];
+    grouped[d].push(v);
+  });
+
+  const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+  if (!dates.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--light);font-size:13px">Нет визитов</div>';
+    return;
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const DAYS = ['вс','пн','вт','ср','чт','пт','сб'];
+  const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+
+  el.innerHTML = dates.map(dateStr => {
+    const visits  = grouped[dateStr];
+    const count   = visits.length;
+    const d       = new Date(dateStr + 'T00:00:00');
+    const isToday = dateStr === todayStr;
+    const dayNum  = d.getDate();
+    const mon     = MONTHS[d.getMonth()];
+    const weekDay = DAYS[d.getDay()];
+
+    const bgAvatar  = isToday ? 'var(--blue)'  : '#EFF6FF';
+    const colAvatar = isToday ? '#fff'          : 'var(--blue)';
+    const colSub    = isToday ? 'rgba(255,255,255,.7)' : 'var(--light)';
+
+    return `
+    <div onclick="openDayVisits('${dateStr}')"
+      style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s"
+      ontouchstart="this.style.background='var(--bg)'" ontouchend="this.style.background=''">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:42px;height:42px;border-radius:10px;background:${bgAvatar};color:${colAvatar};display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:14px;font-weight:800;line-height:1">${dayNum}</span>
+          <span style="font-size:9px;font-weight:600;text-transform:uppercase;color:${colSub};line-height:1.4">${mon}</span>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--dark)">
+            ${String(dayNum).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')} · ${weekDay}
+            ${isToday ? '<span style="font-size:11px;color:var(--blue);font-weight:600;margin-left:4px">сегодня</span>' : ''}
+          </div>
+          <div style="font-size:12px;color:var(--light);margin-top:2px">${count} ${declVisit(count)}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:22px;font-weight:800;color:${isToday ? 'var(--blue)' : 'var(--dark)'}">${count}</span>
+        <span style="color:var(--light);font-size:18px;line-height:1">›</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+let _dayVisits = [];
+
+function openDayVisits(dateStr) {
+  const visits = myVisits.filter(v => v.date === dateStr);
+  if (!visits.length) return;
+
+  _dayVisits = visits;
+
+  const d       = new Date(dateStr + 'T00:00:00');
+  const MONTHS_FULL = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  const dayLabel = d.getDate() + ' ' + MONTHS_FULL[d.getMonth()];
+
+  const RESULT_COLOR = {
+    'Продажа':'#059669','Договорённость':'#2563eb','Отказ':'#dc2626','Повторный':'#d97706',
+  };
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="margin-bottom:16px">
+      <div style="font-size:18px;font-weight:800;color:var(--dark)">📅 ${dayLabel}</div>
+      <div style="font-size:12px;color:var(--light);margin-top:2px">${visits.length} ${declVisit(visits.length)}</div>
+    </div>
+    ${visits.map((v, i) => {
+      const col = RESULT_COLOR[v.result] || 'var(--light)';
+      return `
+      <div onclick="openVisitDetailFromDay(${i})"
+        style="background:var(--bg);border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s"
+        ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName || '—'}</div>
+          <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
+        </div>
+        ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
+        <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Подробнее →</div>
+      </div>`;
+    }).join('')}
+  `;
+  _openDetailOverlay();
+}
+
+function openVisitDetailFromDay(i) {
+  const v = _dayVisits[i];
+  if (!v) return;
+  _showVisitDetail(v);
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUBMIT
+// ══════════════════════════════════════════════════════════════
+async function submitVisit() {
+  const sel        = document.getElementById('vClient');
+  const clientId   = sel.value;
+  const clientName = clientId === '__new__'
+    ? document.getElementById('vNewClientName').value.trim()
+    : sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const result = document.getElementById('vResult').value;
+
+  if (!clientId) return toast('Выбери клиента');
+  if (!clientName) return toast('Введи название аптеки');
+  if (!result)     return toast('Укажи результат визита');
+
+  const contact = document.getElementById('vContact').value;
+  const phone   = document.getElementById('vPhone').value;
+
+  if (phone && !validatePhone(phone)) return toast('Телефон должен быть в формате +7 (xxx) xxx xx xx');
+
+  // Читаем файлы до блокировки кнопки
+  const vFilesData = await readFilesAsBase64('vFiles');
+
+  setBtnLoading('btnSubmitVisit', true);
+  try {
+    // Новая аптека — сначала создаём клиента в CRM
+    let resolvedClientId = clientId;
+    if (clientId === '__new__') {
+      const newCity    = document.getElementById('vNewClientCity').value.trim();
+      const newAddress = document.getElementById('vNewClientAddress').value.trim();
+      const newType = document.getElementById('vNewClientType')?.value || 'Аптека';
+      const res = await api('POST', { action: 'addClient', data: {
+        name:    clientName,
+        type:    newType,
+        stage:   'Новый',
+        city:    newCity,
+        address: newAddress,
+        contact, phone,
+        rep:     repName,
+      }});
+      resolvedClientId = res.id;
+      // Добавляем в локальный список чтобы сразу появилась в Отгрузках
+      clients.push({ 'ID': resolvedClientId, 'Название': clientName, 'Тип': newType, 'Город': newCity, 'Адрес': newAddress, 'Контакт': contact, 'Телефон': phone });
+      populateClientDropdowns();
+    }
+
+    const data = {
+      date:      new Date().toISOString().slice(0, 10),
+      clientId:  resolvedClientId,
+      clientName, result, contact, phone,
+      address:       document.getElementById('vAddress').value,
+      potential:     document.getElementById('vPotential').value,
+      nextDate:      document.getElementById('vNextDate').value,
+      comment:       document.getElementById('vComment').value,
+      rep:           repName,
+      city:          clients.find(c => c['ID'] === resolvedClientId)?.['Город'] || '',
+      branchId:      document.getElementById('vBranch')?.value || '',
+      branchAddress: getBranchAddress('v'),
+      files:         vFilesData,
+    };
+
+    await api('POST', { action: 'addVisit', data });
+    // Добавляем локально сразу — не ждём перезагрузки
+    myVisits.unshift({ ...data, clientName: data.clientName, result: data.result });
+    updateTodayStats();
+    resetVisitForm();
+    showSuccess('📝', 'Визит записан!', clientName);
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitVisit', false);
+  }
+}
+
+async function submitShipment() {
+  const sel        = document.getElementById('sClient');
+  const clientId   = sel.value;
+  const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const shipDate   = document.getElementById('sShipDate').value;
+  const items      = getShipmentItems();
+  const amount     = items.reduce((s, i) => s + i.sum, 0);
+
+  if (!clientId)       return toast('Выбери клиента');
+  if (!shipDate)       return toast('Укажи дату отгрузки');
+  if (!items.length)   return toast('Добавь хотя бы одну позицию');
+  if (amount === 0)    return toast('Укажи количество и цену');
+
+  const client  = clients.find(c => c['ID'] === clientId) || {};
+  const payType = document.getElementById('sPayType').value;
+  let   dueDate = '', paySchedule = '';
+  if (payType === 'once')        dueDate     = document.getElementById('sDueDate').value;
+  if (payType === 'monthly')     paySchedule = 'monthly:' + (document.getElementById('sPayMonthDay').value || '');
+  if (payType === 'weekly')      paySchedule = 'weekly:'  + (document.getElementById('sPayWeekDay').value  || '');
+  if (payType === 'consignment') paySchedule = 'consignment';
+
+  const branchSel  = document.getElementById('sBranch');
+  const branchId   = branchSel?.value   || '';
+  const branchAddr = getBranchAddress('s');
+
+  const data = {
+    clientId, clientName,
+    branchId, branchAddress: branchAddr,
+    clientType: client['Тип'] || '',
+    shipDate,
+    dueDate,
+    payType,
+    paySchedule,
+    amount,
+    items,
+    invoiceNum: document.getElementById('sInvoice').value,
+    comment:    document.getElementById('sComment').value,
+    status:     payType === 'consignment' ? 'Реализация' : 'Отгружено',
+    rep:        repName,
+  };
+
+  // Читаем файлы до блокировки кнопки
+  data.files = await readFilesAsBase64('sFiles');
+
+  setBtnLoading('btnSubmitShipment', true);
+  try {
+    await api('POST', { action: 'addShipment', data });
+    resetShipmentForm();
+    showSuccess('📦', 'Отгрузка оформлена!', clientName + '\n' + Number(amount).toLocaleString('ru') + ' ₸');
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitShipment', false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// API
+// Два режима:
+// ══════════════════════════════════════════════════════════════
+// ЭКРАН ОПЛАТЫ
+// ══════════════════════════════════════════════════════════════
+
+function setDefaultPaymentDate() {
+  const el = document.getElementById('pDate');
+  if (el && !el.value) el.value = new Date().toISOString().slice(0, 10);
+}
+
+async function onPaymentClientChange() {
+  const sel      = document.getElementById('pClient');
+  const clientId = sel.value;
+  const infoEl   = document.getElementById('pDebtInfo');
+  const amtEl    = document.getElementById('pDebtAmount');
+  const subEl    = document.getElementById('pDebtSub');
+  if (!clientId) { infoEl.style.display = 'none'; return; }
+
+  amtEl.textContent = '⏳';
+  infoEl.style.display = 'block';
+  try {
+    const res = await api('POST', { action: 'clientDebt', clientId });
+    const d   = Array.isArray(res) ? res[0] : null;
+    if (d && d.debt > 0) {
+      amtEl.textContent = d.debt.toLocaleString('ru') + ' ₸';
+      subEl.textContent = `Поставлено: ${d.shipped.toLocaleString('ru')} ₸  ·  Оплачено: ${d.paid.toLocaleString('ru')} ₸`;
+    } else {
+      amtEl.textContent = 'Долга нет';
+      amtEl.style.color = '#059669';
+      subEl.textContent = '';
+    }
+  } catch(e) {
+    amtEl.textContent = '—';
+    subEl.textContent = e.message;
+  }
+}
+
+async function submitPayment() {
+  if (!isOwner) return toast('Нет доступа');
+  const sel      = document.getElementById('pClient');
+  const clientId = sel.value;
+  const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const amount   = parseFloat(document.getElementById('pAmount').value) || 0;
+  const method   = document.getElementById('pMethod').value;
+  const date     = document.getElementById('pDate').value;
+
+  if (!clientId) return toast('Выбери клиента');
+  if (amount <= 0) return toast('Укажи сумму оплаты');
+  if (!date)       return toast('Укажи дату оплаты');
+
+  const data = {
+    clientId,
+    clientName,
+    date,
+    amount,
+    method,
+    receiptNum:  document.getElementById('pReceipt').value,
+    shipmentId:  document.getElementById('pShipmentId').value,
+    receiver:    document.getElementById('pReceiver').value || repName,
+    comment:     document.getElementById('pComment').value,
+  };
+
+  setBtnLoading('btnSubmitPayment', true);
+  try {
+    await api('POST', { action: 'addPayment', data });
+    // Сброс формы
+    ['pClient','pMethod','pDate','pReceipt','pShipmentId','pReceiver','pComment'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = el.tagName === 'SELECT' ? el.options[0]?.value || '' : '';
+    });
+    document.getElementById('pAmount').value = '';
+    document.getElementById('pDebtInfo').style.display = 'none';
+    showSuccess('💳', 'Оплата зафиксирована!', clientName + '\n' + amount.toLocaleString('ru') + ' ₸');
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitPayment', false);
+  }
+}
+
+//   1. Страница открыта через Apps Script (?page=mobile)
+//      → google.script.run — нет CORS, нет авторизации
+//   2. Открыта локально (file://) → fetch (для разработки)
+// ══════════════════════════════════════════════════════════════
+// Сессия истекла/невалидна — назад на логин
+function _authFail() {
+  _authToken = null;
+  try { localStorage.removeItem('token'); } catch(e) {}
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  toast('Сессия истекла — войди заново');
+}
+
+function _isAuthErr(o) {
+  return o && (o.error === 'AUTH_REQUIRED' || o.error === 'SESSION_EXPIRED');
+}
+
+function api(method, payload) {
+  payload = Object.assign({ token: _authToken || '' }, payload); // токен — в каждый запрос
+  return new Promise((resolve, reject) => {
+
+    // Режим 1: google.script.run (страница внутри Apps Script)
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(result => {
+          if (_isAuthErr(result)) { _authFail(); return reject(new Error('Сессия истекла')); }
+          if (result && result.error) return reject(new Error(result.error));
+          resolve(result);
+        })
+        .withFailureHandler(err => reject(new Error(err.message || String(err))))
+        .mobileBridge(JSON.stringify(payload));
+      return;
+    }
+
+    // Режим 2: fetch (локальная разработка)
+    fetch(API_URL, {
+      method:  'POST',
+      redirect: 'follow',
+      body:    JSON.stringify(payload),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    })
+    .then(r => r.text())
+    .then(text => {
+      let json;
+      try { json = JSON.parse(text); } catch(e) { throw new Error('Ответ сервера: ' + text.slice(0, 120)); }
+      if (_isAuthErr(json)) { _authFail(); throw new Error('Сессия истекла'); }
+      if (json && json.error) throw new Error(json.error);
+      resolve(json);
+    })
+    .catch(reject);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════════════
+let _histTab = 'visits';
+
+function switchHistTab(which) {
+  _histTab = which;
+  const active   = { bg: 'var(--blue)', color: '#fff', border: 'var(--blue)' };
+  const inactive = { bg: 'var(--bg)',   color: 'var(--mid)', border: 'var(--border)' };
+  ['visits','shipments'].forEach(t => {
+    const btn = document.getElementById('histTab' + t.charAt(0).toUpperCase() + t.slice(1));
+    const s   = t === which ? active : inactive;
+    if (btn) { btn.style.background = s.bg; btn.style.color = s.color; btn.style.borderColor = s.border; }
+    const panel = document.getElementById('histPanel' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (panel) panel.style.display = t === which ? '' : 'none';
+  });
+  if (which === 'visits')    renderVisitsList();
+  if (which === 'shipments') renderShipmentsList();
+}
+
+/**
+ * Под-экран внутри раздела B2B (визит, отгрузка, обход, история, оплата).
+ * Корневые разделы переключает showSection(); сюда попадаем из сегментов
+ * под шапкой. Разметку экранов торгпреда не трогали — только навигацию.
+ */
+function showTab(tab) {
+  if (tab === 'payment' && !isOwner) return toast('Нет доступа');
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.subnav-btn').forEach(b => b.classList.remove('active'));
+  // screen-shipments redirect → merged into screen-visits
+  const screenId = tab === 'shipments' ? 'visits' : tab;
+  document.getElementById('screen-' + screenId)?.classList.add('active');
+  document.getElementById('subnav-' + screenId)?.classList.add('active');
+  _b2bSub = screenId;
+  // Корневая кнопка B2B остаётся подсвеченной, пока мы внутри её под-экранов
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sec-b2b')?.classList.add('active');
+  if (tab === 'payment') setDefaultPaymentDate();
+  if (tab === 'visits')    { switchHistTab('visits'); }
+  if (tab === 'shipments') { switchHistTab('shipments'); }
+  window.scrollTo(0, 0);
+}
+
+function showSuccess(icon, title, sub) {
+  document.getElementById('successIcon').textContent  = icon;
+  document.getElementById('successTitle').textContent = title;
+  document.getElementById('successSub').textContent   = sub;
+  document.getElementById('successOverlay').classList.add('show');
+}
+
+function closeSuccess() {
+  document.getElementById('successOverlay').classList.remove('show');
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function setBtnLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (loading) {
+    btn._text = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span>';
+    btn.disabled = true;
+  } else {
+    btn.innerHTML = btn._text;
+    btn.disabled  = false;
+  }
+}
+
+function resetVisitForm() {
+  ['vClient','vResult','vPotential','vNextDate','vContact','vPhone','vAddress','vComment'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('vNewClientName').value    = '';
+  document.getElementById('vNewClientCity').value    = '';
+  document.getElementById('vNewClientAddress').value = '';
+  const typeEl = document.getElementById('vNewClientType');
+  if (typeEl) typeEl.value = 'Аптека';
+  document.getElementById('vNewClientWrap').style.display = 'none';
+  const vf = document.getElementById('vFiles');
+  if (vf) vf.value = '';
+  hideBranchWrap('v');
+  setDefaultDates();
+}
+
+function resetShipmentForm() {
+  ['sClient','sInvoice','sComment'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  initShipmentItems();
+  document.getElementById('sTotalDisplay').textContent = '0 ₸';
+  const sf = document.getElementById('sFiles');
+  if (sf) sf.value = '';
+  hideBranchWrap('s');
+  setDefaultDates();
+}
+
+// ══════════════════════════════════════════════════════════════
+// SHIPMENT ITEMS
+// ══════════════════════════════════════════════════════════════
+function initShipmentItems() {
+  const wrap = document.getElementById('sItemsWrap');
+  wrap.innerHTML = PRODUCTS.map((p, i) => {
+    const cfg  = PRODUCT_PRICES[p] || { default: 7700, options: [7700, 7500, 7300, 7100] };
+    const opts = cfg.options.map(pr =>
+      `<option value="${pr}"${pr === cfg.default ? ' selected' : ''}>${pr.toLocaleString('ru')} ₸</option>`
+    ).join('') + '<option value="custom">Другая цена</option>';
+
+    return `
+    <div id="sRow_${i}" style="background:var(--white);border-radius:10px;border:1.5px solid var(--border);padding:12px;transition:border-color .15s">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="sChk_${i}" onchange="toggleShipRow(${i})"
+          style="width:20px;height:20px;accent-color:var(--blue);flex-shrink:0;cursor:pointer">
+        <label for="sChk_${i}" style="font-size:14px;font-weight:600;color:var(--dark);cursor:pointer;flex:1">${p}</label>
+        <span id="sRowSum_${i}" style="font-size:13px;font-weight:700;color:var(--light)">—</span>
+      </div>
+      <div id="sRowDetail_${i}" style="display:none;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--light);margin-bottom:4px">КОЛ-ВО</div>
+            <input type="number" id="sQty_${i}" inputmode="numeric" placeholder="0" min="1"
+              oninput="calcShipmentTotal()"
+              style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:16px;font-family:inherit;color:var(--dark);background:var(--bg)">
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--light);margin-bottom:4px">ЦЕНА ЗА ШТ, ₸</div>
+            <select id="sPrice_${i}" onchange="onPriceChange(${i})"
+              style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:14px;font-family:inherit;color:var(--dark);background:var(--bg);appearance:none">
+              ${opts}
+            </select>
+            <input type="number" id="sCustomPrice_${i}" inputmode="numeric" placeholder="Введи цену"
+              oninput="calcShipmentTotal()"
+              style="display:none;width:100%;border:1.5px solid var(--blue);border-radius:8px;padding:10px;font-size:15px;font-family:inherit;color:var(--dark);background:var(--bg);margin-top:6px">
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleShipRow(i) {
+  const checked = document.getElementById('sChk_' + i).checked;
+  const detail  = document.getElementById('sRowDetail_' + i);
+  const row     = document.getElementById('sRow_' + i);
+  detail.style.display = checked ? 'block' : 'none';
+  row.style.borderColor = checked ? 'var(--blue)' : 'var(--border)';
+  if (checked) document.getElementById('sQty_' + i).focus();
+  else {
+    document.getElementById('sQty_' + i).value = '';
+    document.getElementById('sRowSum_' + i).textContent = '—';
+    document.getElementById('sRowSum_' + i).style.color = 'var(--light)';
+  }
+  calcShipmentTotal();
+}
+
+function onPriceChange(i) {
+  const sel    = document.getElementById('sPrice_' + i);
+  const custom = document.getElementById('sCustomPrice_' + i);
+  custom.style.display = sel.value === 'custom' ? 'block' : 'none';
+  calcShipmentTotal();
+}
+
+function getItemPrice(i) {
+  const sel = document.getElementById('sPrice_' + i);
+  if (sel.value === 'custom') return parseFloat(document.getElementById('sCustomPrice_' + i).value) || 0;
+  return parseFloat(sel.value) || 0;
+}
+
+function calcShipmentTotal() {
+  let total = 0;
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('sChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('sQty_' + i)?.value) || 0;
+    const price = getItemPrice(i);
+    const sum   = qty * price;
+    const sumEl = document.getElementById('sRowSum_' + i);
+    if (sumEl) {
+      sumEl.textContent = sum > 0 ? sum.toLocaleString('ru') + ' ₸' : '0 ₸';
+      sumEl.style.color = sum > 0 ? 'var(--green)' : 'var(--light)';
+    }
+    total += sum;
+  });
+  document.getElementById('sTotalDisplay').textContent = total.toLocaleString('ru') + ' ₸';
+}
+
+function getShipmentItems() {
+  const items = [];
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('sChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('sQty_' + i)?.value) || 0;
+    const price = getItemPrice(i);
+    if (qty > 0) items.push({ product: p, qty, price, sum: qty * price });
+  });
+  return items;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PHONE FORMAT
+// ══════════════════════════════════════════════════════════════
+function formatPhone(input) {
+  let digits = input.value.replace(/\D/g, '');
+  if (digits.startsWith('8')) digits = '7' + digits.slice(1);
+  if (!digits.startsWith('7')) digits = '7' + digits;
+  digits = digits.slice(0, 11);
+
+  let formatted = '+7';
+  if (digits.length > 1) formatted += ' (' + digits.slice(1, 4);
+  if (digits.length >= 4) formatted += ') ' + digits.slice(4, 7);
+  if (digits.length >= 7) formatted += ' ' + digits.slice(7, 9);
+  if (digits.length >= 9) formatted += ' ' + digits.slice(9, 11);
+
+  input.value = formatted;
+}
+
+function validatePhone(phone) {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length === 11;
+}
+
+// ══════════════════════════════════════════════════════════════
+// FILE UPLOAD HELPERS
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Сжимает изображение через Canvas до maxW пикселей по ширине.
+ * PDF/doc не трогает — возвращает как есть.
+ * Результат: File с типом image/jpeg.
+ */
+async function _compressImage(file, maxW = 1280, quality = 0.72) {
+  if (!file.type.startsWith('image/')) return file;
+  return new Promise(resolve => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const ratio  = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => {
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+/**
+ * Читает файлы из <input type="file">, сжимает фото, возвращает
+ * [{ name, type, data }] где data — base64 без префикса.
+ * Лимит: 5 МБ на файл после сжатия, макс 5 файлов.
+ */
+async function readFilesAsBase64(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input || !input.files.length) return [];
+  const MAX_FILES  = 5;
+  const MAX_BYTES  = 5 * 1024 * 1024; // 5 МБ после сжатия
+  const results    = [];
+  const files      = Array.from(input.files).slice(0, MAX_FILES);
+  if (input.files.length > MAX_FILES)
+    toast(`Выбрано ${input.files.length} файлов — отправим первые ${MAX_FILES}`);
+
+  for (const raw of files) {
+    try {
+      const file   = await _compressImage(raw);
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = e => resolve(e.target.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const sizeKb = Math.round(base64.length * 0.75 / 1024);
+      if (base64.length * 0.75 > MAX_BYTES) {
+        toast(`${raw.name} слишком большой даже после сжатия (${sizeKb} КБ) — пропускаем`);
+        continue;
+      }
+      results.push({ name: file.name, type: file.type, data: base64 });
+    } catch(e) {
+      toast(`Не удалось прочитать ${raw.name}`);
+    }
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAYMENT TYPE TOGGLE (форма отгрузки)
+// ══════════════════════════════════════════════════════════════
+function onPayTypeChange() {
+  const type = document.getElementById('sPayType').value;
+  document.getElementById('sPayOnceWrap').style.display    = type === 'once'   ? '' : 'none';
+  document.getElementById('sPayMonthlyWrap').style.display = type === 'monthly' ? '' : 'none';
+  document.getElementById('sPayWeeklyWrap').style.display  = type === 'weekly'  ? '' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// VISITS LIST
+// ══════════════════════════════════════════════════════════════
+let _renderedVisits    = [];
+let _renderedShipments = [];
+
+function renderVisitsList() {
+  const wrap  = document.getElementById('visitsListWrap');
+  if (!wrap) return;
+  const query = (document.getElementById('searchVisits')?.value || '').toLowerCase();
+  _renderedVisits = myVisits.filter(v =>
+    !query ||
+    (v.clientName || '').toLowerCase().includes(query) ||
+    (v.comment    || '').toLowerCase().includes(query) ||
+    (v.result     || '').toLowerCase().includes(query)
+  );
+  if (!_renderedVisits.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:40px 0;color:var(--light);font-size:14px">
+      ${myVisits.length ? 'Ничего не найдено 🔍' : 'Визитов ещё нет 📋'}
+    </div>`;
+    return;
+  }
+  const RESULT_COLOR = {
+    'Продажа':       '#059669',
+    'Договорённость':'#2563eb',
+    'Отказ':         '#dc2626',
+    'Повторный':     '#d97706',
+  };
+  wrap.innerHTML = _renderedVisits.map((v, i) => {
+    const col = RESULT_COLOR[v.result] || 'var(--light)';
+    return `
+    <div onclick="openVisitDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;active:opacity:.85;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${v.clientName}</div>
+        <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${v.result || '—'}</span>
+      </div>
+      <div style="font-size:12px;color:var(--light);margin-top:4px">📅 ${v.date || '—'}</div>
+      ${v.comment ? `<div style="font-size:12px;color:var(--light);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${v.comment}"</div>` : ''}
+      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// SHIPMENTS LIST
+// ══════════════════════════════════════════════════════════════
+async function loadShipments() {
+  try {
+    const res = await api('POST', { action: 'myShipments', rep: repName });
+    myShipments = (Array.isArray(res) ? res : []).map(s => ({
+      ...s,
+      shipDate:      String(s['Дата поставки'] || s['Дата отгрузки'] || s.shipDate || '').slice(0, 10),
+      clientName:    s['Клиент']          || s.clientName    || '—',
+      amount:        parseFloat(s['Сумма товара ₸'] || s['Сумма'] || s.amount || 0),
+      status:        s['Статус поставки'] || s['Статус']     || s.status      || '',
+      dueDate:       String(s['Дата ожид. оплаты'] || s['Дата оплаты'] || s.dueDate || '').slice(0, 10),
+      payType:       s['Тип оплаты']      || s.payType       || '',
+      paySchedule:   s['График оплаты']   || s.paySchedule   || '',
+      invoiceNum:    s['№ накладной']     || s.invoiceNum    || '',
+      branchAddress: s['Адрес филиала']   || s.branchAddress || '',
+      comment:       s['Комментарий']     || s.comment       || '',
+      items: (() => {
+        const raw = s['Товары'] || s.items || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(line => {
+          // формат: "Товар × 5 шт × 1000 ₸"
+          const m = line.match(/^(.+?)\s*×\s*(\d+)\s*шт\s*×\s*([\d\s]+)\s*₸/);
+          if (m) return { product: m[1].trim(), qty: +m[2], price: +m[3].replace(/\s/g,''), sum: +m[2] * +m[3].replace(/\s/g,'') };
+          return { product: line, qty: '', price: 0, sum: 0 };
+        });
+      })(),
+      files: (() => {
+        const raw = s['Файлы'] || s['fileUrls'] || '';
+        if (Array.isArray(raw)) return raw;
+        return String(raw).split('\n').filter(Boolean).map(u => ({ name: u.split('/').pop()?.split('?')[0] || 'файл', url: u }));
+      })(),
+    })).sort((a, b) => b.shipDate.localeCompare(a.shipDate));
+  } catch(e) {
+    myShipments = [];
+  }
+}
+
+function renderShipmentsList() {
+  const wrap = document.getElementById('shipmentsListWrap');
+  if (!wrap) return;
+  if (!myShipments.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:40px 0;color:var(--light);font-size:14px">Отгрузок ещё нет 📦</div>`;
+    return;
+  }
+  const STATUS_COLOR = {
+    'Отгружено':   '#d97706',
+    'Оплачено':    '#059669',
+    'Реализация':  '#7c3aed',
+    'Просрочено':  '#dc2626',
+  };
+  _renderedShipments = myShipments;
+  wrap.innerHTML = _renderedShipments.map((s, i) => {
+    const col = STATUS_COLOR[s.status] || 'var(--light)';
+    return `
+    <div onclick="openShipmentDetail(${i})" style="background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:14px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s" ontouchstart="this.style.boxShadow='0 0 0 2px var(--blue)'" ontouchend="this.style.boxShadow=''">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:var(--dark);flex:1">${s.clientName}</div>
+        <span style="font-size:11px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:3px 10px;white-space:nowrap">${s.status || '—'}</span>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:var(--dark);margin-top:6px">${Number(s.amount).toLocaleString('ru')} ₸</div>
+      ${s.branchAddress ? `<div style="font-size:12px;color:var(--blue);margin-top:3px">📍 ${s.branchAddress}</div>` : ''}
+      <div style="font-size:12px;color:var(--light);margin-top:4px">📦 ${s.shipDate || '—'}${s.invoiceNum ? ' · №' + s.invoiceNum : ''}</div>
+      <div style="font-size:11px;color:var(--blue);margin-top:6px;font-weight:600">Открыть →</div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// ROUND (ОБХОД)
+// ══════════════════════════════════════════════════════════════
+function initRoundItems() {
+  const wrap = document.getElementById('rItemsWrap');
+  if (!wrap) return;
+  wrap.innerHTML = PRODUCTS.map((p, i) => `
+    <div id="rRow_${i}" style="background:var(--white);border-radius:10px;border:1.5px solid var(--border);padding:12px;transition:border-color .15s">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="rChk_${i}" onchange="toggleRoundRow(${i})"
+          style="width:20px;height:20px;accent-color:var(--blue);flex-shrink:0;cursor:pointer">
+        <label for="rChk_${i}" style="font-size:14px;font-weight:600;color:var(--dark);cursor:pointer;flex:1">${p}</label>
+        <span id="rRowSum_${i}" style="font-size:13px;font-weight:700;color:var(--light)">—</span>
+      </div>
+      <div id="rRowDetail_${i}" style="display:none;margin-top:10px">
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--light);margin-bottom:4px">ПРОДАНО ШТ</div>
+          <input type="number" id="rQty_${i}" inputmode="numeric" placeholder="0" min="0"
+            oninput="calcRoundTotal()"
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px;font-size:16px;font-family:inherit;color:var(--dark);background:var(--bg)">
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function toggleRoundRow(i) {
+  const checked = document.getElementById('rChk_' + i).checked;
+  const detail  = document.getElementById('rRowDetail_' + i);
+  const row     = document.getElementById('rRow_' + i);
+  detail.style.display = checked ? 'block' : 'none';
+  row.style.borderColor = checked ? 'var(--blue)' : 'var(--border)';
+  if (checked) document.getElementById('rQty_' + i).focus();
+  else {
+    document.getElementById('rQty_' + i).value = '';
+    const sumEl = document.getElementById('rRowSum_' + i);
+    sumEl.textContent = '—';
+    sumEl.style.color = 'var(--light)';
+  }
+  calcRoundTotal();
+}
+
+function calcRoundTotal() {
+  // Цена берётся из стандартного прайса (default)
+  let total = 0;
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('rChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('rQty_' + i)?.value) || 0;
+    const cfg   = PRODUCT_PRICES[p] || { default: 7700 };
+    const price = cfg.default;
+    const sum   = qty * price;
+    const sumEl = document.getElementById('rRowSum_' + i);
+    if (sumEl) {
+      sumEl.textContent = sum > 0 ? sum.toLocaleString('ru') + ' ₸' : '0 ₸';
+      sumEl.style.color = sum > 0 ? 'var(--green)' : 'var(--light)';
+    }
+    total += sum;
+  });
+  const el = document.getElementById('rTotalDisplay');
+  if (el) el.textContent = total.toLocaleString('ru') + ' ₸';
+}
+
+function getRoundItems() {
+  const items = [];
+  PRODUCTS.forEach((p, i) => {
+    const checked = document.getElementById('rChk_' + i)?.checked;
+    if (!checked) return;
+    const qty   = parseFloat(document.getElementById('rQty_' + i)?.value) || 0;
+    const cfg   = PRODUCT_PRICES[p] || { default: 7700 };
+    const price = cfg.default;
+    if (qty > 0) items.push({ product: p, qty, price, sum: qty * price });
+  });
+  return items;
+}
+
+async function submitRound() {
+  const sel        = document.getElementById('rClient');
+  const clientId   = sel.value;
+  const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
+  const roundDate  = document.getElementById('rDate').value;
+  const items      = getRoundItems();
+  const amount     = items.reduce((s, i) => s + i.sum, 0);
+
+  if (!clientId)    return toast('Выбери аптеку');
+  if (!roundDate)   return toast('Укажи дату обхода');
+  if (!items.length) return toast('Отметь хотя бы 1 проданную позицию');
+
+  setBtnLoading('btnSubmitRound', true);
+  try {
+    await api('POST', {
+      action: 'addRound',
+      data: {
+        clientId, clientName, roundDate, items, amount,
+        comment:       document.getElementById('rComment').value,
+        branchId:      document.getElementById('rBranch')?.value || '',
+        branchAddress: getBranchAddress('r'),
+        rep: repName,
+      }
+    });
+    // Сброс формы
+    document.getElementById('rClient').value  = '';
+    document.getElementById('rComment').value = '';
+    PRODUCTS.forEach((p, i) => {
+      const chk = document.getElementById('rChk_' + i);
+      if (chk && chk.checked) { chk.checked = false; toggleRoundRow(i); }
+    });
+    showSuccess('🔄', 'Обход записан!', clientName + '\nПродано на ' + Number(amount).toLocaleString('ru') + ' ₸');
+    showTab('today');
+  } catch(e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitRound', false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// DETAIL OVERLAY
+// ══════════════════════════════════════════════════════════════
+
+function _detailRow(icon, label, value) {
+  if (!value) return '';
+  return `<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+    <span style="font-size:16px;flex-shrink:0">${icon}</span>
+    <div>
+      <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">${label}</div>
+      <div style="font-size:14px;color:var(--dark)">${value}</div>
+    </div>
+  </div>`;
+}
+
+function _detailFiles(files) {
+  if (!files?.length) return '';
+  return `<div style="margin-top:12px">
+    <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📎 ФАЙЛЫ</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${files.map(f => `<a href="${f.url}" target="_blank"
+        style="display:block;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--blue);text-decoration:none">
+        📎 ${f.name || 'файл'}</a>`).join('')}
+    </div>
+  </div>`;
+}
+
+function openVisitDetail(i) {
+  const v = _renderedVisits[i];
+  if (!v) return;
+  _showVisitDetail(v);
+}
+
+function _showVisitDetail(v) {
+  const RESULT_COLOR = { 'Продажа':'#059669','Договорённость':'#2563eb','Отказ':'#dc2626','Повторный':'#d97706' };
+  const col = RESULT_COLOR[v.result] || 'var(--light)';
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:800;color:var(--dark)">${v.clientName}</div>
+        <div style="font-size:12px;color:var(--light);margin-top:2px">📝 Визит</div>
+      </div>
+      <span style="font-size:12px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:4px 12px">${v.result || '—'}</span>
+    </div>
+    ${_detailRow('📅', 'Дата', v.date)}
+    ${_detailRow('👤', 'Контакт', v.contact ? v.contact + (v.phone ? ' · ' + v.phone : '') : '')}
+    ${_detailRow('🏙', 'Город / Адрес', [v.city, v.address].filter(Boolean).join(', '))}
+    ${_detailRow('📍', 'Филиал', v.branchAddress)}
+    ${_detailRow('🎯', 'Потенциал', v.potential)}
+    ${_detailRow('📆', 'Следующий визит', v.nextDate)}
+    ${v.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${v.comment}"</div>` : ''}
+    ${_detailFiles(v.files)}
+  `;
+  _openDetailOverlay();
+}
+
+function openShipmentDetail(i) {
+  const s = _renderedShipments[i];
+  if (!s) return;
+  const STATUS_COLOR = { 'Отгружено':'#d97706','Оплачено':'#059669','Реализация':'#7c3aed','Просрочено':'#dc2626' };
+  const col = STATUS_COLOR[s.status] || 'var(--light)';
+
+  let payInfo = '';
+  if (s.payType === 'consignment')   payInfo = 'По реализации (По факту)';
+  else if (s.payType === 'monthly' && s.paySchedule) {
+    const day = s.paySchedule.split(':')[1];
+    payInfo = `Ежемесячно${day ? ', ' + day + '-го числа' : ''}`;
+  } else if (s.payType === 'weekly' && s.paySchedule) {
+    const days = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
+    payInfo = `Еженедельно — ${days[parseInt(s.paySchedule.split(':')[1])] || ''}`;
+  } else if (s.dueDate) {
+    payInfo = s.dueDate;
+  }
+
+  // Позиции из items если есть, иначе из строки
+  const itemsHtml = Array.isArray(s.items) && s.items.length
+    ? `<div style="margin-top:12px">
+        <div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📋 ПОЗИЦИИ</div>
+        ${s.items.map(it => `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span>${it.product}</span>
+          <span style="color:var(--light)">${it.qty} шт × ${it.price.toLocaleString('ru')} ₸ = <b style="color:var(--dark)">${it.sum.toLocaleString('ru')} ₸</b></span>
+        </div>`).join('')}
+      </div>`
+    : '';
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:800;color:var(--dark)">${s.clientName}</div>
+        <div style="font-size:12px;color:var(--light);margin-top:2px">📦 Отгрузка</div>
+      </div>
+      <span style="font-size:12px;font-weight:700;color:${col};background:${col}1a;border-radius:20px;padding:4px 12px">${s.status || '—'}</span>
+    </div>
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;text-align:center">
+      <div style="font-size:24px;font-weight:800;color:var(--dark)">${Number(s.amount).toLocaleString('ru')} ₸</div>
+    </div>
+    ${_detailRow('📦', 'Дата отгрузки', s.shipDate)}
+    ${_detailRow('📍', 'Филиал', s.branchAddress)}
+    ${_detailRow('📄', '№ накладной', s.invoiceNum)}
+    ${_detailRow('💳', 'Оплата', payInfo)}
+    ${itemsHtml}
+    ${s.comment ? `<div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px;font-size:14px;color:var(--dark);font-style:italic;border-left:3px solid var(--blue)">"${s.comment}"</div>` : ''}
+    ${_detailFiles(s.files)}
+  `;
+  _openDetailOverlay();
+}
+
+function _openDetailOverlay() {
+  const ov = document.getElementById('detailOverlay');
+  ov.style.display = 'flex';
+  // Небольшая задержка для анимации
+  requestAnimationFrame(() => {
+    document.getElementById('detailSheet').style.transform = 'translateY(0)';
+  });
+}
+
+function closeDetail(e) {
+  // Закрываем только по клику на тёмный фон, не по самому листу
+  if (e && e.target !== document.getElementById('detailOverlay')) return;
+  document.getElementById('detailOverlay').style.display = 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// BOOT — показываем логин; если есть живой серверный токен,
+// сервер подтверждает сессию (pingSession) и пускает без пароля.
+// Роль берём ТОЛЬКО из ответа сервера, не из localStorage.
+// ══════════════════════════════════════════════════════════════
+const savedRep = localStorage.getItem('rep');
+if (savedRep) {
+  document.getElementById('loginName').value = savedRep;
+  document.getElementById('loginPass').focus();
+}
+document.getElementById('loginScreen').style.display = 'flex';
+
+const savedTok = localStorage.getItem('token');
+if (savedTok) {
+  _authToken = savedTok;
+  api('POST', { action: 'pingSession' })
+    .then(r => {
+      if (r && r.ok) {
+        repName = r.name;
+        isOwner = r.owner === true;
+        _tabs   = Array.isArray(r.tabs) ? r.tabs : [];
+        localStorage.setItem('rep', repName);
+        localStorage.setItem('owner', isOwner ? '1' : '');
+        localStorage.setItem('tabs',  JSON.stringify(_tabs));
+        showApp();
+      }
+    })
+    .catch(() => {}); // токен мёртв — остаёмся на логине
+}
+</script>
+</body>
+</html>
