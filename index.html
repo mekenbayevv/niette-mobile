@@ -78,12 +78,24 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 }
 
 /* ── HEADER ── */
+/* Шапка. В standalone-режиме (запуск с домашнего экрана) статус-бар
+   телефона накладывается на страницу — без safe-area-inset-top время и
+   значок сети ложатся прямо на логотип. Учитываем вырез и снизу тоже:
+   на альбомной ориентации inset появляется по бокам. */
 .app-header {
   background: linear-gradient(160deg, var(--brand-deep) 0%, var(--brand-darkest) 100%);
   color: var(--on-accent);
-  padding: 14px 16px 10px;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left));
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 100;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.app-logo { display: flex; align-items: center; gap: 9px; }
+.app-logo img { width: 26px; height: 26px; border-radius: 8px; display: block; }
+.header-badge {
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 20px; padding: 5px 6px 5px 11px;
 }
 .app-logo { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; }
 .app-logo span { color: var(--brand-gold); }
@@ -269,7 +281,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .subnav {
   display: flex; gap: 6px; overflow-x: auto; padding: 10px 16px 2px;
   background: var(--white); border-bottom: 1px solid var(--border);
-  position: sticky; top: 52px; z-index: 90;
+  position: sticky; top: calc(50px + env(safe-area-inset-top)); z-index: 90;
   scrollbar-width: none; -ms-overflow-style: none;
 }
 .subnav::-webkit-scrollbar { display: none; }
@@ -445,12 +457,13 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 <div id="appWrap" style="display:none">
 
   <header class="app-header">
-    <div>
-      <div class="app-logo">NIE<span>TTE</span></div>
+    <div class="app-logo">
+      <img src="./icons/icon-180.png" alt="">
+      <span style="font-size:16px;font-weight:800;letter-spacing:-.3px">NIE<span>TTE</span></span>
     </div>
-    <div style="display:flex;align-items:center;gap:10px">
+    <div class="header-badge">
       <span class="rep-name" id="repNameBadge"></span>
-      <button class="btn-logout" onclick="logout()" title="Выйти">⬅</button>
+      <button class="btn-logout" onclick="logout()" title="Выйти" aria-label="Выйти">⬅</button>
     </div>
   </header>
 
@@ -863,9 +876,14 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     <div id="homeBody"></div>
   </div>
 
-  <!-- Клиенты: новые/повторные, удержание -->
+  <!-- Клиенты: клиентская аналитика (таб «Клиенты» дашборда) -->
   <div class="screen" id="screen-clients">
     <div id="clientsBody"></div>
+  </div>
+
+  <!-- B2B-дашборд: аптеки и партнёры -->
+  <div class="screen" id="screen-b2bdash">
+    <div id="b2bDashBody"></div>
   </div>
 
   <!-- Пульс: главный экран. Все карточки кликабельны и ведут вглубь. -->
@@ -959,7 +977,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.2.1';
+const APP_VERSION = '0.3.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -998,7 +1016,11 @@ const SECTIONS = [
   { id: 'home',    label: 'Главная', icon: '🏠', tabs: null },   // доступна всем
   { id: 'clients', label: 'Клиенты', icon: '👥', tabs: ['clients'] },
   { id: 'pulse',   label: 'Пульс',   icon: '⚡', tabs: ['overview','kaspi'] },
+  /* B2B — это дашборд по аптекам и партнёрам. Формы торгпреда (визит,
+     отгрузка, обход, оплата) остались, но ушли в конец сегментов: ими
+     пользуются в поле, а с телефона на них смотрят реже, чем на цифры. */
   { id: 'b2b',     label: 'B2B',     icon: '🤝', tabs: ['b2b'], sub: [
+      { id: 'b2bdash',  label: '📊 Дашборд'  },
       { id: 'today',    label: '🏠 Сегодня'  },
       { id: 'visit',    label: '📝 Визит'    },
       { id: 'shipment', label: '📦 Отгрузка' },
@@ -1396,17 +1418,23 @@ function renderHome() {
       </div>`;
   }
 
-  // Напоминания: визиты на сегодня из уже загруженных данных B2B
+  // Напоминания: то, что требует реакции. Долги берём из кэша B2B-дашборда,
+  // визиты — из уже загруженных данных; своего запроса Главная не делает.
   let reminders = '';
   if (hasTab('b2b')) {
+    const b2b = cacheGet('b2bdash');
+    const items = [];
+    if (b2b && b2b.data && b2b.data.totals && b2b.data.totals.overdue > 0) {
+      items.push(uiRow({ icon: '🔴', title: 'Просроченные долги',
+        sub: 'у партнёров B2B', value: fmtM(b2b.data.totals.overdue) + ' ₸',
+        onclick: "goSection('b2b')" }));
+    }
     const todayStr = new Date().toISOString().slice(0, 10);
-    const todays = (typeof myVisits !== 'undefined' ? myVisits : []).filter(v => v.date === todayStr);
-    reminders = `<div class="sec-title">Напоминания</div>
-      <div class="card">${
-        todays.length
-          ? todays.slice(0, 5).map(v => uiRow({ icon: '📝', title: v.client || 'Визит', sub: v.result || '', value: '' })).join('')
-          : uiEmpty('Визитов на сегодня не записано', '📋')
-      }</div>`;
+    (typeof myVisits !== 'undefined' ? myVisits : [])
+      .filter(v => v.date === todayStr).slice(0, 4)
+      .forEach(v => items.push(uiRow({ icon: '📝', title: v.client || 'Визит', sub: v.result || '', value: '' })));
+    reminders = `<div class="sec-title">Требует внимания</div>
+      <div class="card">${items.length ? items.join('') : uiEmpty('Всё спокойно', '✅')}</div>`;
   }
 
   const quick = SECTIONS.filter(x => x.id !== 'home' && x.id !== 'more' && sectionAllowed(x));
@@ -1420,27 +1448,116 @@ function renderHome() {
 
 function _currentName() { return (typeof repName === 'string' && repName) ? repName : 'коллега'; }
 
-/* ── КЛИЕНТЫ ─────────────────────────────────────────────────── */
+/* ── КЛИЕНТЫ ───────────────────────────────────────────────────
+   Это таб «Клиенты» десктопа: клиентская база Kaspi — сколько всего,
+   какая доля возвращается, за сколько дней, кто рискует отвалиться.
+   Не путать с партнёрами B2B: там аптеки и оптовики, здесь розница. */
 function renderClients() {
   const box = document.getElementById('clientsBody');
   if (!box) return;
-  const cached = cacheGet('pulse');
-  const d = cached && cached.data;
-  if (!d) { box.innerHTML = uiSkeleton('kpi') + uiEmpty('Открой «Пульс», чтобы подтянуть цифры', '👥'); return; }
-  const c = d.clients || {};
-  const total = (c.new.value || 0) + (c.repeat.value || 0);
-  const share = total ? Math.round((c.repeat.value / total) * 100) : 0;
-  box.innerHTML = `
-    <div class="kpi-strip">
-      ${uiKpi({ label: 'Новые · месяц',    value: fmtNum(c.new.value),    delta: c.new.deltaPct })}
-      ${uiKpi({ label: 'Повторные · месяц', value: fmtNum(c.repeat.value), delta: c.repeat.deltaPct })}
-      ${uiKpi({ label: 'Доля повторных',    value: share + '%', wide: true, sub: 'от всех покупателей за месяц' })}
-    </div>
-    <div class="sec-title">Подробнее</div>
-    <div class="card">
-      ${uiRow({ icon: '📊', title: 'Клиентская аналитика', sub: 'когорты, удержание, LTV', value: '›', onclick: "openTab('clients')" })}
-    </div>` + stampHtml(cached.ts, false);
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('clients', () => dataCall('clientsPulse'), (data, meta) => {
+    if (!data) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '👥');
+      return;
+    }
+    box.dataset.filled = '1';
+    const o = data.overview || {};
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'Всего клиентов', value: fmtNum(o.totalClients) })}
+        ${uiKpi({ label: 'Доля повторных', value: Math.round(o.repeatRate) + '%', tone: o.repeatRate >= 25 ? 'green' : '' })}
+        ${uiKpi({ label: 'Повторные',      value: fmtNum(o.repeatClients) })}
+        ${uiKpi({ label: 'Только один заказ', value: fmtNum(o.newClients) })}
+        ${o.medianTTR ? uiKpi({ label: 'Возврат за', value: o.medianTTR + ' дн', sub: 'медиана до 2-го заказа' }) : ''}
+        ${o.ltv ? uiKpi({ label: 'LTV клиента', value: fmtM(o.ltv) + ' ₸' }) : ''}
+      </div>`;
+
+    const cities = (data.cities || []).length
+      ? `<div class="sec-title">Удержание по городам</div>
+         <div class="card" style="padding:6px 0">${uiBars((data.cities || []).map(c => ({
+             label: c.label, value: c.value, display: Math.round(c.value) + '%', color: '#006B45'
+           })))}</div>` : '';
+
+    const churn = (data.churnRisk || []).length
+      ? `<div class="sec-title">Риск оттока</div>
+         <div class="card">${data.churnRisk.map(c => uiRow({
+             icon: '⏳', title: c.name, sub: c.days ? ('молчит ' + c.days + ' дн') : '',
+             value: fmtM(c.revenue) + ' ₸', vsub: 'выручка'
+           })).join('')}</div>` : '';
+
+    const more = `<div class="sec-title">Подробнее</div>
+      <div class="card">
+        ${uiRow({ icon: '📊', title: 'Когорты, LTV, корзина', sub: 'полная аналитика на десктопе', value: '›', onclick: "openTab('clients')" })}
+      </div>`;
+
+    box.innerHTML = kpis + cities + churn + more + stampHtml(meta.ts, meta.loading);
+  });
 }
+
+/* ── B2B-ДАШБОРД ───────────────────────────────────────────────
+   Аптеки и партнёры: сколько их, сколько отгружено и оплачено за
+   месяц, кто должен и кто просрочил, как распределены по стадиям.
+   Формы визитов и отгрузок — соседние сегменты, не здесь. */
+function renderB2bDash() {
+  const box = document.getElementById('b2bDashBody');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('b2bdash', () => dataCall('b2bPulse'), (data, meta) => {
+    if (!data) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '🤝');
+      return;
+    }
+    box.dataset.filled = '1';
+    const t = data.totals || {};
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'Партнёров',   value: fmtNum(t.clients), sub: t.active ? (fmtNum(t.active) + ' с отгрузкой в этом месяце') : '' })}
+        ${uiKpi({ label: 'Отгружено',   value: fmtM(t.shipped.value) + ' ₸', delta: t.shipped.deltaPct })}
+        ${uiKpi({ label: 'Оплачено',    value: fmtM(t.paid.value) + ' ₸',    delta: t.paid.deltaPct })}
+        ${uiKpi({ label: 'Долг',        value: fmtM(t.debt) + ' ₸', tone: t.debt > 0 ? 'red' : '' })}
+        ${uiKpi({ label: 'Просрочено',  value: fmtM(t.overdue) + ' ₸', wide: true,
+                  tone: t.overdue > 0 ? 'red' : 'green',
+                  sub: t.debt ? ('это ' + Math.round((t.overdue / t.debt) * 100) + '% всего долга') : 'просрочки нет' })}
+      </div>`;
+
+    const types = (data.types || []).length
+      ? `<div class="sec-title">Кто наши партнёры</div>
+         <div class="card" style="padding:6px 0">${uiBars(data.types.map((x, i) => ({
+             label: x.label, value: x.value, display: fmtNum(x.value),
+             color: ['#006B45','#7c3aed','#ea580c','#0891b2','#94a3b8'][i % 5]
+           })))}</div>` : '';
+
+    const stages = (data.stages || []).length
+      ? `<div class="sec-title">Воронка по стадиям</div>
+         <div class="card" style="padding:6px 0">${uiBars(data.stages.map(x => ({
+             label: x.label, value: x.value, display: fmtNum(x.value),
+             color: STAGE_COLOR[x.label] || '#94a3b8'
+           })))}</div>` : '';
+
+    const debtors = (data.topDebtors || []).length
+      ? `<div class="sec-title">Кто должен</div>
+         <div class="card">${data.topDebtors.map(d => uiRow({
+             icon: d.overdue > 0 ? '🔴' : '🟡',
+             title: d.name,
+             sub: [d.type, d.city].filter(Boolean).join(' · '),
+             value: fmtM(d.debt) + ' ₸',
+             vsub: d.overdue > 0 ? ('просрочено ' + fmtM(d.overdue)) : 'по сроку',
+           })).join('')}</div>`
+      : `<div class="sec-title">Кто должен</div><div class="card">${uiEmpty('Долгов нет', '✅')}</div>`;
+
+    box.innerHTML = kpis + types + stages + debtors + stampHtml(meta.ts, meta.loading);
+  });
+}
+
+const STAGE_COLOR = {
+  'Новый': '#2563eb', 'Переговоры': '#d97706', 'Активный': '#059669',
+  'Заморожен': '#94a3b8', 'Закрыт': '#dc2626',
+};
 
 /* ── ЕЩЁ ───────────────────────────────────────────────────────── */
 function renderMore() {
@@ -2200,6 +2317,7 @@ function showTab(tab) {
   // Корневая кнопка B2B остаётся подсвеченной, пока мы внутри её под-экранов
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sec-b2b')?.classList.add('active');
+  if (tab === 'b2bdash') renderB2bDash();
   if (tab === 'payment') setDefaultPaymentDate();
   if (tab === 'visits')    { switchHistTab('visits'); }
   if (tab === 'shipments') { switchHistTab('shipments'); }
