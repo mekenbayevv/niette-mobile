@@ -898,6 +898,9 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
       <div id="moreLinks"></div>
     </div>
     <div class="card">
+      <div class="more-link" onclick="forceUpdate()">
+        <span class="more-icon">🔄</span><span>Проверить обновление</span><span class="more-chev">›</span>
+      </div>
       <div class="more-link" onclick="openFullVersion()">
         <span class="more-icon">🖥️</span><span>Полная версия</span><span class="more-chev">›</span>
       </div>
@@ -1573,6 +1576,28 @@ function renderMore() {
   }
 }
 
+/**
+ * Принудительно забрать свежую версию: снять service worker, выбросить
+ * его кэш оболочки и перезагрузиться. Нужно, когда файл на хостинге уже
+ * обновили, а телефон продолжает показывать старое — иначе приходится
+ * гадать, что именно не доехало.
+ */
+async function forceUpdate() {
+  toast('Обновляю…');
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) {}
+  // ?v= сбивает кэш браузера, который service worker уже не контролирует
+  location.replace(location.pathname + '?v=' + Date.now());
+}
+
 /** Открыть конкретный таб в полной версии — для того, чего нет в мобильном. */
 function openTab(tab) {
   window.open(API_URL + '?desktop=1#' + tab, '_blank');
@@ -1679,7 +1704,7 @@ function showApp() {
   showSection(startSec ? start : (pulseOk ? 'pulse' : firstAllowed));
 
   const ver = document.getElementById('moreVersion');
-  if (ver) ver.textContent = 'NIETTE · мобильный кабинет · v' + APP_VERSION;
+  if (ver) ver.innerHTML = 'NIETTE · мобильный кабинет · версия <b>' + APP_VERSION + '</b>';
 
   // Данные B2B нужны только тем, у кого есть этот раздел
   if (hasTab('b2b')) {
