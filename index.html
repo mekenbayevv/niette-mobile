@@ -450,6 +450,27 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   text-transform: uppercase; letter-spacing: .6px; margin: 18px 2px 8px;
 }
 
+/* Чипы сегментов клиентской базы — компактно, в одну-две строки */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  border: 1px solid var(--border); border-radius: 16px;
+  padding: 5px 10px; font-size: 12px; font-weight: 700; background: var(--surface);
+}
+.chip b { font-weight: 800; }
+.chip .chip-n { opacity: .75; font-weight: 700; }
+
+/* Помесячная динамика: пара столбиков на месяц, без внешних библиотек */
+.dyn { display: flex; align-items: flex-end; gap: 10px; padding: 12px 14px 6px; }
+.dyn-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dyn-bars { display: flex; align-items: flex-end; gap: 3px; height: 84px; }
+.dyn-bar { width: 13px; border-radius: 3px 3px 0 0; }
+.dyn-bar.new { background: var(--brand-green); }
+.dyn-bar.rep { background: var(--brand-gold); }
+.dyn-label { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.dyn-legend { display: flex; gap: 14px; padding: 4px 14px 12px; font-size: 11px; color: var(--text-3); }
+.dyn-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+
 /* ── Список ссылок в разделе «Ещё» ── */
 .more-link {
   display: flex; align-items: center; gap: 12px; padding: 15px 16px;
@@ -1024,7 +1045,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.3.3';
+const APP_VERSION = '0.4.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 const PRODUCTS = [
@@ -1400,7 +1421,7 @@ function renderPulse() {
     const kpis = `
       <div class="kpi-strip">
         ${tapKpi('Неделя',   fmtM(w.revenue) + ' ₸', w.deltaPct, 'pulse', fmtNum(w.orders) + ' заказов')}
-        ${tapKpi('Сегодня',  fmtM(t.revenue) + ' ₸', t.deltaPct, 'pulse', fmtNum(t.orders) + ' заказов')}
+        ${tapKpi('Сегодня' + (t.live ? ' · live' : ''), fmtM(t.revenue) + ' ₸', t.deltaPct, 'pulse', fmtNum(t.orders) + ' выдано')}
         ${tapKpi('Новые клиенты',    fmtNum(data.clients.new.value),    data.clients.new.deltaPct,    'clients')}
         ${tapKpi('Повторные',        fmtNum(data.clients.repeat.value), data.clients.repeat.deltaPct, 'clients')}
         ${tapKpi('Выручка в день',   fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse')}
@@ -1417,7 +1438,20 @@ function renderPulse() {
       <div class="sec-title">Доли каналов · этот месяц</div>
       <div class="card" style="padding:6px 0">${uiBars(ch)}</div>`;
 
-    box.innerHTML = hero + kpis + channels + stampHtml(meta.ts, meta.loading);
+    // Что прямо сейчас в работе — только Kaspi, данные из API
+    const pl = data.pipeline;
+    const pipeline = pl ? `
+      <div class="sec-title">Сейчас в работе · Kaspi</div>
+      <div class="card">
+        ${uiRow({ icon: '📦', title: 'На упаковке', value: fmtNum(pl.packaging.count),
+                  vsub: fmtM(pl.packaging.sum) + ' ₸' })}
+        ${uiRow({ icon: '🚚', title: 'В доставке',  value: fmtNum(pl.delivery.count),
+                  vsub: fmtM(pl.delivery.sum) + ' ₸' })}
+        ${pl.awaiting.count ? uiRow({ icon: '⏳', title: 'Ждут выдачи', value: fmtNum(pl.awaiting.count) }) : ''}
+        ${pl.cancelledToday ? uiRow({ icon: '❌', title: 'Отменено сегодня', value: fmtNum(pl.cancelledToday) }) : ''}
+      </div>` : '';
+
+    box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading);
   });
 }
 
@@ -1445,47 +1479,47 @@ function deltaText(pct) {
 }
 
 /* ── ГЛАВНАЯ ───────────────────────────────────────────────────
-   Не дублирует Пульс: показывает то, что требует реакции сегодня,
-   и быстрые входы. Цифры берёт из кэша Пульса — лишнего запроса нет. */
+   Витрина остальных разделов: по паре ключевых чисел из каждого, с
+   переходом внутрь. Своих запросов не делает — берёт из кэша тех
+   экранов, которые уже открывали. Так первый заход не превращается в
+   четыре последовательных запроса к Apps Script по 5–10 секунд. */
 function renderHome() {
   const box = document.getElementById('homeBody');
   if (!box) return;
   const hour = new Date().getHours();
   const hi   = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
 
-  const cached = cacheGet('pulse');
-  let news = '';
-  if (cached && cached.data) {
-    const d = cached.data, t = d.today || {}, m = d.month || {};
-    const top = (d.channels || [])[0];
-    news = `<div class="card" style="padding:14px 16px;margin-bottom:12px">
-        <div class="row-title">Сегодня продано ${fmtM(t.revenue)} ₸</div>
-        <div class="row-sub">${deltaText(t.deltaPct)} ко вчера · с начала месяца ${fmtM(m.revenue)} ₸ (${deltaText(m.deltaPct)})</div>
-        ${top ? `<div class="row-sub" style="margin-top:4px">Лидер канала: ${top.label} — ${top.share}%</div>` : ''}
-      </div>`;
-  } else {
-    news = `<div class="card" style="padding:14px 16px;margin-bottom:12px">
-        <div class="row-sub">Открой «Пульс» — и сводка появится здесь.</div>
-      </div>`;
+  const cards = [];
+
+  // Продажи
+  if (hasTab('overview') || hasTab('kaspi')) {
+    const c = cacheGet('pulse');
+    const d = c && c.data;
+    cards.push(sectionCard('⚡ Пульс', 'pulse', d ? [
+      { label: 'Сегодня',    value: fmtM(d.today.revenue) + ' ₸', delta: d.today.deltaPct },
+      { label: 'Этот месяц', value: fmtM(d.month.revenue) + ' ₸', delta: d.month.deltaPct },
+    ] : null, c && c.ts));
   }
 
-  // Напоминания: то, что требует реакции. Долги берём из кэша B2B-дашборда,
-  // визиты — из уже загруженных данных; своего запроса Главная не делает.
-  let reminders = '';
+  // Клиенты
+  if (hasTab('clients')) {
+    const per = getPeriod();
+    const c = cacheGet('clients_' + per.id) || cacheGet('clients_month');
+    const d = c && c.data;
+    cards.push(sectionCard('👥 Клиенты', 'clients', d ? [
+      { label: 'Покупали',        value: fmtNum(d.period.clients) },
+      { label: 'Доля повторных',  value: d.period.repeatShare + '%' },
+    ] : null, c && c.ts));
+  }
+
+  // B2B
   if (hasTab('b2b')) {
-    const b2b = cacheGet('b2bdash');
-    const items = [];
-    if (b2b && b2b.data && b2b.data.totals && b2b.data.totals.overdue > 0) {
-      items.push(uiRow({ icon: '🔴', title: 'Просроченные долги',
-        sub: 'у партнёров B2B', value: fmtM(b2b.data.totals.overdue) + ' ₸',
-        onclick: "goSection('b2b')" }));
-    }
-    const todayStr = new Date().toISOString().slice(0, 10);
-    (typeof myVisits !== 'undefined' ? myVisits : [])
-      .filter(v => v.date === todayStr).slice(0, 4)
-      .forEach(v => items.push(uiRow({ icon: '📝', title: v.client || 'Визит', sub: v.result || '', value: '' })));
-    reminders = `<div class="sec-title">Требует внимания</div>
-      <div class="card">${items.length ? items.join('') : uiEmpty('Всё спокойно', '✅')}</div>`;
+    const c = cacheGet('b2bdash');
+    const d = c && c.data;
+    cards.push(sectionCard('🤝 B2B', 'b2b', d ? [
+      { label: 'Отгружено',  value: fmtM(d.totals.shipped.value) + ' ₸', delta: d.totals.shipped.deltaPct },
+      { label: 'Долг',       value: fmtM(d.totals.debt) + ' ₸', tone: d.totals.overdue > 0 ? 'red' : '' },
+    ] : null, c && c.ts));
   }
 
   const quick = SECTIONS.filter(x => x.id !== 'home' && x.id !== 'more' && sectionAllowed(x));
@@ -1494,58 +1528,133 @@ function renderHome() {
       icon: x.icon, title: x.label, value: '›', onclick: `goSection('${x.id}')`
     })).join('')}</div>`;
 
-  box.innerHTML = `<div class="sec-title" style="margin-top:0">${hi}, ${_currentName()}</div>` + news + reminders + links;
+  box.innerHTML = `<div class="sec-title" style="margin-top:0">${hi}, ${_currentName()}</div>`
+                + (cards.length ? cards.join('') : '')
+                + links;
+}
+
+/** Карточка раздела на Главной: заголовок, две метрики, переход внутрь. */
+function sectionCard(title, section, metrics, ts) {
+  const body = metrics
+    ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px 14px">
+         ${metrics.map(m => `
+           <div>
+             <div class="kpi-label">${m.label}</div>
+             <div style="font-size:19px;font-weight:800;color:${m.tone === 'red' ? 'var(--red)' : 'var(--text)'};margin-top:2px">${m.value}</div>
+             ${m.delta != null && isFinite(m.delta)
+                ? `<div class="kpi-delta ${m.delta > 0.5 ? 'up' : (m.delta < -0.5 ? 'down' : 'flat')}">${deltaText(m.delta)}</div>` : ''}
+           </div>`).join('')}
+       </div>`
+    : `<div style="padding:14px 16px;color:var(--text-muted);font-size:13px">Открой раздел — и сводка появится здесь</div>`;
+  return `<div class="card" style="margin-bottom:12px" onclick="goSection('${section}')">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px 0">
+        <div style="font-size:13px;font-weight:800;color:var(--text)">${title}</div>
+        <span style="color:var(--text-muted)">›</span>
+      </div>
+      ${body}
+    </div>`;
 }
 
 function _currentName() { return (typeof repName === 'string' && repName) ? repName : 'коллега'; }
 
 /* ── КЛИЕНТЫ ───────────────────────────────────────────────────
-   Это таб «Клиенты» десктопа: клиентская база Kaspi — сколько всего,
-   какая доля возвращается, за сколько дней, кто рискует отвалиться.
-   Не путать с партнёрами B2B: там аптеки и оптовики, здесь розница. */
+   Розничная база Kaspi. Главное отличие от прежней версии: цифры за
+   ВЫБРАННЫЙ ПЕРИОД, а не за всё время — «всего 1241 клиент» почти не
+   меняется и ничего не говорит о том, что происходит сейчас.
+   Сегменты по давности покупки показываем компактно чипами: это фон,
+   а не главный сюжет экрана. */
 function renderClients() {
   const box = document.getElementById('clientsBody');
   if (!box) return;
   if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
 
-  loadWithCache('clients', () => dataCall('clientsPulse'), (data, meta) => {
+  const p = getPeriod();
+  loadWithCache('clients_' + p.id, () => dataCall('clientsPulse', {
+    filters: JSON.stringify({ dateFrom: p.from, dateTo: p.to }),
+  }), (data, meta) => {
     if (!data) {
       box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '👥');
       return;
     }
     box.dataset.filled = '1';
-    const o = data.overview || {};
+    const per = data.period || {}, seg = data.segments || {};
+
+    const periodBar = `
+      <button class="period-bar" onclick="openPeriodSheet()">
+        <span><span class="pb-label">Период</span><span class="pb-value">${p.label}</span></span>
+        <span class="pb-chev">›</span>
+      </button>`;
 
     const kpis = `
       <div class="kpi-strip">
-        ${uiKpi({ label: 'Всего клиентов', value: fmtNum(o.totalClients) })}
-        ${uiKpi({ label: 'Доля повторных', value: Math.round(o.repeatRate) + '%', tone: o.repeatRate >= 25 ? 'green' : '' })}
-        ${uiKpi({ label: 'Повторные',      value: fmtNum(o.repeatClients) })}
-        ${uiKpi({ label: 'Только один заказ', value: fmtNum(o.newClients) })}
-        ${o.medianTTR ? uiKpi({ label: 'Возврат за', value: o.medianTTR + ' дн', sub: 'медиана до 2-го заказа' }) : ''}
-        ${o.ltv ? uiKpi({ label: 'LTV клиента', value: fmtM(o.ltv) + ' ₸' }) : ''}
+        ${uiKpi({ label: 'Покупали за период', value: fmtNum(per.clients) })}
+        ${uiKpi({ label: 'Доля повторных',     value: per.repeatShare + '%',
+                  tone: per.repeatShare >= 25 ? 'green' : '' })}
+        ${uiKpi({ label: 'Новые',              value: fmtNum(per.new) })}
+        ${uiKpi({ label: 'Повторные',          value: fmtNum(per.repeat) })}
       </div>`;
 
-    const cities = (data.cities || []).length
-      ? `<div class="sec-title">Удержание по городам</div>
-         <div class="card" style="padding:6px 0">${uiBars((data.cities || []).map(c => ({
-             label: c.label, value: c.value, display: Math.round(c.value) + '%', color: '#006B45'
-           })))}</div>` : '';
+    const chips = `
+      <div class="sec-title">Вся база по давности покупки</div>
+      <div class="card" style="padding:12px 14px">
+        <div class="chips">
+          ${chip('Все',          seg.all,     'var(--text)')}
+          ${chip('🟢 Активные',  seg.active,  'var(--green-deep)')}
+          ${chip('🟡 Остывают',  seg.cooling, 'var(--amber)')}
+          ${chip('🟠 Риск',      seg.atrisk,  'var(--orange)')}
+          ${chip('🔴 Ушли',      seg.churned, 'var(--red)')}
+          ${chip('🔁 Повторные', seg.repeat,  'var(--violet)')}
+        </div>
+      </div>`;
 
-    const churn = (data.churnRisk || []).length
-      ? `<div class="sec-title">Риск оттока</div>
-         <div class="card">${data.churnRisk.map(c => uiRow({
-             icon: '⏳', title: c.name, sub: c.days ? ('молчит ' + c.days + ' дн') : '',
-             value: fmtM(c.revenue) + ' ₸', vsub: 'выручка'
-           })).join('')}</div>` : '';
+    const dyn = (data.dynamics || []).length ? `
+      <div class="sec-title">Новые и повторные по месяцам</div>
+      <div class="card">${uiDynamics(data.dynamics)}</div>` : '';
+
+    const cities = (data.cities || []).length ? `
+      <div class="sec-title">Удержание по городам</div>
+      <div class="card" style="padding:6px 0">${uiBars((data.cities || []).map(c => ({
+          label: c.city + ' · ' + fmtNum(c.clients),
+          value: c.retention,
+          display: c.retention + '%',
+          color: c.retention >= 25 ? '#006B45' : (c.retention >= 15 ? '#d97706' : '#dc2626'),
+        })))}</div>` : '';
 
     const more = `<div class="sec-title">Подробнее</div>
       <div class="card">
         ${uiRow({ icon: '📊', title: 'Когорты, LTV, корзина', sub: 'полная аналитика на десктопе', value: '›', onclick: "openTab('clients')" })}
       </div>`;
 
-    box.innerHTML = kpis + cities + churn + more + stampHtml(meta.ts, meta.loading);
+    box.innerHTML = periodBar + kpis + chips + dyn + cities + more + stampHtml(meta.ts, meta.loading);
   });
+}
+
+function chip(label, n, color) {
+  return `<span class="chip" style="color:${color}"><b>${label}</b><span class="chip-n">${fmtNum(n || 0)}</span></span>`;
+}
+
+/** Помесячная динамика: два столбика на месяц. Общая шкала — иначе
+    маленький месяц визуально сравнялся бы с большим. */
+function uiDynamics(rows) {
+  const max = Math.max(1, ...rows.map(r => Math.max(r.new, r.repeat)));
+  const cols = rows.map(r => {
+    const hN = Math.max(2, Math.round((r.new    / max) * 84));
+    const hR = Math.max(2, Math.round((r.repeat / max) * 84));
+    const label = String(r.month).replace(/^(\d{4})-(\d{2})$/, (_, yy, mm) =>
+      ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'][Number(mm)-1] || mm);
+    return `<div class="dyn-col">
+        <div class="dyn-bars">
+          <div class="dyn-bar new" style="height:${hN}px" title="новые ${r.new}"></div>
+          <div class="dyn-bar rep" style="height:${hR}px" title="повторные ${r.repeat}"></div>
+        </div>
+        <div class="dyn-label">${label}</div>
+      </div>`;
+  }).join('');
+  return `<div class="dyn">${cols}</div>
+    <div class="dyn-legend">
+      <span><i style="background:var(--brand-green)"></i>новые</span>
+      <span><i style="background:var(--brand-gold)"></i>повторные</span>
+    </div>`;
 }
 
 /* ── B2B-ДАШБОРД ───────────────────────────────────────────────
