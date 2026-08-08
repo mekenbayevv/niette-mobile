@@ -277,6 +277,10 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   box-shadow: 0 24px 60px rgba(0,107,69,.55);
 }
 .login-sub { font-size: 13px; color: var(--brand-sage); margin-bottom: 34px; z-index: 1; letter-spacing: .3px; }
+/* Версия сборки — до входа. Без неё «доехало ли обновление» проверялось
+   только после логина, в разделе «Ещё», и старая сборка на Pages неделю
+   выглядела как «приложение сломалось». Одна строка экономит этот разбор. */
+.login-ver { margin-top: 22px; font-size: 11px; color: var(--brand-sage); opacity: .55; z-index: 1; letter-spacing: .2px; }
 .login-card {
   background: rgba(255,255,255,.05); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.08); border-radius: 20px;
@@ -513,6 +517,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     </div>
     <button class="btn btn-primary" onclick="login()">Войти</button>
   </div>
+  <div class="login-ver" id="loginVer"></div>
 </div>
 
 <!-- ══ APP ════════════════════════════════════════════════════════ -->
@@ -1045,8 +1050,15 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
+
+/* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
+   элемент уже есть — ждать событий не нужно. */
+(function () {
+  const el = document.getElementById('loginVer');
+  if (el) el.textContent = 'сборка ' + APP_VERSION;
+})();
 
 const PRODUCTS = [
   'Подгузники S', 'Подгузники M',
