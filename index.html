@@ -1050,7 +1050,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.4.2';
+const APP_VERSION = '0.4.3';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1205,11 +1205,26 @@ function cacheClear() {
 }
 
 /** Человеческая метка свежести: «данные на 14:32» / «обновляю…». */
-function stampHtml(ts, loading) {
+/* 'yyyy-MM-dd HH:mm' с сервера → Date. Через new Date() такую строку разбирает
+   не всякий браузер (Safari отдаёт Invalid Date из-за пробела), поэтому руками. */
+function parseServerAt(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || ''));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+
+/**
+ * Метка свежести. Время берём СЕРВЕРНОЕ (когда цифры реально посчитаны), а не
+ * момент ответа: экраны отдаются снимком, и снимок может быть на несколько
+ * минут старше запроса. Показывать время запроса значило бы врать о свежести —
+ * ровно там, где человек и смотрит, можно ли верить числу.
+ */
+function stampHtml(ts, loading, serverAt) {
   if (loading) return '<div class="stamp">⏳ обновляю…</div>';
-  if (!ts)     return '';
-  const d   = new Date(ts);
-  const age = (Date.now() - ts) / 60000;
+  const srv = parseServerAt(serverAt);
+  const at  = srv ? srv.getTime() : ts;
+  if (!at) return '';
+  const d   = new Date(at);
+  const age = (Date.now() - at) / 60000;
   const hhmm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
   const cls  = age > 60 ? 'stamp stale' : 'stamp';
   return `<div class="${cls}">данные на <b>${hhmm}</b></div>`;
@@ -1475,7 +1490,7 @@ function _renderPulseInto(box, data, meta) {
       ${pl.cancelledToday ? uiRow({ icon: '❌', title: 'Отменено сегодня', value: fmtNum(pl.cancelledToday) }) : ''}
     </div>` : '';
 
-  box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading);
+  box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
 }
 
 /**
@@ -1685,7 +1700,7 @@ function renderClients() {
         ${uiRow({ icon: '📊', title: 'Когорты, LTV, корзина', sub: 'полная аналитика на десктопе', value: '›', onclick: "openTab('clients')" })}
       </div>`;
 
-    box.innerHTML = periodBar + kpis + chips + dyn + cities + more + stampHtml(meta.ts, meta.loading);
+    box.innerHTML = periodBar + kpis + chips + dyn + cities + more + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
   });
 }
 
@@ -1770,7 +1785,7 @@ function renderB2bDash() {
            })).join('')}</div>`
       : `<div class="sec-title">Кто должен</div><div class="card">${uiEmpty('Долгов нет', '✅')}</div>`;
 
-    box.innerHTML = kpis + types + stages + debtors + stampHtml(meta.ts, meta.loading);
+    box.innerHTML = kpis + types + stages + debtors + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
   });
 }
 
