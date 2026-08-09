@@ -233,10 +233,9 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
   0%, 100% { transform: scale(1);    box-shadow: 0 24px 60px rgba(0,107,69,.45); }
   50%      { transform: scale(1.04); box-shadow: 0 28px 70px rgba(0,107,69,.65); }
 }
-.splash-name { color: var(--on-accent); font-size: 17px; font-weight: 800; letter-spacing: -.3px; margin-top: 18px; }
-.splash-name span { color: var(--brand-gold); }
-.splash-sub  { color: var(--brand-sage); font-size: 12px; margin-top: 6px; }
-.splash-dots { display: flex; gap: 5px; margin-top: 22px; }
+/* Заставка — только знак и точки. Подпись убрана намеренно: логотип и так
+   говорит, чьё это приложение, а на 0,3 секунды текст всё равно не читают. */
+.splash-dots { display: flex; gap: 5px; margin-top: 26px; }
 .splash-dots i {
   width: 6px; height: 6px; border-radius: 50%; background: var(--brand-sage);
   display: block; animation: splashDot 1.2s ease-in-out infinite;
@@ -483,6 +482,13 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .more-link:last-child { border-bottom: none; }
 .more-link:active { background: var(--bg); }
 .more-icon { font-size: 20px; width: 26px; text-align: center; }
+/* Возврат в «Ещё» с экранов, у которых нет кнопки в нижней панели. Без него
+   единственный выход — системная кнопка «назад», а в PWA её попросту нет. */
+.sub-back {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px;
+  font-size: 14px; font-weight: 600; color: var(--brand-green); cursor: pointer;
+}
+.sub-back:active { opacity: .6; }
 .more-chev { margin-left: auto; color: var(--light); font-size: 18px; }
 </style>
 </head>
@@ -492,8 +498,6 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 <!-- Заставка: висит, пока проверяем сохранённую сессию -->
 <div id="splash" class="splash">
   <img class="splash-mark" alt="" src="data:image/webp;base64,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">
-  <div class="splash-name">NIE<span>TTE</span></div>
-  <div class="splash-sub">Мобильный кабинет</div>
   <div class="splash-dots"><i></i><i></i><i></i></div>
 </div>
 
@@ -961,6 +965,29 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     <div id="pulseBody"></div>
   </div>
 
+  <!-- Экраны из «Ещё». Разметка пустая: содержимое собирают render*-функции,
+       как и на остальных экранах. Кнопка возврата статична — она не зависит
+       от данных и должна быть на месте, даже если запрос упал. -->
+  <div class="screen" id="screen-stock">
+    <div class="sub-back" onclick="showSection('more')">‹ Ещё</div>
+    <div id="stockBox"></div>
+  </div>
+
+  <div class="screen" id="screen-planfact">
+    <div class="sub-back" onclick="showSection('more')">‹ Ещё</div>
+    <div id="planfactBox"></div>
+  </div>
+
+  <div class="screen" id="screen-forecast">
+    <div class="sub-back" onclick="showSection('more')">‹ Ещё</div>
+    <div id="forecastBox"></div>
+  </div>
+
+  <div class="screen" id="screen-analytics">
+    <div class="sub-back" onclick="showSection('more')">‹ Ещё</div>
+    <div id="analyticsBox"></div>
+  </div>
+
   <!-- Ещё: профиль, редкие разделы, выход -->
   <div class="screen" id="screen-more">
     <div class="card" id="profileCard" style="margin-bottom:14px"></div>
@@ -1050,7 +1077,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.4.3';
+const APP_VERSION = '0.5.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1110,16 +1137,26 @@ const SECTIONS = [
       { id: 'payment',  label: '💳 Оплата', ownerOnly: true },
   ]},
   { id: 'more',    label: 'Ещё',     icon: '⋯',  tabs: null },
+
+  /* Экраны, приходящие из «Ещё». Кнопки в нижней панели у них нет — пятёрка
+     занята, а шестая кнопка уже уже пальца. hidden значит «buildNav пропусти,
+     showSection найди»: раздел полноценный, просто без своего места в панели. */
+  { id: 'stock',     label: 'Склад',     icon: '📦', tabs: ['inventory'],           hidden: true },
+  { id: 'planfact',  label: 'План-Факт', icon: '🎯', tabs: ['planfact'],            hidden: true },
+  { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tabs: ['forecast','planfact'], hidden: true },
+  { id: 'analytics', label: 'Аналитика', icon: '📈', tabs: ['analytics'],           hidden: true },
 ];
 
-/* Раздел «Ещё»: то, что открывают редко. Экраны появятся по мере надобности —
-   пока пункт ведёт в полную версию на нужный таб, чтобы не было тупика. */
+/* Раздел «Ещё». Всё, кроме настроек, теперь открывается ВНУТРИ приложения —
+   ради этого и затевалось: уходить на десктопную версию с телефона больно.
+   Настройки остались внешними: это редактирование справочников, а форму
+   на телефоне делать дороже, чем она того стоит. */
 const MORE_LINKS = [
-  { id: 'inventory', label: 'Склад',     icon: '📦', tab: 'inventory' },
+  { id: 'stock',     label: 'Склад',     icon: '📦', tab: 'inventory' },
   { id: 'analytics', label: 'Аналитика', icon: '📈', tab: 'analytics' },
   { id: 'planfact',  label: 'План-Факт', icon: '🎯', tab: 'planfact'  },
   { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tab: 'forecast'  },
-  { id: 'settings',  label: 'Настройки', icon: '⚙️', tab: 'settings'  },
+  { id: 'settings',  label: 'Настройки', icon: '⚙️', tab: 'settings', external: true },
 ];
 
 let _tabs        = [];          // права: список табов с сервера
@@ -1208,7 +1245,12 @@ function cacheClear() {
 /* 'yyyy-MM-dd HH:mm' с сервера → Date. Через new Date() такую строку разбирает
    не всякий браузер (Safari отдаёт Invalid Date из-за пробела), поэтому руками. */
 function parseServerAt(s) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || ''));
+  const str = String(s || '');
+  // ISO с 'T' (часть экранов отдаёт toISOString) — это UTC, и разбирать его
+  // покомпонентно нельзя: получим сдвиг на часовой пояс. Отдаём движку.
+  if (str.indexOf('T') !== -1) { const d = new Date(str); return isNaN(d) ? null : d; }
+  // 'yyyy-MM-dd HH:mm' по Алматы — вручную: Safari такую строку не парсит.
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(str);
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
 }
 
@@ -1370,7 +1412,7 @@ function buildNav() {
   if (box) {
     const links = MORE_LINKS.filter(l => hasTab(l.tab));
     box.innerHTML = links.length
-      ? links.map(l => `<div class="more-link" onclick="openTab('${l.id}')">
+      ? links.map(l => `<div class="more-link" onclick="openMore('${l.id}')">
            <span class="more-icon">${l.icon}</span><span>${l.label}</span><span class="more-chev">›</span>
          </div>`).join('')
       : uiEmpty('Дополнительных разделов нет', '📭');
@@ -1414,10 +1456,21 @@ function showSection(id) {
 /* ── РЕНДЕР РАЗДЕЛОВ ───────────────────────────────────────── */
 
 function renderSection(id) {
-  if (id === 'pulse')   return renderPulse();
-  if (id === 'home')    return renderHome();
-  if (id === 'clients') return renderClients();
-  if (id === 'more')    return renderMore();
+  if (id === 'pulse')     return renderPulse();
+  if (id === 'home')      return renderHome();
+  if (id === 'clients')   return renderClients();
+  if (id === 'more')      return renderMore();
+  if (id === 'stock')     return renderStock();
+  if (id === 'planfact')  return renderPlanFact();
+  if (id === 'forecast')  return renderForecast();
+  if (id === 'analytics') return renderAnalytics();
+}
+
+/** Пункт «Ещё»: свой экран открываем внутри, чужой — в полной версии. */
+function openMore(id) {
+  const l = MORE_LINKS.find(x => x.id === id);
+  if (l && l.external) return openTab(id);
+  showSection(id);
 }
 
 /* ── ПУЛЬС ─────────────────────────────────────────────────────
@@ -1751,7 +1804,8 @@ function renderB2bDash() {
 
     const kpis = `
       <div class="kpi-strip">
-        ${uiKpi({ label: 'Партнёров',   value: fmtNum(t.clients), sub: t.active ? (fmtNum(t.active) + ' с отгрузкой в этом месяце') : '' })}
+        ${uiKpi({ label: 'Активных партнёров', value: fmtNum(t.activeStage),
+                  sub: 'из ' + fmtNum(t.clients) + ' в базе · ' + fmtNum(t.active) + ' с отгрузкой в этом месяце' })}
         ${uiKpi({ label: 'Отгружено',   value: fmtM(t.shipped.value) + ' ₸', delta: t.shipped.deltaPct })}
         ${uiKpi({ label: 'Оплачено',    value: fmtM(t.paid.value) + ' ₸',    delta: t.paid.deltaPct })}
         ${uiKpi({ label: 'Долг',        value: fmtM(t.debt) + ' ₸', tone: t.debt > 0 ? 'red' : '' })}
@@ -1793,6 +1847,230 @@ const STAGE_COLOR = {
   'Новый': '#2563eb', 'Переговоры': '#d97706', 'Активный': '#059669',
   'Заморожен': '#94a3b8', 'Закрыт': '#dc2626',
 };
+
+/* ── СКЛАД ─────────────────────────────────────────────────────
+   Действие inventory возвращает МАССИВ позиций, у которых остаток, скорость
+   расхода и запас в днях уже посчитаны сервером. На телефоне не считаем
+   ничего своего — только сортируем по срочности. Считать те же величины
+   второй раз здесь значило бы завести второй источник правды. */
+function renderStock() {
+  const box = document.getElementById('stockBox');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('stock', () => dataCall('inventory'), (data, meta) => {
+    const items = Array.isArray(data) ? data : [];
+    if (!items.length) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Позиций на складе нет', '📦');
+      return;
+    }
+    box.dataset.filled = '1';
+
+    const num0  = v => Number(v) || 0;
+    const low   = items.filter(i => num0(i.minStock) > 0 && num0(i.currentStock) < num0(i.minStock));
+    const soon  = items.filter(i => num0(i.daysRemaining) <= 14);
+    const off30 = items.reduce((s, i) => s + num0(i.writtenOff30), 0);
+    const total = items.reduce((s, i) => s + num0(i.currentStock), 0);
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'Позиций', value: fmtNum(items.length), sub: fmtNum(total) + ' шт на складе' })}
+        ${uiKpi({ label: 'Ниже минимума', value: fmtNum(low.length), tone: low.length ? 'red' : 'green' })}
+        ${uiKpi({ label: 'Кончится за 14 дней', value: fmtNum(soon.length), tone: soon.length ? 'red' : 'green' })}
+        ${uiKpi({ label: 'Списано за 30 дней', value: fmtNum(off30) + ' шт' })}
+      </div>`;
+
+    const rows = items.slice().sort((a, b) => num0(a.daysRemaining) - num0(b.daysRemaining));
+    const list = `<div class="sec-title">Что кончится раньше</div>
+      <div class="card">${rows.map(i => {
+        const d   = num0(i.daysRemaining);
+        const bad = num0(i.minStock) > 0 && num0(i.currentStock) < num0(i.minStock);
+        return uiRow({
+          icon:  (d <= 14 || bad) ? '🔴' : (d <= 30 ? '🟡' : '🟢'),
+          title: i.name || i.sku || '—',
+          sub:   'расход ' + num0(i.avgDailyRate) + ' шт/день' + (bad ? ' · ниже минимума' : ''),
+          value: fmtNum(i.currentStock) + ' шт',
+          vsub:  d >= 999 ? 'расхода нет' : ('на ' + fmtNum(d) + ' дн'),
+        });
+      }).join('')}</div>`;
+
+    box.innerHTML = kpis + list + stampHtml(meta.ts, meta.loading);
+  });
+}
+
+/* ── ПРОГНОЗ ───────────────────────────────────────────────────
+   ВАЖНО: своей модели тут нет и быть не должно. Полноценный прогноз
+   (Holt с затуханием, автотюнер, бэктест) живёт в полной версии, и если
+   посчитать здесь «примерно то же самое», в компании появятся два разных
+   прогноза на один месяц — ровно та беда, которую уже лечили в План-Факте.
+   Поэтому показываем ФАКТЫ, из которых прогноз собирается: пайплайн, долю
+   отмен, лаг доставки. Арифметика «пайплайн минус отмены» — не модель,
+   а вычитание, и подписана именно так. */
+function renderForecast() {
+  const box = document.getElementById('forecastBox');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('forecast', () => dataCall('forecastD'), (data, meta) => {
+    if (!data) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных', '🔮');
+      return;
+    }
+    box.dataset.filled = '1';
+
+    const pipe  = data.pipeline || {};
+    const cr    = Number(data.cancelRate) || 0;
+    const lag   = data.lag || {};
+    const stale = data.staleDays;
+    const net   = Math.round((Number(pipe.amount) || 0) * (1 - cr));
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'В работе сейчас', value: fmtM(pipe.amount) + ' ₸',
+                  sub: fmtNum(pipe.orders) + ' заказов' })}
+        ${uiKpi({ label: 'Доедет за вычетом отмен', value: fmtM(net) + ' ₸',
+                  sub: 'это вычитание, не модель' })}
+        ${uiKpi({ label: 'Отмены за 90 дней', value: Math.round(cr * 100) + '%',
+                  tone: cr > 0.2 ? 'red' : '' })}
+        ${uiKpi({ label: 'Лаг доставки', value: (lag.median == null ? '—' : lag.median + ' дн'),
+                  sub: lag.p80 == null ? '' : ('80% укладываются в ' + lag.p80 + ' дн') })}
+        ${uiKpi({ label: 'Свежесть данных', wide: true,
+                  value: stale == null ? '—' : (stale === 0 ? 'сегодня' : stale + ' дн назад'),
+                  tone: stale > 1 ? 'red' : 'green',
+                  sub: 'последний день с продажами: ' + (data.lastDataDate || '—') })}
+      </div>`;
+
+    const daily = Array.isArray(data.daily) ? data.daily.slice(-14) : [];
+    const list = daily.length
+      ? `<div class="sec-title">Последние 14 дней</div>
+         <div class="card" style="padding:6px 0">${uiBars(daily.map(r => ({
+             label: String(r[0] || '').slice(5),
+             value: Number(r[3]) || 0,
+             display: fmtM(r[3]) + ' ₸',
+             color: '#006B45',
+           })))}</div>`
+      : '';
+
+    const full = `<div class="card" style="margin-top:14px">
+      <div class="more-link" onclick="openTab('forecast')">
+        <span class="more-icon">📐</span><span>Модельный прогноз и бэктест</span><span class="more-chev">›</span>
+      </div></div>`;
+
+    box.innerHTML = kpis + list + full + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
+  });
+}
+
+/* ── ПЛАН-ФАКТ ─────────────────────────────────────────────────
+   В payload есть поле forecastRevenue — наивный прогноз (факт ÷ прошедшие
+   дни × дней в месяце). Мы его НЕ показываем сознательно: в полной версии
+   от него уже отказались, потому что рядом с модельным прогнозом получались
+   два разных числа на один месяц. Показываем «нужно в день» — это не прогноз,
+   а требование, и оно однозначно. */
+function renderPlanFact() {
+  const box = document.getElementById('planfactBox');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  loadWithCache('planfact', () => dataCall('planfactD'), (data, meta) => {
+    const months = (data && data.months) || [];
+    const cur    = months.find(m => m.key === data.currentMonthKey);
+    if (!cur) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'План на месяц не задан', '🎯');
+      return;
+    }
+    box.dataset.filled = '1';
+
+    const plan = cur.plan || {}, act = cur.actual || {};
+    const pct  = cur.revenuePct == null ? null : Math.round(cur.revenuePct * 100);
+    const rest = Math.max(0, (Number(plan.revenue) || 0) - (Number(act.revenue) || 0));
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'План на месяц', value: fmtM(plan.revenue) + ' ₸' })}
+        ${uiKpi({ label: 'Факт', value: fmtM(act.revenue) + ' ₸',
+                  sub: fmtNum(act.orders) + ' заказов' })}
+        ${uiKpi({ label: 'Выполнено', value: pct == null ? '—' : pct + '%',
+                  tone: pct == null ? '' : (pct >= 100 ? 'green' : (pct >= 70 ? '' : 'red')) })}
+        ${uiKpi({ label: 'Осталось дней', value: cur.daysRemaining == null ? '—' : fmtNum(cur.daysRemaining),
+                  sub: 'до конца месяца' })}
+        ${uiKpi({ label: 'Нужно в день', wide: true, value: fmtM(cur.requiredDailyRate) + ' ₸',
+                  tone: (Number(cur.requiredDailyRate) || 0) > (Number(cur.dailyRate) || 0) ? 'red' : 'green',
+                  sub: 'сейчас идём по ' + fmtM(cur.dailyRate) + ' ₸ в день · осталось добрать ' + fmtM(rest) + ' ₸' })}
+      </div>`;
+
+    const last = months.slice(-6).reverse();
+    const list = `<div class="sec-title">Как шли месяцы</div>
+      <div class="card">${last.map(m => {
+        const p = m.revenuePct == null ? null : Math.round(m.revenuePct * 100);
+        return uiRow({
+          icon:  p == null ? '⚪' : (p >= 100 ? '🟢' : (p >= 70 ? '🟡' : '🔴')),
+          title: m.label || m.key,
+          sub:   'план ' + fmtM(m.plan && m.plan.revenue) + ' ₸',
+          value: fmtM(m.actual && m.actual.revenue) + ' ₸',
+          vsub:  p == null ? 'плана нет' : (p + '% плана'),
+        });
+      }).join('')}</div>`;
+
+    box.innerHTML = kpis + list + stampHtml(meta.ts, meta.loading);
+  });
+}
+
+/* ── АНАЛИТИКА ─────────────────────────────────────────────────
+   Спрос по дате ЗАКАЗА, а не выдачи — это отдельная база от «Обзора»,
+   поэтому суммы здесь законно не сходятся с Пульсом. Подписи это говорят
+   прямо: молчаливое расхождение двух экранов подрывает доверие быстрее,
+   чем любая ошибка в цифре. */
+function renderAnalytics() {
+  const box = document.getElementById('analyticsBox');
+  if (!box) return;
+  if (!box.dataset.filled) box.innerHTML = uiSkeleton('kpi') + uiSkeleton('rows');
+
+  const p = getPeriod();
+  loadWithCache('analytics_' + p.id, () => dataCall('marketingD', {
+    filters: JSON.stringify({ dateFrom: p.from, dateTo: p.to }),
+  }), (data, meta) => {
+    if (!data || !data.metrics) {
+      box.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'Нет данных за период', '📈');
+      return;
+    }
+    box.dataset.filled = '1';
+
+    const m  = data.metrics || {};
+    const pm = data.prevMetrics || null;
+    const d  = (a, b) => (pm && Number(b) > 0) ? ((Number(a) - Number(b)) / Number(b)) * 100 : null;
+
+    const periodBar = `
+      <button class="period-bar" onclick="openPeriodSheet()">
+        <span><span class="pb-label">Период</span><span class="pb-value">${p.label}</span></span>
+        <span class="pb-chev">›</span>
+      </button>`;
+
+    const kpis = `
+      <div class="kpi-strip">
+        ${uiKpi({ label: 'Заказов поступило', value: fmtNum(m.orders), delta: d(m.orders, pm && pm.orders) })}
+        ${uiKpi({ label: 'Сумма заказов', value: fmtM(m.amount) + ' ₸', delta: d(m.amount, pm && pm.amount) })}
+        ${uiKpi({ label: 'Средний чек', value: fmtM(m.averageOrderValue) + ' ₸',
+                  delta: d(m.averageOrderValue, pm && pm.averageOrderValue) })}
+        ${uiKpi({ label: 'Дошли до выдачи', value: Math.round((Number(m.issueConversion) || 0) * 100) + '%',
+                  sub: fmtNum(m.issuedOrders) + ' выдано · ' + fmtNum(m.cancelledOrders) + ' отменено' })}
+        ${uiKpi({ label: 'Считается по дате заказа', wide: true, value: fmtNum(m.quantity) + ' шт',
+                  sub: 'это спрос, а не выручка — с Пульсом сходиться не должно' })}
+      </div>`;
+
+    const sku  = Array.isArray(data.skuTable) ? data.skuTable.slice(1) : [];
+    const list = sku.length
+      ? `<div class="sec-title">Спрос по товарам</div>
+         <div class="card">${sku.map(r => uiRow({
+             title: r[1] || r[0] || '—',
+             sub:   'заказов ' + fmtNum(r[6]) + ' · отменено ' + fmtNum(r[5]),
+             value: fmtM(r[3]) + ' ₸',
+             vsub:  fmtNum(r[2]) + ' шт',
+           })).join('')}</div>`
+      : '';
+
+    box.innerHTML = periodBar + kpis + list + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
+  });
+}
 
 /* ── ЕЩЁ ───────────────────────────────────────────────────────── */
 function renderMore() {
