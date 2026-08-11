@@ -1579,6 +1579,13 @@ function loadPulseLive(base) {
       awaiting:  { count: live.awaitingCount  || 0 },
       cancelledToday: live.cancelledToday || 0,
     };
+    // Метка свежести — время РАСЧЁТА снимка на сервере (live.builtAt), а не
+    // время ответа. Снимок считает фоновый тик раз в 5 минут: если ставить
+    // Date.now(), экран будет уверять, что цифры сию секунду, хотя им 4 минуты.
+    // Заменяем updatedAt именно здесь: все крупные числа карточки (сегодня,
+    // неделя, месяц) после склейки содержат живой день и свежи ровно настолько,
+    // насколько свеж снимок; история под ними меняется раз в 15 минут.
+    if (live.builtAt) merged.updatedAt = live.builtAt;
     _renderPulseInto(box, merged, { ts: Date.now(), loading: false });
   });
 }
