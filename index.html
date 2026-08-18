@@ -174,6 +174,18 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .btn-primary:active { background: var(--brand-green2); transform: scale(.98); }
 .btn-success { background: var(--green); color: var(--white); }
 .btn-success:active { background: #15803D; transform: scale(.98); }
+/* Списание — единственное действие, которое уменьшает остаток: красная, а не
+   зелёная, чтобы её не жали рефлекторно рядом с «сохранить». */
+.btn-danger { background: var(--red); color: var(--white); }
+.btn-danger:active { background: #b91c1c; transform: scale(.98); }
+.wo-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.wo-item:last-child { border-bottom: none; }
+.wo-item.on { background: var(--red-tint); }
+.wo-item input[type=checkbox] { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--red); }
+.wo-item .wo-name { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.25; }
+.wo-item .wo-sub  { font-size: 11px; color: var(--text-3); font-weight: 400; }
+.wo-item input[type=number] { width: 64px; flex: 0 0 auto; height: 36px; text-align: center;
+  border: 1.5px solid var(--border); border-radius: 10px; font-size: 15px; font-weight: 700; }
 .btn-secondary { background: var(--bg); color: var(--dark); border: 1.5px solid var(--border); }
 
 /* ── KPI STRIP ── */
@@ -973,6 +985,55 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     <div id="stockBox"></div>
   </div>
 
+  <!-- Списание: единственная форма склада на телефоне. Смысл именно в
+       телефоне — списывают стоя у полки, а не за ноутбуком. Партией:
+       «взял 2 упаковки S и 1 XL» — это одно событие с одной причиной,
+       и бэкенд пишет их одним setValues (всё-или-ничего). -->
+  <div class="screen" id="screen-writeoff">
+    <div class="sub-back" onclick="showSection('stock')">‹ Склад</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">➖ Списать со склада</div>
+        <div class="card-sub">Брак, образцы, «взял сотрудник» — всё, что ушло мимо продаж</div>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>Что списываем *</label>
+          <input id="woSearch" type="text" placeholder="Поиск по названию или SKU"
+                 autocomplete="off" oninput="renderWoPick()">
+          <div id="woPick" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:8px"></div>
+          <div id="woPickSum" style="font-size:12px;color:var(--text-3);margin-top:6px"></div>
+        </div>
+        <div class="field">
+          <label>Причина *</label>
+          <select id="woReason">
+            <option>Брак / порча</option>
+            <option>Образцы и тесты</option>
+            <option>Подарки / благотворительность</option>
+            <option>Личное пользование</option>
+            <option>Недостача после пересчёта</option>
+            <option>Другое</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Дата</label>
+          <input id="woDate" type="date">
+        </div>
+        <div class="field">
+          <label>Кто взял *</label>
+          <input id="woWho" list="woWhoList" type="text" placeholder="Имя — выбери или впиши" autocomplete="off">
+          <datalist id="woWhoList"></datalist>
+        </div>
+        <div class="field">
+          <label>Комментарий — что и зачем</label>
+          <input id="woComment" type="text" placeholder="Напр.: 2 упаковки XL на съёмку блогеру">
+        </div>
+        <button class="btn btn-danger" id="btnSubmitWriteOff" onclick="submitWriteOff()">💾 Списать</button>
+      </div>
+    </div>
+    <div id="woLog"></div>
+  </div>
+
   <div class="screen" id="screen-planfact">
     <div class="sub-back" onclick="showSection('more')">‹ Ещё</div>
     <div id="planfactBox"></div>
@@ -1077,7 +1138,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1130,9 +1191,9 @@ const SECTIONS = [
       { id: 'b2bdash',    label: '📊 Дашборд' },
       { id: 'b2bclients', label: '💊 Партнёры' },
       { id: 'today',    label: '🏠 Сегодня'  },
-      { id: 'visit',    label: '📝 Визит'    },
-      { id: 'shipment', label: '📦 Отгрузка' },
-      { id: 'round',    label: '🔄 Обход'    },
+      { id: 'visit',    label: '📝 Визит',    write: true },
+      { id: 'shipment', label: '📦 Отгрузка', write: true },
+      { id: 'round',    label: '🔄 Обход',    write: true },
       { id: 'visits',   label: '📋 История'  },
       { id: 'payment',  label: '💳 Оплата', ownerOnly: true },
   ]},
@@ -1142,6 +1203,7 @@ const SECTIONS = [
      занята, а шестая кнопка уже уже пальца. hidden значит «buildNav пропусти,
      showSection найди»: раздел полноценный, просто без своего места в панели. */
   { id: 'stock',     label: 'Склад',     icon: '📦', tabs: ['inventory'],           hidden: true },
+  { id: 'writeoff',  label: 'Списание',  icon: '➖', tabs: ['inventory'],           hidden: true, write: true },
   { id: 'planfact',  label: 'План-Факт', icon: '🎯', tabs: ['planfact'],            hidden: true },
   { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tabs: ['forecast','planfact'], hidden: true },
   { id: 'analytics', label: 'Аналитика', icon: '📈', tabs: ['analytics'],           hidden: true },
@@ -1153,6 +1215,7 @@ const SECTIONS = [
    на телефоне делать дороже, чем она того стоит. */
 const MORE_LINKS = [
   { id: 'stock',     label: 'Склад',     icon: '📦', tab: 'inventory' },
+  { id: 'writeoff',  label: 'Списать со склада', icon: '➖', tab: 'inventory', write: true },
   { id: 'analytics', label: 'Аналитика', icon: '📈', tab: 'analytics' },
   { id: 'planfact',  label: 'План-Факт', icon: '🎯', tab: 'planfact'  },
   { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tab: 'forecast'  },
@@ -1161,9 +1224,18 @@ const MORE_LINKS = [
 
 let _tabs        = [];          // права: список табов с сервера
 let _section     = null;        // текущий корневой раздел
+/* Сервер отдаёт readOnly в ответе auth с самого начала, а приложение его
+   игнорировало: пользователь без права записи видел формы визита, отгрузки и
+   оплаты и узнавал о запрете только по 403 после нажатия «Сохранить» —
+   с уже заполненной формой. Теперь пишущие экраны прячем сразу. */
+let _readOnly    = false;
 
 function hasTab(id) { return _tabs.indexOf(id) !== -1; }
-function sectionAllowed(s) { return !s.tabs || s.tabs.some(hasTab); }
+function canWrite()  { return isOwner || !_readOnly; }
+function sectionAllowed(s) {
+  if (s.write && !canWrite()) return false;
+  return !s.tabs || s.tabs.some(hasTab);
+}
 
 /* ── ПЕРИОД ────────────────────────────────────────────────────
    Один выбор на всё приложение: экраны читают getPeriod() и
@@ -1410,7 +1482,7 @@ function buildNav() {
   // Ссылки раздела «Ещё» — тоже по правам
   const box = document.getElementById('moreLinks');
   if (box) {
-    const links = MORE_LINKS.filter(l => hasTab(l.tab));
+    const links = MORE_LINKS.filter(l => hasTab(l.tab) && (!l.write || canWrite()));
     box.innerHTML = links.length
       ? links.map(l => `<div class="more-link" onclick="openMore('${l.id}')">
            <span class="more-icon">${l.icon}</span><span>${l.label}</span><span class="more-chev">›</span>
@@ -1423,7 +1495,9 @@ function buildNav() {
 function buildSubNav(section) {
   const nav = document.getElementById('subNav');
   const s   = SECTIONS.find(x => x.id === section);
-  const sub = s && s.sub ? s.sub.filter(x => !x.ownerOnly || isOwner) : null;
+  const sub = s && s.sub
+    ? s.sub.filter(x => (!x.ownerOnly || isOwner) && (!x.write || canWrite()))
+    : null;
   if (!sub || !sub.length) { nav.style.display = 'none'; nav.innerHTML = ''; return; }
   nav.style.display = '';
   nav.innerHTML = sub.map(x =>
@@ -1461,6 +1535,7 @@ function renderSection(id) {
   if (id === 'clients')   return renderClients();
   if (id === 'more')      return renderMore();
   if (id === 'stock')     return renderStock();
+  if (id === 'writeoff')  return renderWriteOff();
   if (id === 'planfact')  return renderPlanFact();
   if (id === 'forecast')  return renderForecast();
   if (id === 'analytics') return renderAnalytics();
@@ -1892,16 +1967,355 @@ function renderStock() {
       <div class="card">${rows.map(i => {
         const d   = num0(i.daysRemaining);
         const bad = num0(i.minStock) > 0 && num0(i.currentStock) < num0(i.minStock);
+        // Две пометки на строке, обе — про доверие к цифре, а не про запас.
+        // deficit: сырой остаток ушёл в минус, его показывают нулём (модель
+        // врёт — устаревший пересчёт, дубль SKU, незанесённый приход).
+        // noCountDate: без даты пересчёта расход не вычитается ВООБЩЕ,
+        // и «на 300 дн» тут значит «мы просто не считали».
+        const def  = num0(i.deficit);
+        const marks = (def ? ' · <b style="color:var(--red)">минус ' + fmtNum(def) + ' шт</b>' : '') +
+                      (i.noCountDate ? ' · <b style="color:var(--orange)">нет даты пересчёта</b>' : '');
         return uiRow({
-          icon:  (d <= 14 || bad) ? '🔴' : (d <= 30 ? '🟡' : '🟢'),
+          icon:  i.noCountDate ? '⚪️' : (d <= 14 || bad) ? '🔴' : (d <= 30 ? '🟡' : '🟢'),
           title: i.name || i.sku || '—',
-          sub:   'расход ' + num0(i.avgDailyRate) + ' шт/день' + (bad ? ' · ниже минимума' : ''),
+          sub:   'расход ' + num0(i.avgDailyRate) + ' шт/день' + (bad ? ' · ниже минимума' : '') + marks,
           value: fmtNum(i.currentStock) + ' шт',
-          vsub:  d >= 999 ? 'расхода нет' : ('на ' + fmtNum(d) + ' дн'),
+          vsub:  i.noCountDate ? 'расход не вычитается' : (d >= 999 ? 'расхода нет' : ('на ' + fmtNum(d) + ' дн')),
         });
       }).join('')}</div>`;
 
-    box.innerHTML = kpis + list + stampHtml(meta.ts, meta.loading);
+    const act = canWrite()
+      ? `<div class="card" style="margin-top:14px">
+           ${uiRow({ icon: '➖', title: 'Списать со склада', sub: 'брак, образцы, «взял сотрудник»',
+                     value: '›', onclick: "showSection('writeoff')" })}
+         </div>`
+      : '';
+
+    box.innerHTML = `<div id="stockHealth"></div>` + kpis + list + act + stampHtml(meta.ts, meta.loading);
+    if (!meta.loading) loadStockHealth();
+  });
+}
+
+/* ── СВЕРКА СКЛАДА НА ТЕЛЕФОНЕ ─────────────────────────────────
+   Зачем это здесь. Экран выше показывает остаток как факт: «250 шт · на
+   18 дн». С 14 по 17 августа выяснилось, что остаток систематически ЗАВЫШЕН —
+   расход B2B и маркетплейсов не вычитался, потому что артикулы не сходились
+   (91% дыры). В полной версии для этого есть блок «Сверка склада», а на
+   телефоне цифра оставалась голой — и именно телефон открывают перед тем,
+   как решить «заказывать или нет».
+
+   Показываем ОДНУ цифру: на сколько остаток завышен с даты последней
+   ревизии (sinceCount) — это и есть ошибка остатка. Вторую цифру отчёта
+   («не сматчилось за окно 30 дн») на телефон не выносим числом: это мера
+   качества сопоставления, часть того расхода уехала ДО ревизии и уже учтена
+   пересчётом. Спутать их — перезаказать. Подробности прячем под тап.
+
+   Запросом это второе действие, не поле в 'inventory': отчёт заново читает
+   «База_продаж». На сервере он кэшируется 10 минут. */
+let _stockHealth = null;
+
+function loadStockHealth() {
+  const box = document.getElementById('stockHealth');
+  if (!box) return;
+  loadWithCache('stock_health', () => dataCall('inventoryHealth', { days: 30 }), (rep, meta) => {
+    if (!rep || rep.error) { box.innerHTML = ''; return; }   // сверка не критична: молчим, а не пугаем
+    _stockHealth = rep;
+    box.innerHTML = stockHealthHtml(rep, meta);
+  });
+}
+
+function stockHealthHtml(rep, meta) {
+  if (rep.fatal) {
+    return `<div class="card" style="margin-bottom:14px;padding:14px 16px;border-left:3px solid var(--red)">
+      <div style="font-weight:700;margin-bottom:4px">Сверку посчитать не удалось</div>
+      <div style="font-size:13px;color:var(--text-3)">${rep.fatal}</div></div>`;
+  }
+  const m    = rep.mapping || {};
+  const sc   = rep.sinceCount || { lost: {}, matched: {} };
+  const over = Math.round((sc.lost && sc.lost.total) || 0);
+  const win  = Math.round((rep.lost && rep.lost.total) || 0);
+
+  // Справочники не созданы — это объясняет расхождение раньше любых других
+  // причин, поэтому идёт первым и текстом, а не цифрой.
+  const setup = !m.ready
+    ? `<div style="margin-top:8px;font-size:13px;color:var(--text-3)">
+         Справочники сопоставления не созданы («Артикулы» — ${fmtNum(m.aliasRows)} строк,
+         «Комплекты» — ${fmtNum(m.kitRows)}). Пока их нет, расход Ozon/WB не вычитается вообще.
+         Лечится один раз в редакторе: <b>setupInventoryMapping</b>.</div>`
+    : (!m.nomenSkuCol && rep.b2b && rep.b2b.unmatchedQty > 0
+        ? `<div style="margin-top:8px;font-size:13px;color:var(--text-3)">
+             В «Номенклатуре» нет колонки «SKU склада» — расход B2B не вычитается.
+             Лечится один раз в редакторе: <b>setupInventoryMapping</b>.</div>`
+        : '');
+
+  if (over <= 0 && win <= 0 && m.ready) {
+    return `<div class="card" style="margin-bottom:14px;padding:14px 16px;border-left:3px solid var(--green-deep,#006B45)">
+      <div style="font-weight:700">✓ Остаток сходится</div>
+      <div style="font-size:13px;color:var(--text-3);margin-top:2px">
+        Весь расход за 30 дней сматчился со «Складом» — по площадкам и по B2B.</div>
+    </div>`;
+  }
+
+  const head = over > 0
+    ? `<div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Остаток завышен примерно на</div>
+       <div style="font-size:30px;font-weight:800;color:var(--red);line-height:1.1;margin:2px 0 4px">${fmtNum(over)} шт</div>
+       <div style="font-size:13px;color:var(--text-3)">
+         Столько расхода не вычлось из остатка${sc.date ? ' с ревизии ' + sc.date + ' (' + fmtNum(sc.days) + ' дн)' : ''}.
+         Цифры ниже выше реальных — это важно перед закупкой.
+         ${sc.exact === false ? '<br>Даты пересчёта по строкам разные (разброс ' + fmtNum(sc.spreadDays) + ' дн), поэтому это верхняя граница.' : ''}
+       </div>`
+    : `<div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Остаток верный, сопоставление — нет</div>
+       <div style="font-size:15px;font-weight:700;margin:4px 0">${fmtNum(win)} шт не сматчилось за 30 дней</div>
+       <div style="font-size:13px;color:var(--text-3)">
+         На остаток это не влияет: расход уехал до последней ревизии и уже учтён пересчётом.
+         Но следующий месяц так же не вычтется.</div>`;
+
+  return `<div class="card" style="margin-bottom:14px;padding:14px 16px;border-left:3px solid ${over > 0 ? 'var(--red)' : 'var(--orange)'}">
+    ${head}${setup}
+    <div class="more-link" style="padding:10px 0 0;margin-top:8px;border-top:1px solid var(--border)"
+         onclick="openStockHealthDetail()">
+      <span class="more-icon">🧮</span><span>Где именно теряется</span><span class="more-chev">›</span>
+    </div>
+  </div>`;
+}
+
+const _INV_PLAT_LABEL = { kaspi: 'Kaspi', ozon: 'Ozon', wb: 'Wildberries', teez: 'Teez' };
+
+/** Детали сверки — в оверлей: на первом экране им не место, а без них
+    цифра «завышен на N» не даёт что делать дальше. */
+function openStockHealthDetail() {
+  const rep = _stockHealth;
+  if (!rep) return;
+  const H = [];
+  const sc = rep.sinceCount || { lost: {} };
+
+  H.push(_detailRow('📅', 'Считаем с ревизии', (sc.date || '—') + (sc.days ? ' · ' + fmtNum(sc.days) + ' дн' : '')));
+  H.push(_detailRow('📉', 'Не вычлось с ревизии', fmtNum((sc.lost && sc.lost.total) || 0) + ' шт'));
+  H.push(_detailRow('🪟', 'Не сматчилось за 30 дн', fmtNum((rep.lost && rep.lost.total) || 0) + ' шт'));
+  H.push(_detailRow('🛒', 'из них маркетплейсы', fmtNum(rep.lost && rep.lost.marketplaces) + ' шт'));
+  H.push(_detailRow('🏷', 'из них без артикула', fmtNum(rep.lost && rep.lost.noSku) + ' шт'));
+  H.push(_detailRow('🤝', 'из них B2B', fmtNum(rep.lost && rep.lost.b2b) + ' шт'));
+  if (rep.ignored && rep.ignored.qty)
+    H.push(_detailRow('⏭', 'Исключено сознательно', fmtNum(rep.ignored.qty) + ' шт · ' + (rep.ignored.platforms || []).join(', ')));
+
+  const plats = Object.keys(rep.platforms || {}).sort();
+  if (plats.length) {
+    H.push('<div class="sec-title" style="margin-top:14px">По площадкам</div><div class="card">' +
+      plats.map(p => {
+        const d = rep.platforms[p], tot = d.matchedQty + d.unmatchedQty;
+        const share = tot > 0 ? Math.round(d.unmatchedQty / tot * 100) : 0;
+        return uiRow({
+          icon:  share >= 50 ? '🔴' : share > 0 ? '🟡' : '🟢',
+          title: _INV_PLAT_LABEL[p] || p,
+          sub:   'сматчилось ' + fmtNum(d.matchedQty) + ' шт',
+          value: fmtNum(d.unmatchedQty) + ' шт',
+          vsub:  'потеряно · ' + share + '%',
+        });
+      }).join('') + '</div>');
+  }
+
+  // Топ несматченных артикулов — это и есть список работ: каждая строка
+  // чинится строкой в листе «Артикулы», выкладка для этого не нужна.
+  const misses = [];
+  plats.forEach(p => (rep.platforms[p].misses || []).forEach(x =>
+    misses.push({ platform: _INV_PLAT_LABEL[p] || p, sku: x.sku || x.name || '—', qty: x.qty })));
+  (rep.b2b && rep.b2b.misses || []).forEach(x => misses.push({ platform: 'B2B', sku: x.name || x.sku || '—', qty: x.qty }));
+  misses.sort((a, b) => b.qty - a.qty);
+  if (misses.length) {
+    H.push('<div class="sec-title" style="margin-top:14px">Что чинить в первую очередь</div>' +
+      '<div style="font-size:12px;color:var(--text-3);margin:-6px 0 8px">' +
+      'Каждая строка — артикул, которого нет в «Складе». Чинится строкой в листе «Артикулы», выкладка не нужна.</div>' +
+      '<div class="card">' + misses.slice(0, 15).map(x => uiRow({
+        icon: '🔻', title: x.sku, sub: x.platform, value: fmtNum(x.qty) + ' шт',
+      })).join('') + '</div>');
+  }
+
+  const body = document.getElementById('detailBody');
+  if (!body) return;
+  body.innerHTML = `<div style="margin-bottom:14px">
+      <div style="font-size:18px;font-weight:800;color:var(--dark)">🧮 Сверка склада</div>
+      <div style="font-size:12px;color:var(--light);margin-top:2px">окно ${fmtNum(rep.windowDays)} дн · с ${rep.since || '—'}</div>
+    </div>` + H.join('');
+  _openDetailOverlay();
+}
+
+/* ── СПИСАНИЕ ──────────────────────────────────────────────────
+   Форма, ради которой склад вообще нужен на телефоне: списывают стоя у
+   полки. Партией — «взял 2 упаковки S и 1 XL» это ОДНО событие с одной
+   причиной, и бэкенд пишет партию одним setValues по принципу
+   всё-или-ничего: половина списанной партии хуже, чем несписанная.
+
+   Остаток рядом с каждой позицией показываем не для красоты: списать
+   больше, чем лежит, — обычная ошибка, и человек должен увидеть это
+   ДО отправки, а не в отчёте через неделю. */
+let _woItems = [];      // позиции склада
+let _woQty   = {};      // sku → количество (переживает перерисовку поиска)
+
+function renderWriteOff() {
+  const d = document.getElementById('woDate');
+  if (d && !d.value) d.value = new Date().toISOString().slice(0, 10);
+  const who = document.getElementById('woWho');
+  if (who && !who.value) who.value = _currentName();
+
+  // Позиции берём из того же кэша, что и экран Склада: список только что
+  // смотрели, повторный тяжёлый запрос ради выпадашки не нужен.
+  const cached = cacheGet('stock');
+  if (cached && Array.isArray(cached.data) && cached.data.length) {
+    _woItems = cached.data; renderWoPick();
+  } else {
+    const pick = document.getElementById('woPick');
+    if (pick) pick.innerHTML = uiSkeleton('rows');
+    dataCall('inventory').then(items => {
+      _woItems = Array.isArray(items) ? items : [];
+      cacheSet('stock', _woItems);
+      renderWoPick();
+    }).catch(e => {
+      const p = document.getElementById('woPick');
+      if (p) p.innerHTML = uiEmpty(explainNetErr(e), '📦');
+    });
+  }
+
+  // Список имён — общий с десктопом, чтобы «Айгуль» и «айгуль» не
+  // расползлись двумя людьми в журнале.
+  dataCall('userNames').then(names => {
+    const dl = document.getElementById('woWhoList');
+    if (dl && Array.isArray(names)) dl.innerHTML = names.map(n => `<option value="${n}"></option>`).join('');
+  }).catch(() => {});
+
+  loadWriteOffLog();
+}
+
+function renderWoPick() {
+  const box = document.getElementById('woPick');
+  if (!box) return;
+  const q = (document.getElementById('woSearch')?.value || '').trim().toLowerCase();
+  const list = _woItems.filter(i =>
+    !q || String(i.name || '').toLowerCase().indexOf(q) !== -1 || String(i.sku || '').toLowerCase().indexOf(q) !== -1);
+
+  if (!list.length) { box.innerHTML = uiEmpty('Ничего не найдено', '🔍'); updateWoSum(); return; }
+
+  // Именно div, а не label: внутри строки лежит поле количества, а клик по
+  // любому месту label переключает чекбокс — тап по цифре снимал бы галочку.
+  box.innerHTML = list.map((i, n) => {
+    const sku = String(i.sku || i.name || '');
+    const on  = _woQty[sku] > 0;
+    const st  = Number(i.currentStock) || 0;
+    const esc = sku.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `<div class="wo-item${on ? ' on' : ''}" id="woRow_${n}">
+      <input type="checkbox" id="woChk_${n}" ${on ? 'checked' : ''}
+             onchange="toggleWoItem('${esc}', ${n}, this.checked)">
+      <span class="wo-name" onclick="document.getElementById('woChk_${n}').click()">${i.name || sku}
+        <span class="wo-sub">на складе ${fmtNum(st)} шт${i.sku ? ' · ' + i.sku : ''}</span></span>
+      <input type="number" inputmode="numeric" min="1" id="woQty_${n}" value="${_woQty[sku] || ''}" placeholder="0"
+             onfocus="this.select()" oninput="setWoQty('${esc}', ${n}, this.value)">
+    </div>`;
+  }).join('');
+  updateWoSum();
+}
+
+/* Точечное обновление строки вместо перерисовки списка: перерисовка на
+   каждое нажатие цифры отбирала бы фокус у поля на полуслове. */
+function _woSyncRow(n, on) {
+  const row = document.getElementById('woRow_' + n);
+  const chk = document.getElementById('woChk_' + n);
+  if (row) row.classList.toggle('on', on);
+  if (chk) chk.checked = on;
+}
+
+function toggleWoItem(sku, n, on) {
+  if (on) {
+    if (!_woQty[sku]) _woQty[sku] = 1;
+    const q = document.getElementById('woQty_' + n);
+    if (q && !q.value) q.value = 1;
+  } else {
+    delete _woQty[sku];
+    const q = document.getElementById('woQty_' + n);
+    if (q) q.value = '';
+  }
+  _woSyncRow(n, on);
+  updateWoSum();
+}
+
+function setWoQty(sku, n, val) {
+  const q = Math.abs(parseInt(val, 10) || 0);
+  if (q > 0) _woQty[sku] = q; else delete _woQty[sku];
+  _woSyncRow(n, q > 0);
+  updateWoSum();
+}
+
+/** Итог по выбранному + предупреждение «списываем больше, чем лежит». */
+function updateWoSum() {
+  const el = document.getElementById('woPickSum');
+  if (!el) return;
+  const keys = Object.keys(_woQty);
+  if (!keys.length) { el.innerHTML = 'Ничего не выбрано'; return; }
+  const total = keys.reduce((s, k) => s + _woQty[k], 0);
+  const over  = keys.filter(k => {
+    const it = _woItems.find(i => String(i.sku || i.name) === k);
+    return it && _woQty[k] > (Number(it.currentStock) || 0);
+  });
+  el.innerHTML = `Выбрано: <b>${keys.length}</b> позиц. · <b>${fmtNum(total)}</b> шт` +
+    (over.length ? `<br><span style="color:var(--red)">⚠️ Больше, чем на складе: ${over.length} позиц. Проверь — либо ошибка в количестве, либо остаток врёт.</span>` : '');
+}
+
+async function submitWriteOff() {
+  const keys = Object.keys(_woQty);
+  const who  = (document.getElementById('woWho').value || '').trim();
+  if (!keys.length) return toast('Отметь хотя бы одну позицию');
+  if (!who)         return toast('Укажи, кто взял');
+
+  const items = keys.map(k => {
+    const it = _woItems.find(i => String(i.sku || i.name) === k) || {};
+    return { sku: it.sku || '', name: it.name || k, qty: _woQty[k] };
+  });
+  const total = items.reduce((s, i) => s + i.qty, 0);
+
+  setBtnLoading('btnSubmitWriteOff', true);
+  try {
+    const res = await api('POST', {
+      action: 'addWriteOffs',
+      data: {
+        items,
+        date:    document.getElementById('woDate').value,
+        reason:  document.getElementById('woReason').value,
+        takenBy: who,
+        comment: document.getElementById('woComment').value,
+      }
+    });
+    if (res && res.error) throw new Error(res.error);
+
+    // Остаток изменился. Кэш экрана Склада сбрасываем сразу, иначе человек
+    // вернётся назад и увидит прежнюю цифру — и решит, что списание не прошло.
+    _woQty = {};
+    try { localStorage.removeItem(CACHE_PREFIX + 'stock'); } catch (e) {}
+    try { localStorage.removeItem(CACHE_PREFIX + 'stock_health'); } catch (e) {}
+    document.getElementById('woComment').value = '';
+    document.getElementById('woSearch').value  = '';
+    renderWoPick();
+    loadWriteOffLog();
+    showSuccess('➖', 'Списано', items.length + ' позиц. · ' + fmtNum(total) + ' шт');
+  } catch (e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnSubmitWriteOff', false);
+  }
+}
+
+/** Журнал: последние списания. Он же — способ заметить чужую опечатку. */
+function loadWriteOffLog() {
+  const box = document.getElementById('woLog');
+  if (!box) return;
+  loadWithCache('woff', () => dataCall('writeOffs', { limit: 15 }), (data, meta) => {
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="sec-title">Последние списания</div>
+      <div class="card">${rows.map(r => uiRow({
+        icon:  '➖',
+        title: r.name || r.sku || '—',
+        sub:   [r.takenBy, r.reason].filter(Boolean).join(' · ') + (r.comment ? ' · ' + r.comment : ''),
+        value: fmtNum(r.qty) + ' шт',
+        vsub:  r.date || '',
+      })).join('')}</div>` + stampHtml(meta.ts, meta.loading);
   });
 }
 
@@ -2182,6 +2596,7 @@ async function login() {
     if (!res.ok || !res.token) return toast(res.reason || 'Неверное имя или пароль');
     repName    = res.name || name;
     isOwner    = res.owner === true;
+    _readOnly  = res.readOnly === true;
     _tabs      = Array.isArray(res.tabs) ? res.tabs : [];
     _authToken = res.token;
     localStorage.setItem('rep', repName);
@@ -2204,7 +2619,7 @@ function logout() {
   localStorage.removeItem('owner');
   localStorage.removeItem('tabs');
   cacheClear();                       // чужие цифры не должны пережить выход
-  repName = ''; isOwner = false; _tabs = [];
+  repName = ''; isOwner = false; _tabs = []; _readOnly = false;
   document.getElementById('appWrap').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';   // после выхода пароль нужен
 }
@@ -3539,9 +3954,10 @@ if (!savedTok) {
       if (settled) return;
       settled = true; clearTimeout(bail);
       if (r && r.ok) {
-        repName = r.name;
-        isOwner = r.owner === true;
-        _tabs   = Array.isArray(r.tabs) ? r.tabs : [];
+        repName   = r.name;
+        isOwner   = r.owner === true;
+        _readOnly = r.readOnly === true;
+        _tabs     = Array.isArray(r.tabs) ? r.tabs : [];
         localStorage.setItem('rep', repName);
         localStorage.setItem('owner', isOwner ? '1' : '');
         localStorage.setItem('tabs',  JSON.stringify(_tabs));
