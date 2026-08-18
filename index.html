@@ -455,6 +455,9 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 .pulse-hero .ph-label { font-size: 10px; font-weight: 700; color: var(--brand-sage); text-transform: uppercase; letter-spacing: .6px; }
 .pulse-hero .ph-value { font-size: 34px; font-weight: 800; letter-spacing: -1px; margin-top: 4px; }
 .pulse-hero .ph-sub   { font-size: 12px; color: var(--brand-sage-lt); margin-top: 2px; }
+/* Подпись под спарклайном: он всегда за 30 дней, а герой — за выбранный
+   период. Без подписи линия читается как «динамика периода» и врёт. */
+.pulse-hero .ph-note  { font-size: 10px; color: var(--brand-sage-lt); opacity: .75; margin-top: -2px; }
 .pulse-hero .ph-spark { margin-top: 10px; opacity: .9; }
 .kpi-card.tap { cursor: pointer; transition: transform .12s, box-shadow .12s; }
 .kpi-card.tap:active { transform: scale(.98); box-shadow: 0 2px 10px var(--shadow); }
@@ -985,6 +988,31 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
     <div id="stockBox"></div>
   </div>
 
+  <!-- База клиентов: поиск, город, сортировка. Таблицу с десктопа сюда не
+       переносим — пятнадцать колонок на 390 px нечитаемы. На телефоне
+       нужен другой сценарий: найти человека и позвонить. -->
+  <div class="screen" id="screen-clientbase">
+    <div class="sub-back" onclick="showSection('clients')">‹ Клиенты</div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="padding-bottom:10px">
+        <input id="cbSearch" type="search" placeholder="Имя, город или телефон" autocomplete="off"
+               oninput="renderClientBase()" style="width:100%">
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <select id="cbCity" onchange="renderClientBase()" style="flex:1;min-width:0"></select>
+          <select id="cbSort" onchange="renderClientBase()" style="flex:1;min-width:0">
+            <option value="revenue">По выручке</option>
+            <option value="recent">Кто покупал недавно</option>
+            <option value="old">Кто давно не покупал</option>
+            <option value="orders">По числу заказов</option>
+            <option value="name">По имени</option>
+          </select>
+        </div>
+        <div id="cbCount" class="stamp" style="text-align:left;margin-top:8px"></div>
+      </div>
+    </div>
+    <div id="cbList"></div>
+  </div>
+
   <!-- Списание: единственная форма склада на телефоне. Смысл именно в
        телефоне — списывают стоя у полки, а не за ноутбуком. Партией:
        «взял 2 упаковки S и 1 XL» — это одно событие с одной причиной,
@@ -1138,7 +1166,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.7.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1204,6 +1232,7 @@ const SECTIONS = [
      showSection найди»: раздел полноценный, просто без своего места в панели. */
   { id: 'stock',     label: 'Склад',     icon: '📦', tabs: ['inventory'],           hidden: true },
   { id: 'writeoff',  label: 'Списание',  icon: '➖', tabs: ['inventory'],           hidden: true, write: true },
+  { id: 'clientbase',label: 'База клиентов', icon: '📇', tabs: ['clients'],         hidden: true },
   { id: 'planfact',  label: 'План-Факт', icon: '🎯', tabs: ['planfact'],            hidden: true },
   { id: 'forecast',  label: 'Прогноз',   icon: '🔮', tabs: ['forecast','planfact'], hidden: true },
   { id: 'analytics', label: 'Аналитика', icon: '📈', tabs: ['analytics'],           hidden: true },
@@ -1536,6 +1565,7 @@ function renderSection(id) {
   if (id === 'more')      return renderMore();
   if (id === 'stock')     return renderStock();
   if (id === 'writeoff')  return renderWriteOff();
+  if (id === 'clientbase') return loadClientBase();
   if (id === 'planfact')  return renderPlanFact();
   if (id === 'forecast')  return renderForecast();
   if (id === 'analytics') return renderAnalytics();
@@ -1560,7 +1590,14 @@ function renderPulse() {
   // Живой день догружаем отдельно: запрос к Kaspi API идёт с пагинацией и
   // занимает секунды. Если тянуть его вместе с историей, весь экран ждёт
   // самого медленного куска — и выглядит пустым.
-  loadWithCache('pulse', () => dataCall('pulse'), (data, meta) => {
+  //
+  // Снимок свой на каждый период (и на сервере, и в localStorage): один ключ
+  // на все периоды означал бы, что «Главная» покажет годовую выручку под
+  // подписью «Этот месяц» просто потому, что кто-то листнул период.
+  const p = getPeriod();
+  loadWithCache('pulse_' + p.id, () => dataCall('pulse', {
+    filters: JSON.stringify({ dateFrom: p.from, dateTo: p.to }),
+  }), (data, meta) => {
     _renderPulseInto(box, data, meta);
     if (data && !meta.loading) loadPulseLive(data);
   });
@@ -1574,27 +1611,39 @@ function _renderPulseInto(box, data, meta) {
     return;
   }
   box.dataset.filled = '1';
-  const m = data.month || {}, w = data.week || {}, t = data.today || {};
+  const t = data.today || {};
+  const p = getPeriod();
+  // Старые снимки (до 0.7.0) периода не знают — тогда показываем месяц, а не
+  // пустоту: человек не должен видеть прочерк из-за версии кэша.
+  const per = data.period || data.month || {};
+
+  const periodBar = `
+    <button class="period-bar" onclick="openPeriodSheet()">
+      <span><span class="pb-label">Период</span><span class="pb-value">${p.label}</span></span>
+      <span class="pb-chev">›</span>
+    </button>`;
 
   const hero = `
     <div class="pulse-hero">
-      <div class="ph-label">Продажи · этот месяц</div>
-      <div class="ph-value">${fmtNum(m.revenue)} ₸</div>
-      <div class="ph-sub">${deltaText(m.deltaPct)} к прошлому месяцу · ${fmtNum(m.orders)} заказов</div>
+      <div class="ph-label">Продажи · ${p.label.toLowerCase()}</div>
+      <div class="ph-value">${fmtNum(per.revenue)} ₸</div>
+      <div class="ph-sub">${deltaText(per.deltaPct)} к прошлому такому же периоду · ${fmtNum(per.orders)} заказов</div>
       <div class="ph-spark">${uiSpark(data.spark, { color: '#84a98c', h: 40 })}</div>
+      <div class="ph-note">линия — последние 30 дней</div>
     </div>`;
 
   const kpis = `
     <div class="kpi-strip">
-      ${tapKpi('Неделя',   fmtM(w.revenue) + ' ₸', w.deltaPct, 'pulse', fmtNum(w.orders) + ' заказов')}
       ${tapKpi(t.live ? 'Сегодня · live' : 'Сегодня',
                t.live ? fmtM(t.revenue) + ' ₸' : '—',
                t.live ? t.deltaPct : null, 'pulse',
                t.live ? (fmtNum(t.orders) + ' выдано') : 'загружаю…')}
+      ${tapKpi('Выручка в день', fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse',
+               'за выбранный период')}
       ${tapKpi('Новые клиенты',  fmtNum(data.clients.new.value),    data.clients.new.deltaPct,    'clients')}
       ${tapKpi('Повторные',      fmtNum(data.clients.repeat.value), data.clients.repeat.deltaPct, 'clients')}
-      ${tapKpi('Выручка в день', fmtM(data.avgPerDay.value) + ' ₸', data.avgPerDay.deltaPct, 'pulse')}
       ${tapKpi('Средний чек',    fmtM(data.aov.value) + ' ₸',       data.aov.deltaPct,       'pulse')}
+      ${tapKpi('Заказов',        fmtNum(per.orders), null, 'pulse', 'за период')}
     </div>`;
 
   const ch = (data.channels || []).map(c => ({
@@ -1618,7 +1667,34 @@ function _renderPulseInto(box, data, meta) {
       ${pl.cancelledToday ? uiRow({ icon: '❌', title: 'Отменено сегодня', value: fmtNum(pl.cancelledToday) }) : ''}
     </div>` : '';
 
-  box.innerHTML = hero + kpis + pipeline + channels + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
+  box.innerHTML = periodBar + hero + kpis + pipeline + channels + citiesHtml(data)
+                + stampHtml(meta.ts, meta.loading, data && data.updatedAt);
+}
+
+/* ── ГОРОДА ────────────────────────────────────────────────────
+   Блок, а НЕ фильтр экрана — решение 17.08.2026. Город есть только у Kaspi
+   и только из адреса доставки; у WB, Ozon и Teez его в данных нет вообще.
+   Фильтр «Алматы» пересчитал бы весь Пульс в Kaspi-only и молча выкинул
+   маркетплейсы из выручки, каналов и пайплайна — человек увидел бы
+   заниженную сумму, не узнав об этом. Блок ничего не искажает: он честно
+   подписан и стоит рядом с остальными цифрами, а не вместо них. */
+function citiesHtml(data) {
+  const c = data.cities;
+  if (!c || !Array.isArray(c.rows) || !c.rows.length) return '';
+  const bars = uiBars(c.rows.map(r => ({
+    label: r.city + ' · ' + fmtNum(r.orders) + ' зак.',
+    value: r.revenue,
+    display: fmtM(r.revenue) + ' ₸ · ' + r.share + '%',
+    color: r.city === 'Не указан' ? '#94a3b8' : '#006B45',
+  })));
+  const unknown = c.unknown > 0
+    ? `<div class="stamp" style="text-align:left;padding:0 14px 10px">Без города: ${fmtM(c.unknown)} ₸ — адрес не разобрался</div>`
+    : '';
+  return `<div class="sec-title">Города · за период</div>
+    <div class="card" style="padding:6px 0">
+      <div class="stamp" style="text-align:left;padding:2px 14px 8px">только Kaspi — по адресу доставки; у маркетплейсов города нет</div>
+      ${bars}${unknown}
+    </div>`;
 }
 
 /**
@@ -1641,6 +1717,14 @@ function loadPulseLive(base) {
     merged.today = { revenue: todayRev, orders: todayOrd, prevRevenue: prevDay, deltaPct: dPct, live: true };
     merged.month.revenue += todayRev; merged.month.orders += todayOrd;
     merged.week.revenue  += todayRev; merged.week.orders  += todayOrd;
+    // Живой день добавляем в выбранный период ТОЛЬКО если он в него попадает:
+    // у «прошлого месяца» сегодняшняя выручка внутри — это просто неверная цифра.
+    if (merged.period && merged.period.includesToday) {
+      merged.period.revenue += todayRev; merged.period.orders += todayOrd;
+      if (merged.period.prevRevenue > 0) {
+        merged.period.deltaPct = ((merged.period.revenue - merged.period.prevRevenue) / merged.period.prevRevenue) * 100;
+      }
+    }
     if (merged.month.prevRevenue > 0) {
       merged.month.deltaPct = ((merged.month.revenue - merged.month.prevRevenue) / merged.month.prevRevenue) * 100;
     }
@@ -1703,7 +1787,11 @@ function renderHome() {
 
   // Продажи
   if (hasTab('overview') || hasTab('kaspi')) {
-    const c = cacheGet('pulse');
+    // Карточка всегда про месяц и сегодня, поэтому блоки month/today живут в
+    // ответе при любом выбранном периоде. Ключ кэша всё равно берём по
+    // текущему периоду с откатом на месяц — иначе после смены периода
+    // карточка осталась бы пустой до следующего захода в Пульс.
+    const c = cacheGet('pulse_' + getPeriod().id) || cacheGet('pulse_month') || cacheGet('pulse');
     const d = c && c.data;
     cards.push(sectionCard('⚡ Пульс', 'pulse', d ? [
       { label: 'Сегодня',    value: fmtM(d.today.revenue) + ' ₸', delta: d.today.deltaPct },
@@ -1832,6 +1920,8 @@ function renderClients() {
 
     const more = `<div class="sec-title">Подробнее</div>
       <div class="card">
+        ${uiRow({ icon: '📇', title: 'Вся база клиентов', sub: 'поиск, город, кто давно не покупал',
+                  value: '›', onclick: "showSection('clientbase')" })}
         ${uiRow({ icon: '📊', title: 'Когорты, LTV, корзина', sub: 'полная аналитика на десктопе', value: '›', onclick: "openTab('clients')" })}
       </div>`;
 
@@ -2136,6 +2226,140 @@ function openStockHealthDetail() {
       <div style="font-size:18px;font-weight:800;color:var(--dark)">🧮 Сверка склада</div>
       <div style="font-size:12px;color:var(--light);margin-top:2px">окно ${fmtNum(rep.windowDays)} дн · с ${rep.since || '—'}</div>
     </div>` + H.join('');
+  _openDetailOverlay();
+}
+
+/* ── БАЗА КЛИЕНТОВ ─────────────────────────────────────────────
+   Что на телефоне действительно нужно: найти человека и позвонить, либо
+   посмотреть, кто давно не покупал. Таблицу с десктопа (пятнадцать колонок,
+   когорты, LTV) не переносим — на 390 px она нечитаема, а урезанная копия
+   разошлась бы с десктопной цифрой.
+
+   Список приходит колоночным (rows — массивы, город индексом в cities) и
+   целиком: поиск и сортировка работают на телефоне мгновенно, без запроса
+   на каждый набранный символ. Цифры — за всё время, как на десктопе. */
+let _cbData  = null;
+let _cbShown = [];
+const CB_RISK = [
+  { icon: '🟢', label: 'покупал недавно' },
+  { icon: '🟡', label: 'остывает' },
+  { icon: '🟠', label: 'риск' },
+  { icon: '🔴', label: 'ушёл' },
+];
+
+function loadClientBase() {
+  const list = document.getElementById('cbList');
+  if (!list) return;
+  if (!_cbData) list.innerHTML = uiSkeleton('rows');
+
+  loadWithCache('clientlist', () => dataCall('clientList'), (data, meta) => {
+    if (!data || data.error || !Array.isArray(data.rows)) {
+      list.innerHTML = uiEmpty(meta.error ? explainNetErr({ message: meta.error }) : 'База пуста', '📇');
+      return;
+    }
+    _cbData = data;
+    fillCityFilter(data);
+    renderClientBase(meta);
+  });
+}
+
+function fillCityFilter(data) {
+  const sel = document.getElementById('cbCity');
+  if (!sel || sel.dataset.filled) return;
+  // Города — по числу клиентов: список из сорока городов, отсортированный
+  // по алфавиту, заставляет листать мимо Алматы и Астаны к «Аягозу».
+  const cnt = {};
+  data.rows.forEach(r => { cnt[r[1]] = (cnt[r[1]] || 0) + 1; });
+  const opts = Object.keys(cnt)
+    .map(i => ({ i: Number(i), name: data.cities[i] || 'Не указан', n: cnt[i] }))
+    .sort((a, b) => b.n - a.n);
+  sel.innerHTML = '<option value="">Все города</option>' +
+    opts.map(o => `<option value="${o.i}">${o.name} · ${o.n}</option>`).join('');
+  sel.dataset.filled = '1';
+}
+
+function renderClientBase(meta) {
+  const list = document.getElementById('cbList');
+  const cntEl = document.getElementById('cbCount');
+  if (!list || !_cbData) return;
+
+  const q    = (document.getElementById('cbSearch')?.value || '').trim().toLowerCase();
+  const city = document.getElementById('cbCity')?.value || '';
+  const sort = document.getElementById('cbSort')?.value || 'revenue';
+  const C    = _cbData.cities || [];
+
+  let rows = _cbData.rows;
+  if (city !== '') rows = rows.filter(r => String(r[1]) === String(city));
+  if (q) rows = rows.filter(r =>
+    String(r[0]).toLowerCase().indexOf(q) !== -1 ||
+    String(C[r[1]] || '').toLowerCase().indexOf(q) !== -1 ||
+    String(r[7]).indexOf(q) !== -1);
+
+  const cmp = {
+    revenue: (a, b) => b[3] - a[3],
+    orders:  (a, b) => b[2] - a[2],
+    // days = -1 значит «дата неизвестна». В обеих сортировках по давности
+    // такие уходят вниз, а не изображают самых свежих или самых давних.
+    recent:  (a, b) => (a[5] < 0 ? 1e9 : a[5]) - (b[5] < 0 ? 1e9 : b[5]),
+    old:     (a, b) => (b[5] < 0 ? -1 : b[5]) - (a[5] < 0 ? -1 : a[5]),
+    name:    (a, b) => String(a[0]).localeCompare(String(b[0]), 'ru'),
+  }[sort] || ((a, b) => b[3] - a[3]);
+  rows = rows.slice().sort(cmp);
+
+  const revSum = rows.reduce((s, r) => s + r[3], 0);
+  if (cntEl) {
+    cntEl.innerHTML = `Найдено: <b>${fmtNum(rows.length)}</b> из ${fmtNum(_cbData.total)} · ${fmtM(revSum)} ₸` +
+      (_cbData.truncated
+        ? `<br><span style="color:var(--orange)">Показаны ${fmtNum(_cbData.shown)} крупнейших из ${fmtNum(_cbData.total)} — база не влезла целиком</span>`
+        : '');
+  }
+
+  const LIMIT = 300;   // рисуем не всё: 1200 строк в DOM телефон листает рывками
+  const shown = rows.slice(0, LIMIT);
+  _cbShown = shown;    // карточка открывается по индексу в показанном списке
+  list.innerHTML = (shown.length
+    ? '<div class="card">' + shown.map((r, i) => {
+        const risk = CB_RISK[r[6]] || CB_RISK[0];
+        const days = r[5] < 0 ? 'дата неизвестна' : (r[5] === 0 ? 'сегодня' : r[5] + ' дн назад');
+        return uiRow({
+          icon: risk.icon,
+          title: r[0],
+          sub: (C[r[1]] || 'Не указан') + ' · ' + fmtNum(r[2]) + ' зак. · ' + days,
+          value: fmtM(r[3]) + ' ₸',
+          vsub: r[7] ? '📞' : '',
+          onclick: `openClientCard(${i})`,
+        });
+      }).join('') + '</div>'
+    : uiEmpty('Никто не найден', '🔍')) +
+    (rows.length > LIMIT
+      ? `<div class="stamp">Показаны первые ${LIMIT}. Уточни поиск или город — остальные ${fmtNum(rows.length - LIMIT)} не нарисованы.</div>`
+      : '') +
+    (meta ? stampHtml(meta.ts, meta.loading, _cbData.updatedAt) : '');
+}
+
+/** Карточка клиента. Телефон — ссылкой: позвонить прямо отсюда и есть
+    главный сценарий базы на телефоне. */
+function openClientCard(idx) {
+  const r = _cbShown[idx];
+  if (!r || !_cbData) return;
+  const C = _cbData.cities || [];
+  const risk = CB_RISK[r[6]] || CB_RISK[0];
+  const body = document.getElementById('detailBody');
+  if (!body) return;
+  body.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div style="font-size:18px;font-weight:800;color:var(--dark)">${r[0]}</div>
+      <div style="font-size:12px;color:var(--light);margin-top:2px">${risk.icon} ${risk.label}</div>
+    </div>
+    ${_detailRow('🏙', 'Город', C[r[1]] || 'Не указан')}
+    ${_detailRow('🧾', 'Заказов', fmtNum(r[2]))}
+    ${_detailRow('💰', 'Выручка за всё время', fmtNum(r[3]) + ' ₸')}
+    ${_detailRow('📊', 'Средний чек', fmtNum(r[2] ? Math.round(r[3] / r[2]) : 0) + ' ₸')}
+    ${_detailRow('📅', 'Последняя покупка', (r[4] || '—') + (r[5] >= 0 ? ' · ' + r[5] + ' дн назад' : ''))}
+    ${r[7] ? `<a class="btn btn-success" style="margin-top:14px;display:block;text-align:center;text-decoration:none"
+                 href="tel:${r[7].replace(/[^\d+]/g, '')}">📞 Позвонить ${r[7]}</a>`
+           : `<div class="stamp" style="margin-top:14px">Телефона нет: Kaspi отдаёт его замаскированным. Вписать вручную можно в полной версии, в карточке клиента.</div>`}
+  `;
   _openDetailOverlay();
 }
 
