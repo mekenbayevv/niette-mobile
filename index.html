@@ -826,9 +826,24 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
           <div style="font-size:11px;color:#64748b;margin-top:2px" id="pDebtSub"></div>
         </div>
 
+        <!-- За что оплата. Обязательно: без позиций бэкенд не сохранит. -->
         <div class="field">
-          <label>Сумма оплаты *</label>
-          <input id="pAmount" type="number" inputmode="numeric" placeholder="0" min="0">
+          <label>За что оплата *</label>
+          <div id="pItems" style="font-size:13px;color:#94a3b8">Сначала выбери клиента</div>
+        </div>
+
+        <!-- Итог считается из позиций. Руками сумму не вводят: две цифры
+             неизбежно разойдутся, и непонятно какой верить. -->
+        <div style="background:#f0fdf4;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Итого к сохранению</div>
+          <div style="font-size:24px;font-weight:800;color:#94a3b8" id="pTotal">0 ₸</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px" id="pTotalSub">выбери позиции</div>
+        </div>
+
+        <div class="field">
+          <label>Аванс / без товара ₸</label>
+          <input id="pAdvance" type="number" inputmode="numeric" placeholder="0" min="0" value="0" oninput="pRecalc()">
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px">Пришло больше, чем набралось позиций — разницу сюда, иначе она пропадёт из учёта.</div>
         </div>
         <div class="field">
           <label>Способ оплаты *</label>
@@ -845,10 +860,6 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
         <div class="field">
           <label>№ платёжки / чека</label>
           <input id="pReceipt" type="text" placeholder="ЧЕК-001">
-        </div>
-        <div class="field">
-          <label>ID поставки (если частичная)</label>
-          <input id="pShipmentId" type="text" placeholder="П-001">
         </div>
         <div class="field">
           <label>Кто принял</label>
@@ -1166,7 +1177,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -3350,10 +3361,18 @@ async function onPaymentClientChange() {
   const infoEl   = document.getElementById('pDebtInfo');
   const amtEl    = document.getElementById('pDebtAmount');
   const subEl    = document.getElementById('pDebtSub');
-  if (!clientId) { infoEl.style.display = 'none'; return; }
+  const itemsEl  = document.getElementById('pItems');
+  if (!clientId) {
+    infoEl.style.display = 'none';
+    if (itemsEl) itemsEl.innerHTML = '<span style="color:#94a3b8">Сначала выбери клиента</span>';
+    pRecalc();
+    return;
+  }
 
   amtEl.textContent = '⏳';
   infoEl.style.display = 'block';
+  if (itemsEl) itemsEl.innerHTML = '<span style="color:#94a3b8">Читаю, за что можно платить…</span>';
+
   try {
     const res = await api('POST', { action: 'clientDebt', clientId });
     const d   = Array.isArray(res) ? res[0] : null;
@@ -3369,6 +3388,112 @@ async function onPaymentClientChange() {
     amtEl.textContent = '—';
     subEl.textContent = e.message;
   }
+
+  await pLoadItems(clientId);
+}
+
+/* ── За что оплата ───────────────────────────────────────────────
+ * Оплата без разбивки не сохраняется. Список — только неоплаченные строки
+ * отгрузки этого партнёра, поэтому оплатить непривезённое нельзя.
+ * Количества НЕ предзаполняем: подставленное значение неотличимо от
+ * подтверждённого и уедет в лист как факт. Вместо этого «всё» на строке.
+ */
+async function pLoadItems(clientId) {
+  const box = document.getElementById('pItems');
+  if (!box) return;
+  try {
+    const r = await api('POST', { action: 'unpaidItems', clientId });
+    const list = (r && r.items) || [];
+    if (!list.length) {
+      box.innerHTML = '<span style="color:#dc2626">Платить не за что: неоплаченных позиций с ценой нет</span>';
+      pRecalc();
+      return;
+    }
+    const money = v => Math.round(Number(v) || 0).toLocaleString('ru') + ' ₸';
+    const num   = v => (Math.round((Number(v) || 0) * 1000) / 1000).toLocaleString('ru');
+
+    const groups = {};
+    list.forEach(i => { (groups[i.shipmentId] = groups[i.shipmentId] || []).push(i); });
+
+    box.innerHTML = Object.keys(groups).map(sid => {
+      const g = groups[sid];
+      return `
+      <div style="border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;overflow:hidden">
+        <div style="display:flex;gap:6px;align-items:center;background:#f8fafc;padding:7px 10px;border-bottom:1px solid #e2e8f0">
+          <b style="font-size:12px;color:#334155">${sid || 'без поставки'}</b>
+          <span style="font-size:11px;color:#94a3b8">${g[0].shipDay || ''}</span>
+          ${g[0].consign ? '<span style="font-size:10px;font-weight:700;color:#b45309;background:#fef3c7;border-radius:4px;padding:1px 6px">Реализация</span>' : ''}
+          <span style="flex:1"></span>
+          <button type="button" onclick="pTakeShipment('${sid}')" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700;color:#2563eb">все</button>
+        </div>
+        ${g.map(i => `
+          <div class="pItem" data-id="${i.id}" data-sid="${sid}" data-price="${i.price}" data-left="${i.leftQty}"
+            style="display:flex;gap:8px;align-items:center;padding:7px 10px;border-top:1px solid #f1f5f9">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${i.product}</div>
+              <div style="font-size:11px;color:#94a3b8">осталось ${num(i.leftQty)} ${i.unit} × ${money(i.price)}</div>
+            </div>
+            <input type="number" class="pQty" min="0" step="any" inputmode="decimal" placeholder="0" oninput="pRecalc()"
+              style="width:72px;border:1px solid #e2e8f0;border-radius:8px;padding:7px;font-size:14px;text-align:right">
+            <button type="button" onclick="pTakeAll(this)" style="background:#f1f5f9;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;color:#475569">всё</button>
+          </div>`).join('')}
+      </div>`;
+    }).join('') +
+      (r.legacyPayments ? `<div style="font-size:11px;color:#b45309;background:#fef3c7;border-radius:8px;padding:8px 10px">⚠ У партнёра ${r.legacyPayments} ${_pPlural(r.legacyPayments,'оплата','оплаты','оплат')} без разбивки на ${money(r.legacySum)} — их деньги здесь не вычтены, остатки завышены. Прогони b2bMigratePaymentItems.</div>` : '');
+  } catch (e) {
+    box.innerHTML = '<span style="color:#dc2626">Не смог прочитать позиции: ' + e.message + '</span>';
+  }
+  pRecalc();
+}
+
+function _pPlural(n, one, few, many) {
+  const a = Math.abs(Number(n) || 0) % 100, b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b > 1 && b < 5)   return few;
+  if (b === 1)          return one;
+  return many;
+}
+
+function pTakeAll(btn) {
+  const row = btn.closest('.pItem');
+  const inp = row && row.querySelector('.pQty');
+  if (inp) { inp.value = row.dataset.left; pRecalc(); }
+}
+
+function pTakeShipment(sid) {
+  [...document.querySelectorAll('.pItem')].forEach(row => {
+    if (row.dataset.sid !== sid) return;
+    const inp = row.querySelector('.pQty');
+    if (inp) inp.value = row.dataset.left;
+  });
+  pRecalc();
+}
+
+function pRecalc() {
+  let sum = 0, lines = 0, bad = 0;
+  [...document.querySelectorAll('.pItem')].forEach(row => {
+    const inp   = row.querySelector('.pQty');
+    const price = Number(row.dataset.price) || 0;
+    const left  = Number(row.dataset.left)  || 0;
+    let qty     = Number(inp.value) || 0;
+    if (qty < 0) { qty = 0; inp.value = ''; }
+    const over = qty > left + 1e-6;
+    inp.style.borderColor = over ? '#dc2626' : '#e2e8f0';
+    if (over) bad++;
+    if (qty > 0) { lines++; sum += qty * price; }
+  });
+
+  const adv   = Math.max(0, Number(document.getElementById('pAdvance')?.value) || 0);
+  const total = Math.round((sum + adv) * 100) / 100;
+  const el    = document.getElementById('pTotal');
+  const sub   = document.getElementById('pTotalSub');
+  if (el)  { el.textContent = Math.round(total).toLocaleString('ru') + ' ₸';
+             el.style.color = (lines && !bad) ? '#059669' : '#94a3b8'; }
+  if (sub) { sub.textContent = bad ? 'больше, чем осталось по позиции'
+                             : !lines ? 'выбери позиции'
+                             : lines + ' ' + _pPlural(lines,'позиция','позиции','позиций') + (adv > 0 ? ' + аванс' : '');
+             sub.style.color = bad ? '#dc2626' : '#64748b'; }
+  return { lines, bad, adv, total };
 }
 
 async function submitPayment() {
@@ -3376,37 +3501,48 @@ async function submitPayment() {
   const sel      = document.getElementById('pClient');
   const clientId = sel.value;
   const clientName = sel.options[sel.selectedIndex]?.text?.split(' · ')[0] || '';
-  const amount   = parseFloat(document.getElementById('pAmount').value) || 0;
   const method   = document.getElementById('pMethod').value;
   const date     = document.getElementById('pDate').value;
 
-  if (!clientId) return toast('Выбери клиента');
-  if (amount <= 0) return toast('Укажи сумму оплаты');
-  if (!date)       return toast('Укажи дату оплаты');
+  // Сумму не собираем и не шлём — её считает бэкенд из этих же позиций.
+  const items = [];
+  [...document.querySelectorAll('.pItem')].forEach(row => {
+    const qty = Number(row.querySelector('.pQty')?.value) || 0;
+    if (qty > 0) items.push({ id: row.dataset.id, qty: qty });
+  });
+  const state = pRecalc();
+
+  if (!clientId)     return toast('Выбери клиента');
+  if (!date)         return toast('Укажи дату оплаты');
+  if (state.bad)     return toast('По позиции введено больше, чем осталось');
+  if (!items.length) return toast('Укажи, за какие позиции оплата');
 
   const data = {
     clientId,
     clientName,
     date,
-    amount,
+    items,
+    advance:     state.adv,
     method,
     receiptNum:  document.getElementById('pReceipt').value,
-    shipmentId:  document.getElementById('pShipmentId').value,
     receiver:    document.getElementById('pReceiver').value || repName,
     comment:     document.getElementById('pComment').value,
   };
 
   setBtnLoading('btnSubmitPayment', true);
   try {
-    await api('POST', { action: 'addPayment', data });
+    const res = await api('POST', { action: 'addPayment', data });
     // Сброс формы
-    ['pClient','pMethod','pDate','pReceipt','pShipmentId','pReceiver','pComment'].forEach(id => {
+    ['pClient','pMethod','pDate','pReceipt','pReceiver','pComment'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = el.tagName === 'SELECT' ? el.options[0]?.value || '' : '';
     });
-    document.getElementById('pAmount').value = '';
+    document.getElementById('pAdvance').value = '0';
+    document.getElementById('pItems').innerHTML = '<span style="color:#94a3b8">Сначала выбери клиента</span>';
     document.getElementById('pDebtInfo').style.display = 'none';
-    showSuccess('💳', 'Оплата зафиксирована!', clientName + '\n' + amount.toLocaleString('ru') + ' ₸');
+    pRecalc();
+    const saved = Math.round((res && res.amount) || state.total);
+    showSuccess('💳', 'Оплата зафиксирована!', clientName + '\n' + saved.toLocaleString('ru') + ' ₸ · позиций: ' + items.length);
     showTab('today');
   } catch(e) {
     toast('Ошибка: ' + e.message);
