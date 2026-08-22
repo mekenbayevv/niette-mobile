@@ -1177,7 +1177,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.9.1';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1372,6 +1372,28 @@ function parseServerAt(s) {
  * минут старше запроса. Показывать время запроса значило бы врать о свежести —
  * ровно там, где человек и смотрит, можно ли верить числу.
  */
+/* Дата из бэкенда ('yyyy-MM-dd' или полный ISO) → дд.мм.гггг.
+   Полный ISO резать строкой НЕЛЬЗЯ: 'Z' — это UTC, и полночь Алматы (UTC+5)
+   выглядит там как 19:00 предыдущих суток, дата уехала бы на день влево.
+   Поэтому длинную форму разбираем через Date и берём день по Алматы,
+   короткую — по числам, без часовых поясов вообще. */
+function fmtDateRu(v) {
+  if (!v) return '—';
+  const s = String(v).trim();
+  let y, m, d;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const t = new Date(s);
+    if (isNaN(t)) return '—';
+    const alm = new Date(t.getTime() + 5 * 3600000);   // Казахстан круглый год UTC+5
+    y = alm.getUTCFullYear(); m = alm.getUTCMonth() + 1; d = alm.getUTCDate();
+  } else {
+    const p = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!p) return s;                                   // уже человеческий формат — не трогаем
+    y = +p[1]; m = +p[2]; d = +p[3];
+  }
+  return String(d).padStart(2, '0') + '.' + String(m).padStart(2, '0') + '.' + y;
+}
+
 function stampHtml(ts, loading, serverAt) {
   if (loading) return '<div class="stamp">⏳ обновляю…</div>';
   const srv = parseServerAt(serverAt);
@@ -2368,7 +2390,7 @@ function openClientCard(idx) {
     ${_detailRow('🧾', 'Заказов', fmtNum(r[2]))}
     ${_detailRow('💰', 'Выручка за всё время', fmtNum(r[3]) + ' ₸')}
     ${_detailRow('📊', 'Средний чек', fmtNum(r[2] ? Math.round(r[3] / r[2]) : 0) + ' ₸')}
-    ${_detailRow('📅', 'Последняя покупка', (r[4] || '—') + (r[5] >= 0 ? ' · ' + r[5] + ' дн назад' : ''))}
+    ${_detailRow('📅', 'Последняя покупка', fmtDateRu(r[4]) + (r[5] >= 0 ? ' · ' + r[5] + ' дн назад' : ''))}
     ${r[7] ? `<a class="btn btn-success" style="margin-top:14px;display:block;text-align:center;text-decoration:none"
                  href="tel:${r[7].replace(/[^\d+]/g, '')}">📞 Позвонить ${r[7]}</a>`
            : `<div class="stamp" style="margin-top:14px">Телефона нет: Kaspi отдаёт его замаскированным. Вписать вручную можно в полной версии, в карточке клиента.</div>`}
