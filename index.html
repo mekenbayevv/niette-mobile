@@ -1177,7 +1177,7 @@ html, body { height: 100%; height: 100dvh; font-family: -apple-system, 'Inter', 
 // ══════════════════════════════════════════════════════════════
 // CONFIG — вставь свой URL после деплоя Apps Script
 // ══════════════════════════════════════════════════════════════
-const APP_VERSION = '0.9.1';
+const APP_VERSION = '0.9.2';
 const API_URL = 'https://script.google.com/macros/s/AKfycbwc2RsXd8OhANMn_9x9onnyF6ATCap6iJ_T_8QxEiQ3zC-C692f0fjKsCuBHPaPIXPd/exec';
 
 /* Штамп версии на экране входа. Скрипт идёт после разметки, поэтому
@@ -1455,6 +1455,16 @@ const fmtM   = n => {
   if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + ' тыс';
   return fmtNum(v);
 };
+
+/** Экранирование текста, который писал ЧЕЛОВЕК (примечания к клиентам).
+    Имена, города и суммы приезжают от Kaspi и идут в разметку как есть, а
+    заметку набирают руками: одна угловая скобка или кавычка иначе ломает
+    строку списка, а `<img onerror=…>` — уже не косметика. */
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 /** KPI-карточка: число + подпись + дельта к прошлому периоду. */
 function uiKpi(o) {
@@ -2275,6 +2285,26 @@ function openStockHealthDetail() {
    на каждый набранный символ. Цифры — за всё время, как на десктопе. */
 let _cbData  = null;
 let _cbShown = [];
+let _cbMeta  = null;    // последняя метка свежести списка
+/* Примечания к клиентам — отдельный лёгкий слой (действие clientNotes).
+   В сам список они не входят намеренно: список кэшируется снимком под версией
+   данных, и заметка появлялась бы там только после пересчёта ВСЕХ экранов.
+   Ключ «имя@город» — тот же, что на десктопе и на сервере (clientNoteKey_),
+   поэтому заметка, написанная с телефона, сразу видна в полной версии. */
+let _cbNotes = {};
+
+function cbNoteKey(name, city) {
+  const n = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let c = String(city || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (c === 'не указан' || c === 'не указано' || c === '—' || c === '-') c = '';
+  return n ? n + '@' + c : '';
+}
+/** Заметка для строки списка (r[0] — имя, r[1] — индекс города). */
+function cbNoteOf(r) {
+  if (!r || !_cbData) return null;
+  const rec = _cbNotes[cbNoteKey(r[0], (_cbData.cities || [])[r[1]])];
+  return rec && rec.note ? rec : null;
+}
 const CB_RISK = [
   { icon: '🟢', label: 'покупал недавно' },
   { icon: '🟡', label: 'остывает' },
@@ -2296,6 +2326,13 @@ function loadClientBase() {
     fillCityFilter(data);
     renderClientBase(meta);
   });
+
+  // Заметки — вторым, независимым запросом. Он маленький (один лист, без
+  // чтения «База_продаж»), поэтому список его не ждёт и не ломается, если
+  // запрос не дошёл: заметки просто не появятся.
+  loadWithCache('cnotes', () => dataCall('clientNotes'), (d) => {
+    if (d && d.notes) { _cbNotes = d.notes; renderClientBase(); }
+  });
 }
 
 function fillCityFilter(data) {
@@ -2316,6 +2353,9 @@ function fillCityFilter(data) {
 function renderClientBase(meta) {
   const list = document.getElementById('cbList');
   const cntEl = document.getElementById('cbCount');
+  // Метку свежести запоминаем: перерисовка по приходу заметок не должна
+  // стирать «данные на 14:32» — без неё непонятно, что видишь.
+  if (meta) _cbMeta = meta;
   if (!list || !_cbData) return;
 
   const q    = (document.getElementById('cbSearch')?.value || '').trim().toLowerCase();
@@ -2328,7 +2368,9 @@ function renderClientBase(meta) {
   if (q) rows = rows.filter(r =>
     String(r[0]).toLowerCase().indexOf(q) !== -1 ||
     String(C[r[1]] || '').toLowerCase().indexOf(q) !== -1 ||
-    String(r[7]).indexOf(q) !== -1);
+    String(r[7]).indexOf(q) !== -1 ||
+    // и по тексту заметки: «для салона» должно находить всех таких
+    ((cbNoteOf(r) || {}).note || '').toLowerCase().indexOf(q) !== -1);
 
   const cmp = {
     revenue: (a, b) => b[3] - a[3],
@@ -2356,10 +2398,14 @@ function renderClientBase(meta) {
     ? '<div class="card">' + shown.map((r, i) => {
         const risk = CB_RISK[r[6]] || CB_RISK[0];
         const days = r[5] < 0 ? 'дата неизвестна' : (r[5] === 0 ? 'сегодня' : r[5] + ' дн назад');
+        const note = cbNoteOf(r);
         return uiRow({
           icon: risk.icon,
           title: r[0] + (r[8] ? ' 🔄' : ''),   // вернулся после выпадения из своего ритма
-          sub: (C[r[1]] || 'Не указан') + ' · ' + fmtNum(r[2]) + ' зак. · ' + days,
+          // Начало заметки прямо в строке: ради этого столбец и заводили —
+          // иначе, чтобы вспомнить, о чём договорились, надо открыть карточку.
+          sub: (C[r[1]] || 'Не указан') + ' · ' + fmtNum(r[2]) + ' зак. · ' + days +
+               (note ? '<br><span style="color:var(--dark)">📝 ' + escHtml(note.note.replace(/\s+/g, ' ').slice(0, 70)) + '</span>' : ''),
           value: fmtM(r[3]) + ' ₸',
           vsub: r[7] ? '📞' : '',
           onclick: `openClientCard(${i})`,
@@ -2369,7 +2415,7 @@ function renderClientBase(meta) {
     (rows.length > LIMIT
       ? `<div class="stamp">Показаны первые ${LIMIT}. Уточни поиск или город — остальные ${fmtNum(rows.length - LIMIT)} не нарисованы.</div>`
       : '') +
-    (meta ? stampHtml(meta.ts, meta.loading, _cbData.updatedAt) : '');
+    (_cbMeta ? stampHtml(_cbMeta.ts, _cbMeta.loading, _cbData.updatedAt) : '');
 }
 
 /** Карточка клиента. Телефон — ссылкой: позвонить прямо отсюда и есть
@@ -2377,6 +2423,11 @@ function renderClientBase(meta) {
 function openClientCard(idx) {
   const r = _cbShown[idx];
   if (!r || !_cbData) return;
+  // Карточку держим за САМУ строку, а не за её номер в списке: после
+  // сохранения заметки список перерисовывается, и по номеру можно было бы
+  // отредактировать соседнего клиента.
+  _cbCardRow = r;
+  _cbNoteEditing = false;
   const C = _cbData.cities || [];
   const risk = CB_RISK[r[6]] || CB_RISK[0];
   const body = document.getElementById('detailBody');
@@ -2394,8 +2445,82 @@ function openClientCard(idx) {
     ${r[7] ? `<a class="btn btn-success" style="margin-top:14px;display:block;text-align:center;text-decoration:none"
                  href="tel:${r[7].replace(/[^\d+]/g, '')}">📞 Позвонить ${r[7]}</a>`
            : `<div class="stamp" style="margin-top:14px">Телефона нет: Kaspi отдаёт его замаскированным. Вписать вручную можно в полной версии, в карточке клиента.</div>`}
+    <div id="cbNoteBox" style="margin-top:14px">${cbNoteBoxHtml()}</div>
   `;
   _openDetailOverlay();
+}
+
+/* ── Примечание к клиенту с телефона ───────────────────────────────────
+   Ровно то же поле, что и в полной версии: ключ «имя@город» общий, поэтому
+   заметка, записанная на выезде, тут же видна на десктопе, и наоборот.
+   Одно перезаписываемое поле, а не журнал. Пустой текст = убрать. */
+let _cbNoteEditing = false;   // true = открыто поле ввода
+let _cbCardRow     = null;    // строка клиента, чья карточка открыта
+
+function cbNoteBoxHtml() {
+  const r = _cbCardRow;
+  if (!r) return '';
+  const rec  = cbNoteOf(r);
+  const text = rec ? rec.note : '';
+  const sign = rec && (rec.who || rec.when)
+    ? `<div class="stamp" style="text-align:left;margin-top:6px">${escHtml([rec.who, rec.when].filter(Boolean).join(' · '))}</div>` : '';
+  const title = '<div style="font-size:10px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">📝 Примечание</div>';
+
+  if (_cbNoteEditing) {
+    return title + `
+      <textarea id="cbNoteInput" rows="4" maxlength="2000"
+        placeholder="Например: пишет в WhatsApp, берёт для салона, просила звонить после 18:00"
+        style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:14px;line-height:1.5;resize:vertical">${escHtml(text)}</textarea>
+      <div class="stamp" style="text-align:left;margin-top:6px">Пустое поле = убрать примечание</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-success" id="btnCbNoteSave" style="flex:1" onclick="cbNoteSave()">Сохранить</button>
+        <button class="btn" style="flex:0 0 auto" onclick="cbNoteCancel()">Отмена</button>
+      </div>`;
+  }
+
+  const body = `<div style="font-size:14px;color:var(--dark);line-height:1.5;white-space:pre-wrap;word-break:break-word">${escHtml(text)}</div>${sign}`;
+  if (!canWrite()) return text ? title + body : '';
+  return text
+    ? title + body + `<button class="btn" style="width:100%;margin-top:10px" onclick="cbNoteEdit()">✏️ Изменить примечание</button>`
+    : `<button class="btn" style="width:100%" onclick="cbNoteEdit()">📝 Добавить примечание</button>`;
+}
+
+function _cbNoteRedraw() {
+  const box = document.getElementById('cbNoteBox');
+  if (!box) return;
+  box.innerHTML = cbNoteBoxHtml();
+  const i = document.getElementById('cbNoteInput');
+  if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+}
+
+function cbNoteEdit()   { _cbNoteEditing = true;  _cbNoteRedraw(); }
+function cbNoteCancel() { _cbNoteEditing = false; _cbNoteRedraw(); }
+
+async function cbNoteSave() {
+  const r = _cbCardRow;
+  if (!r || !_cbData) return;
+  const el   = document.getElementById('cbNoteInput');
+  const text = (el ? el.value : '').trim();
+  const city = (_cbData.cities || [])[r[1]] || '';
+  setBtnLoading('btnCbNoteSave', true);
+  try {
+    const res = await api('POST', { action: 'setClientNote', data: { name: r[0], city: city, note: text } });
+    if (res && res.error) throw new Error(res.error);
+    const key = cbNoteKey(r[0], city);
+    if (text) _cbNotes[key] = { note: (res && res.note) ? res.note : text, who: _currentName(), when: '' };
+    else delete _cbNotes[key];
+    // Кэш заметок правим сразу: иначе возврат на экран покажет старый текст,
+    // и человек решит, что запись не прошла.
+    cacheSet('cnotes', { notes: _cbNotes, count: Object.keys(_cbNotes).length });
+    _cbNoteEditing = false;
+    _cbNoteRedraw();
+    renderClientBase();
+    toast(text ? 'Примечание сохранено' : 'Примечание убрано');
+  } catch (e) {
+    toast('Ошибка: ' + e.message);
+  } finally {
+    setBtnLoading('btnCbNoteSave', false);
+  }
 }
 
 /* ── СПИСАНИЕ ──────────────────────────────────────────────────
