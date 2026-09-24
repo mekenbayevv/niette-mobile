@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>NIETTE · Клиенты</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app" aria-live="polite">
+  <div class="page"><div class="card loading" role="status">Загружаю…</div></div>
+</main>
+<noscript><div class="page"><div class="card error">Для работы нужен JavaScript.</div></div></noscript>
+<!-- Библиотека лежит рядом, а не на CDN: версия закреплена самим файлом, и
+     страница не зависит от доступности чужого сервера. Взята из npm-пакета
+     @supabase/supabase-js@2.117.1 (dist/umd/supabase.js), лицензия MIT. -->
+<script src="vendor/supabase-2.117.1.js"></script>
+<script src="config.js"></script>
+<script src="clients.js"></script>
+<script src="app.js"></script>
+<script>NietteApp.start({ root: document.getElementById('app') });</script>
+</body>
+</html>
