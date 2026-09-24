@@ -9,10 +9,12 @@
  * проверяется ЯВНО, rpc('is_app_user'): иначе он увидел бы пустой экран и
  * решил, что клиентов нет.
  *
- * ДАННЫЕ. Каждая витрина грузится отдельно (Promise.allSettled): упала одна —
- * её раздел показывает причину, остальные работают. Большие витрины листаются
- * страницами до пустой страницы: у проекта Supabase стоит лимит строк на ответ
- * (по умолчанию 1000), и без листания база клиентов молча обрезалась бы.
+ * ДАННЫЕ. Читаются снимки витрин (snap_*, sql/15_snapshots.sql) — готовые
+ * таблицы, а не пересчёт на каждый заход. Каждый снимок грузится отдельно
+ * (Promise.allSettled): упал один — его раздел показывает причину, остальные
+ * работают. Большие листаются страницами до пустой страницы: у проекта
+ * Supabase стоит лимит строк на ответ (по умолчанию 1000), и без листания
+ * база клиентов молча обрезалась бы.
  */
 (function (root) {
   'use strict';
@@ -22,17 +24,24 @@
   const BASE_STEP = 50;
   const RISK_STEP = 20;
 
-  // Порядок = порядок разделов на экране. select перечислен там, где витрина
+  // Страница читает СНИМКИ витрин (sql/15_snapshots.sql), а не сами витрины.
+  // 25.09.2026 витрины напрямую упали по тайм-ауту в четырёх разделах из
+  // шести: шесть пересчётов сразу, плюс каждая страница базы — пересчёт с
+  // нуля. Снимки пересчитывает pg_cron раз в 10 минут, их время — в snap_state.
+  // Порядок = порядок разделов на экране. select перечислен там, где таблица
   // шире, чем нужно экрану: меньше байтов через мобильную сеть.
   const SOURCES = [
-    { key: 'base',    view: 'v_client_base',      paged: true, order: 'client_key', what: 'База клиентов' },
-    { key: 'risk',    view: 'v_client_risk',      paged: true, order: 'client_key', what: 'Риск оттока',
+    { key: 'base',    table: 'snap_client_base',      paged: true, order: 'client_key', what: 'База клиентов' },
+    { key: 'risk',    table: 'snap_client_risk',      paged: true, order: 'client_key', what: 'Риск оттока',
       select: 'client_key,name,city,orders,revenue,last_at,days_since_last,expected_gap,overdue_x,risk' },
-    { key: 'repeat',  view: 'v_client_repeat',    order: 'sort',   what: 'Время до второго заказа' },
-    { key: 'ltv',     view: 'v_client_ltv',       order: 'cohort', what: 'Когорты' },
-    { key: 'monthly', view: 'v_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
-    { key: 'entry',   view: 'v_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
+    { key: 'repeat',  table: 'snap_client_repeat',    order: 'sort',   what: 'Время до второго заказа' },
+    { key: 'ltv',     table: 'snap_client_ltv',       order: 'cohort', what: 'Когорты' },
+    { key: 'monthly', table: 'snap_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
+    { key: 'entry',   table: 'snap_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
   ];
+  // Снимок старше этого — предупреждение на экране. Тот же порог, что у
+  // snap_health() в гейте опросника: pg_cron пропустил четыре запуска подряд.
+  const STALE_MIN = 45;
 
   // ── Ключ: публичный — да, секретный — никогда ────────────────────────────
   function b64url(s) {
@@ -61,9 +70,12 @@
     if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg))
       return 'Нет связи с базой. Проверьте интернет и нажмите «Обновить».';
     if (code === '57014' || /statement timeout|canceling statement/i.test(msg))
-      return pre + 'база не успела посчитать (тайм-аут). Обновите через минуту; если повторяется — эту витрину пора переводить на снимок.';
+      return pre + 'база не успела ответить (тайм-аут). Обновите через минуту.';
     if (code === '42501' || /permission denied/i.test(msg))
       return pre + 'нет прав на чтение — прогоните sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_/.test(msg))
+      return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
     if (code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg))
       return pre + 'такой витрины в базе нет — прогоните файлы по sql/README.md.';
     if (/invalid login credentials/i.test(msg)) return 'Неверный email или пароль.';
@@ -77,7 +89,7 @@
   async function fetchAll(client, src) {
     const out = [];
     for (let from = 0, guard = 0; guard < 50; guard++) {
-      let q = client.from(src.view).select(src.select || '*');
+      let q = client.from(src.table).select(src.select || '*');
       if (src.order) q = q.order(src.order, { ascending: true });
       const res = await q.range(from, from + PAGE - 1);
       if (res.error) throw res.error;
@@ -89,25 +101,40 @@
       out.push.apply(out, rows);
       from += rows.length;
     }
-    throw new Error(src.view + ': больше 50 страниц — проверьте сортировку');
+    throw new Error(src.table + ': больше 50 страниц — проверьте сортировку');
   }
 
   async function fetchSmall(client, src) {
-    let q = client.from(src.view).select(src.select || '*');
+    let q = client.from(src.table).select(src.select || '*');
     if (src.order) q = q.order(src.order, { ascending: true });
     const res = await q;
     if (res.error) throw res.error;
     return res.data || [];
   }
 
+  // Свежесть — справочно: её сбой не должен гасить экран, поэтому не бросает.
+  // snapAt — время САМОГО СТАРОГО снимка: цифры на экране не свежее него.
   async function fetchFreshness(client) {
-    const res = await client.from('sync_log').select('synced_at')
-                            .order('synced_at', { ascending: false }).limit(1);
-    if (res.error || !res.data || !res.data.length) return null;
-    return res.data[0].synced_at;
+    const out = { synced: null, snapAt: null, snapNever: false };
+    try {
+      const res = await client.from('sync_log').select('synced_at')
+                              .order('synced_at', { ascending: false }).limit(1);
+      if (!res.error && res.data && res.data.length) out.synced = res.data[0].synced_at;
+    } catch (e) { /* справочно */ }
+    try {
+      const res = await client.from('snap_state').select('snap,refreshed_at');
+      if (!res.error && res.data && res.data.length) {
+        out.snapNever = res.data.some(r => !r.refreshed_at);
+        const t = res.data.filter(r => r.refreshed_at).map(r => new Date(r.refreshed_at))
+                          .filter(d => !isNaN(d));
+        if (t.length) out.snapAt = new Date(Math.min.apply(null, t));
+      }
+    } catch (e) { /* справочно */ }
+    return out;
   }
 
   async function loadAll(client) {
+    const freshP = fetchFreshness(client);
     const results = await Promise.allSettled(
       SOURCES.map(s => (s.paged ? fetchAll : fetchSmall)(client, s)));
     const data = {}, errors = {};
@@ -116,9 +143,22 @@
       if (r.status === 'fulfilled') data[s.key] = r.value;
       else { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
     });
-    let synced = null;
-    try { synced = await fetchFreshness(client); } catch (e) { /* свежесть — справочно */ }
-    return { data, errors, synced };
+    const fresh = await freshP;
+    return { data, errors, synced: fresh.synced, snapAt: fresh.snapAt, snapNever: fresh.snapNever };
+  }
+
+  // Застывший снимок по виду неотличим от «новых заказов не было». Поэтому
+  // возраст снимка говорится словами, а не только временем в строке свежести.
+  function staleNote(app) {
+    if (app.snapNever) {
+      return 'Снимки ещё ни разу не считались — цифры неполные. Supabase → SQL Editor: select refresh_client_snapshots();';
+    }
+    if (!app.snapAt || !app.loadedAt) return '';
+    const min = Math.round((app.loadedAt - app.snapAt) / 60000);
+    if (min <= STALE_MIN) return '';
+    const age = min < 120 ? min + ' мин' : Math.round(min / 60) + ' ч';
+    return 'Цифры могут быть устаревшими: снимок не обновлялся ' + age +
+           '. Проверьте pg_cron: Supabase → Integrations → Cron.';
   }
 
   // ── Разметка состояний ────────────────────────────────────────────────────
@@ -205,10 +245,16 @@
     // выдумкой, а не данными.
     if (e.risk) { k.high = null; k.mid = null; }
     if (e.repeat) k.medianDays = null;
-    const fresh = 'Загружено ' + hhmm(app.loadedAt) +
-      (app.synced ? ' · зеркало Apps Script обновлено ' + hhmm(app.synced) : '');
+    // «Данные на» — время снимка: это и есть момент, на который верны цифры.
+    const parts = [];
+    if (app.snapAt) parts.push('Данные на ' + hhmm(app.snapAt));
+    if (app.synced) parts.push('зеркало Apps Script обновлено ' + hhmm(app.synced));
+    parts.push('загружено ' + hhmm(app.loadedAt));
+    const fresh = parts.join(' · ');
+    const stale = staleNote(app);
     return headerHtml(app) + page(
-      '<div class="fresh muted">' + C.esc(fresh) + '</div>' +
+      '<div class="fresh muted">' + C.esc(fresh.charAt(0).toUpperCase() + fresh.slice(1)) + '</div>' +
+      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '') +
       (e.base ? C.sectionError(e.base) : C.renderKpis(k)) +
       section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
               or(e, 'ltv', () => C.renderCohorts(d.ltv))) +
@@ -264,6 +310,8 @@
     app.data = res.data;
     app.errors = res.errors;
     app.synced = res.synced;
+    app.snapAt = res.snapAt;
+    app.snapNever = res.snapNever;
     app.loadedAt = new Date();
     renderScreen(app);
   }

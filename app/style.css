@@ -75,6 +75,8 @@ pre { background: var(--surface-2); border: 1px solid var(--border); border-radi
 .who-am-i { color: var(--text-3); font-size: 12px; max-width: 220px; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; }
 .fresh { font-size: 12px; margin: 0 0 12px; }
+.stale { background: var(--amber-tint); color: var(--amber); border: 1px solid var(--amber);
+         border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; font-size: 13px; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
         padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 2px var(--shadow); min-width: 0; }
