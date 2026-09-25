@@ -1,7 +1,12 @@
-/* NIETTE на Postgres: вход и экран «Клиенты». Первый экран нового фронта.
+/* NIETTE на Postgres: вход и два экрана — «Обзор» и «Клиенты».
  *
  * Состояния по порядку: нет библиотеки / нет настроек / секретный ключ →
  * вход → проверка допуска (app_users) → загрузка → экран.
+ *
+ * ЭКРАНЫ — по адресу: …/app/ и …/app/#overview — «Обзор», …/app/#clients —
+ * «Клиенты». Данные экрана грузятся при первом заходе на него и дальше живут
+ * в памяти: переключение между вкладками в базу не ходит. «Обновить»
+ * перечитывает открытый экран.
  *
  * ДОСТУП. Вход — Supabase Auth (email и пароль). «Вошёл» ещё ничего не
  * значит: читать можно, только если email есть в app_users (sql/12_auth.sql).
@@ -39,6 +44,15 @@
     { key: 'monthly', table: 'snap_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
     { key: 'entry',   table: 'snap_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
   ];
+  // «Обзор» (sql/16_overview.sql): вся история «день × канал» одной таблицей,
+  // период и группировку страница считает сама. Сортировка по двум колонкам:
+  // листание страницами требует порядка, в котором у строки ровно одно место.
+  const OV_DAILY = { table: 'snap_overview_daily', paged: true, order: ['day', 'channel'], what: 'Выручка по дням',
+                     select: 'day,channel,revenue,gross,returns,extra,orders' };
+  const OV_GAPS = { table: 'snap_overview_gaps', what: 'Пробелы' };
+  const OV_FRESH = { table: 'v_overview_freshness', what: 'Свежесть приёма' };
+  const OV_PREFS = 'niette.ov.v1';   // период и группировка — между заходами, в этом браузере
+
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
   // snap_health() в гейте опросника: pg_cron пропустил четыре запуска подряд.
   const STALE_MIN = 45;
@@ -74,6 +88,9 @@
     if (code === '42501' || /permission denied/i.test(msg))
       return pre + 'нет прав на чтение — прогоните sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_overview|v_overview/.test(msg))
+      return pre + 'снимка «Обзора» в базе нет — выполните sql/16_overview.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_/.test(msg))
       return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
     if (code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg))
@@ -89,8 +106,7 @@
   async function fetchAll(client, src) {
     const out = [];
     for (let from = 0, guard = 0; guard < 50; guard++) {
-      let q = client.from(src.table).select(src.select || '*');
-      if (src.order) q = q.order(src.order, { ascending: true });
+      const q = ordered(client.from(src.table).select(src.select || '*'), src.order);
       const res = await q.range(from, from + PAGE - 1);
       if (res.error) throw res.error;
       const rows = res.data || [];
@@ -104,23 +120,21 @@
     throw new Error(src.table + ': больше 50 страниц — проверьте сортировку');
   }
 
+  function ordered(q, order) {
+    [].concat(order || []).forEach(col => { q = q.order(col, { ascending: true }); });
+    return q;
+  }
+
   async function fetchSmall(client, src) {
-    let q = client.from(src.table).select(src.select || '*');
-    if (src.order) q = q.order(src.order, { ascending: true });
-    const res = await q;
+    const res = await ordered(client.from(src.table).select(src.select || '*'), src.order);
     if (res.error) throw res.error;
     return res.data || [];
   }
 
   // Свежесть — справочно: её сбой не должен гасить экран, поэтому не бросает.
   // snapAt — время САМОГО СТАРОГО снимка: цифры на экране не свежее него.
-  async function fetchFreshness(client) {
-    const out = { synced: null, snapAt: null, snapNever: false };
-    try {
-      const res = await client.from('sync_log').select('synced_at')
-                              .order('synced_at', { ascending: false }).limit(1);
-      if (!res.error && res.data && res.data.length) out.synced = res.data[0].synced_at;
-    } catch (e) { /* справочно */ }
+  async function fetchSnapState(client) {
+    const out = { snapAt: null, snapNever: false };
     try {
       const res = await client.from('snap_state').select('snap,refreshed_at');
       if (!res.error && res.data && res.data.length) {
@@ -131,6 +145,16 @@
       }
     } catch (e) { /* справочно */ }
     return out;
+  }
+
+  async function fetchFreshness(client) {
+    const out = { synced: null };
+    try {
+      const res = await client.from('sync_log').select('synced_at')
+                              .order('synced_at', { ascending: false }).limit(1);
+      if (!res.error && res.data && res.data.length) out.synced = res.data[0].synced_at;
+    } catch (e) { /* справочно */ }
+    return Object.assign(out, await fetchSnapState(client));
   }
 
   async function loadAll(client) {
@@ -147,9 +171,26 @@
     return { data, errors, synced: fresh.synced, snapAt: fresh.snapAt, snapNever: fresh.snapNever };
   }
 
+  async function loadOverview(client) {
+    const snapP = fetchSnapState(client);
+    const [daily, gaps, fresh] = await Promise.allSettled([
+      fetchAll(client, OV_DAILY), fetchSmall(client, OV_GAPS), fetchSmall(client, OV_FRESH)]);
+    const snap = await snapP;
+    return {
+      rows: daily.status === 'fulfilled' ? daily.value : [],
+      gaps: gaps.status === 'fulfilled' ? gaps.value : [],
+      fresh: fresh.status === 'fulfilled' && fresh.value.length ? fresh.value[0] : {},
+      errors: {
+        daily: daily.status === 'rejected' ? humanError(daily.reason, OV_DAILY.what) : null,
+        gaps: gaps.status === 'rejected' ? humanError(gaps.reason, OV_GAPS.what) : null
+      },
+      snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
+    };
+  }
+
   // Застывший снимок по виду неотличим от «новых заказов не было». Поэтому
   // возраст снимка говорится словами, а не только временем в строке свежести.
-  function staleNote(app) {
+  function staleNote(app) {   // app — любой носитель { snapAt, snapNever, loadedAt }
     if (app.snapNever) {
       return 'Снимки ещё ни разу не считались — цифры неполные. Supabase → SQL Editor: select refresh_client_snapshots();';
     }
@@ -177,7 +218,7 @@
 
   function loginHtml(errorText, email) {
     return page(
-      '<section class="card login"><h1>NIETTE</h1><p class="muted">Аналитика клиентов</p>' +
+      '<section class="card login"><h1>NIETTE</h1><p class="muted">Выручка и клиенты</p>' +
       '<form id="loginForm" novalidate>' +
         '<label for="loginEmail">Email</label>' +
         '<input id="loginEmail" name="email" type="email" autocomplete="username" required value="' + C.esc(email || '') + '">' +
@@ -188,10 +229,16 @@
       '</form></section>');
   }
 
+  const ROUTES = [{ key: 'overview', label: 'Обзор' }, { key: 'clients', label: 'Клиенты' }];
+
   function headerHtml(app) {
     const email = app.session && app.session.user ? app.session.user.email : '';
+    const tabs = ROUTES.map(r => '<button type="button" class="tab' + (app.route === r.key ? ' on' : '') +
+      '" data-action="route" data-route="' + r.key + '"' + (app.route === r.key ? ' aria-current="page"' : '') + '>' +
+      C.esc(r.label) + '</button>').join('');
     return '<header class="top"><div class="top-inner">' +
-      '<div class="brand">NIETTE <span class="muted">· Клиенты</span></div>' +
+      '<div class="brand">NIETTE</div>' +
+      '<nav class="tabs" aria-label="Экраны">' + tabs + '</nav>' +
       '<div class="top-actions">' +
         (email ? '<span class="who-am-i" title="Вы вошли как">' + C.esc(email) + '</span>' : '') +
         '<button type="button" data-action="refresh">Обновить</button>' +
@@ -313,7 +360,153 @@
     app.snapAt = res.snapAt;
     app.snapNever = res.snapNever;
     app.loadedAt = new Date();
-    renderScreen(app);
+    if (app.route === 'clients') renderScreen(app);
+  }
+
+  // ── «Обзор» ───────────────────────────────────────────────────────────────
+  function ovRange(app) {
+    const O = root.NietteOverview, ui = app.ovUi;
+    const today = O.todayIso(app.now());
+    if (ui.preset === 'custom' && ui.from && ui.to) {
+      return ui.from <= ui.to ? { from: ui.from, to: ui.to } : { from: ui.to, to: ui.from };
+    }
+    return O.presetRange(ui.preset, today, O.minDay(app.ov.rows));
+  }
+
+  // Сегодняшнее время — без даты: «11:57», а не «25.09, 11:57» пять раз подряд.
+  function when(v) {
+    const d = v instanceof Date ? v : new Date(v);
+    if (isNaN(d)) return '—';
+    const n = new Date();
+    const same = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+    return same ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : hhmm(d);
+  }
+
+  function ovFreshHtml(app) {
+    const f = app.ov.fresh || {};
+    const bits = [];
+    if (app.ov.snapAt) bits.push('Данные на ' + when(app.ov.snapAt));
+    const poll = [];
+    if (f.kaspi_polled_at) poll.push('Kaspi ' + when(f.kaspi_polled_at));
+    if (f.ozon_polled_at && f.wb_polled_at && when(f.ozon_polled_at) === when(f.wb_polled_at)) {
+      poll.push('Ozon и WB ' + when(f.ozon_polled_at));
+    } else {
+      if (f.ozon_polled_at) poll.push('Ozon ' + when(f.ozon_polled_at));
+      if (f.wb_polled_at) poll.push('WB ' + when(f.wb_polled_at));
+    }
+    if (poll.length) bits.push('опрос ' + poll.join(', '));
+    if (f.mirror_synced_at) bits.push('зеркало ' + when(f.mirror_synced_at));
+    bits.push('загружено ' + when(app.ov.loadedAt));
+    const txt = bits.join(' · ');
+    const stale = staleNote(app.ov);
+    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
+      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+  }
+
+  // Всё, что зависит от периода, считается здесь одним проходом и кладётся
+  // в app.ovView — подсказке графика нужны ровно те бакеты, что нарисованы.
+  function ovCompute(app) {
+    const O = root.NietteOverview, ui = app.ovUi, rows = app.ov.rows;
+    const today = O.todayIso(app.now());
+    const rg = ovRange(app);
+    const prg = O.prevRange(ui.preset === 'custom' ? 'custom' : ui.preset, rg);
+    const chans = O.channelsOf(rows);
+    const series = O.buildSeries(rows, rg, ui.grouping, today);
+    const present = {};
+    chans.forEach(c => { present[c.key] = series.some(e => (e.by[c.key] || 0) !== 0); });
+    app.ovView = { rg, prg, chans, series, present, t: O.totals(rows, rg), pt: prg ? O.totals(rows, prg) : null };
+    return app.ovView;
+  }
+
+  function ovChartHtml(app, width) {
+    const v = app.ovView;
+    return root.NietteOverview.renderChart(v.series, v.chans, app.ovUi.hidden, width, app.ovUi.grouping);
+  }
+
+  function ovTrendInner(app) {
+    const O = root.NietteOverview, v = app.ovView;
+    return O.renderGroupings(app.ovUi.grouping) + O.renderLegend(v.chans, app.ovUi.hidden, v.present) +
+      '<div id="ovChartBox">' + ovChartHtml(app, app.ovChartWidth) + '</div>';
+  }
+
+  function overviewHtml(app) {
+    const O = root.NietteOverview, ov = app.ov;
+    if (ov.errors.daily) {
+      return headerHtml(app) + page(ovFreshHtml(app) + C.sectionError(ov.errors.daily));
+    }
+    const v = ovCompute(app);
+    const gSub = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' }[app.ovUi.grouping];
+    return headerHtml(app) + page(
+      ovFreshHtml(app) +
+      O.renderFilters(app.ovUi, v.rg) +
+      '<div class="two hero-row">' + O.renderHero(v.t, v.pt, v.rg, v.prg) +
+        section('ovShares', 'Доли каналов', 'по выручке за период', O.renderShares(v.t, v.chans)) + '</div>' +
+      (ov.errors.gaps ? C.sectionError(ov.errors.gaps) : O.renderGaps(ov.gaps)) +
+      section('ovTrend', 'Динамика выручки', C.esc(gSub) + ' · незакрытый период бледнее', '<div id="ovTrendBody">' + ovTrendInner(app) + '</div>') +
+      section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans)) +
+      section('ovNotes', 'Как читать эти числа', '', O.renderNotes()));
+  }
+
+  // Ширина графика — настоящая ширина карточки. SVG с чужой шириной
+  // масштабируется целиком, вместе с текстом: на телефоне подписи стали бы
+  // мельче шести пикселей.
+  function fitChart(app) {
+    const box = app.root.querySelector('#ovChartBox');
+    if (!box || !app.ovView) return;
+    const w = Math.round(box.clientWidth || 0);
+    if (!w || Math.abs(w - (app.ovChartWidth || 0)) < 8) return;
+    app.ovChartWidth = w;
+    box.innerHTML = ovChartHtml(app, w);
+  }
+
+  function renderOverview(app) {
+    show(app, overviewHtml(app));
+    fitChart(app);
+  }
+
+  // Период или каналы поменялись — перерисовать всё, что от них зависит, но
+  // не фильтры: поле даты, в котором сейчас курсор, не должно пересоздаваться.
+  function rerenderOverview(app, keepFilters) {
+    if (!keepFilters) return renderOverview(app);
+    const O = root.NietteOverview, v = ovCompute(app);
+    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
+    swap('.hero-row', '<div class="two hero-row">' + O.renderHero(v.t, v.pt, v.rg, v.prg) +
+      section('ovShares', 'Доли каналов', 'по выручке за период', O.renderShares(v.t, v.chans)) + '</div>');
+    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = ovTrendInner(app);
+    swap('#ovTable', section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans)));
+    app.root.querySelectorAll('[data-action="ov-preset"]').forEach(b => {
+      const on = b.getAttribute('data-preset') === app.ovUi.preset;
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+    });
+    fitChart(app);
+  }
+
+  async function loadOverviewScreen(app) {
+    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю выручку…</div>'));
+    app.ov = await loadOverview(app.client);
+    if (app.route === 'overview') renderOverview(app);
+  }
+
+  function saveOvPrefs(app) {
+    try { root.localStorage.setItem(OV_PREFS, JSON.stringify({ preset: app.ovUi.preset, grouping: app.ovUi.grouping })); }
+    catch (e) { /* приватный режим — просто не запоминаем */ }
+  }
+  function loadOvPrefs() {
+    try { return JSON.parse(root.localStorage.getItem(OV_PREFS) || 'null') || {}; }
+    catch (e) { return {}; }
+  }
+
+  const DEFAULT_GROUPING = { today: 'day', '7d': 'day', '30d': 'day', month: 'day', all: 'month', custom: 'day' };
+
+  // ── Экраны ────────────────────────────────────────────────────────────────
+  function routeFromHash() {
+    const h = String((root.location && root.location.hash) || '').replace(/^#/, '');
+    return h === 'clients' ? 'clients' : 'overview';
+  }
+
+  function openRoute(app) {
+    if (app.route === 'clients') return app.data ? renderScreen(app) : loadAndRender(app);
+    return app.ov ? renderOverview(app) : loadOverviewScreen(app);
   }
 
   async function afterLogin(app) {
@@ -323,7 +516,7 @@
     catch (e) { res = { error: e }; }
     if (res.error) return showFatal(app, humanError(res.error, 'Проверка доступа'));
     if (res.data !== true) return showDenied(app);
-    return loadAndRender(app);
+    return openRoute(app);
   }
 
   // ── События: одно делегирование на корень ────────────────────────────────
@@ -358,7 +551,41 @@
       }
       if (action === 'refresh') {
         if (!app.session) return showLogin(app);
+        if (app.route === 'clients') app.data = null; else app.ov = null;
         return afterLogin(app);
+      }
+      if (action === 'route') {
+        const r = el.getAttribute('data-route');
+        if (r === app.route) return;
+        app.route = r;
+        try { if (root.history && root.history.replaceState) root.history.replaceState(null, '', '#' + r); } catch (e) { /* неважно */ }
+        return openRoute(app);
+      }
+      if (action && action.indexOf('ov-') === 0) {
+        if (!app.ov || !app.ovView) return;
+        const O = root.NietteOverview, ui = app.ovUi;
+        if (action === 'ov-preset') {
+          ui.preset = el.getAttribute('data-preset');
+          ui.grouping = DEFAULT_GROUPING[ui.preset] || 'day';
+          saveOvPrefs(app);
+          return renderOverview(app);
+        }
+        if (action === 'ov-group') {
+          ui.grouping = el.getAttribute('data-group');
+          // «Месяцы» на одном месяце — один столбик, а не динамика: как в
+          // старом «Обзоре», период сам раскрывается до «всего времени».
+          if (ui.grouping === 'month' && O.monthsSpanned(app.ovView.rg) < 2) ui.preset = 'all';
+          saveOvPrefs(app);
+          return renderOverview(app);
+        }
+        if (action === 'ov-ch') {
+          const k = el.getAttribute('data-ch');
+          ui.hidden[k] = !ui.hidden[k];
+          const tb = rootEl.querySelector('#ovTrendBody');
+          if (tb) tb.innerHTML = ovTrendInner(app);
+          return;
+        }
+        return;
       }
       if (!app.data) return;
       if (action === 'risk-level') {
@@ -392,6 +619,75 @@
       const body = rootEl.querySelector('#baseBody');
       if (body) body.innerHTML = baseBodyHtml(app);
     });
+    // Свои даты периода: поле меняется — остальной экран пересчитывается, а
+    // сами поля остаются теми же элементами.
+    rootEl.addEventListener('change', ev => {
+      const t = ev.target;
+      if (!t || (t.id !== 'ovFrom' && t.id !== 'ovTo') || !app.ov) return;
+      const from = rootEl.querySelector('#ovFrom'), to = rootEl.querySelector('#ovTo');
+      if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from.value) || !/^\d{4}-\d{2}-\d{2}$/.test(to.value)) return;
+      app.ovUi.preset = 'custom';
+      app.ovUi.from = from.value;
+      app.ovUi.to = to.value;
+      rerenderOverview(app, true);
+    });
+
+    // Подсказка графика: наведение, касание и стрелки с клавиатуры.
+    function tipAt(i) {
+      const box = rootEl.querySelector('#ovChart');
+      const tip = rootEl.querySelector('#ovTip');
+      const v = app.ovView;
+      if (!box || !tip || !v || !v.series[i]) return;
+      app.ovTipIndex = i;
+      tip.innerHTML = root.NietteOverview.tooltipHtml(v.series[i], v.chans, app.ovUi.hidden);
+      tip.hidden = false;
+      rootEl.querySelectorAll('#ovChart .hit.on').forEach(h => h.classList.remove('on'));
+      const hit = rootEl.querySelector('#ovChart .hit[data-i="' + i + '"]');
+      if (hit) hit.classList.add('on');
+      if (hit && hit.getBoundingClientRect && box.getBoundingClientRect) {
+        const hr = hit.getBoundingClientRect(), br = box.getBoundingClientRect();
+        const w = tip.offsetWidth || 180;
+        let left = hr.left - br.left + hr.width / 2 - w / 2;
+        left = Math.max(4, Math.min(left, br.width - w - 4));
+        tip.style.left = left + 'px';
+      }
+    }
+    function tipHide() {
+      const tip = rootEl.querySelector('#ovTip');
+      if (tip) tip.hidden = true;
+      rootEl.querySelectorAll('#ovChart .hit.on').forEach(h => h.classList.remove('on'));
+    }
+    rootEl.addEventListener('pointermove', ev => {
+      const hit = ev.target && ev.target.closest ? ev.target.closest('#ovChart .hit') : null;
+      if (hit) tipAt(Number(hit.getAttribute('data-i')));
+    });
+    rootEl.addEventListener('pointerdown', ev => {
+      const hit = ev.target && ev.target.closest ? ev.target.closest('#ovChart .hit') : null;
+      if (hit) tipAt(Number(hit.getAttribute('data-i')));
+    });
+    rootEl.addEventListener('pointerleave', ev => {
+      if (ev.target && ev.target.id === 'ovChart') tipHide();
+    }, true);
+    rootEl.addEventListener('focusin', ev => {
+      if (ev.target && ev.target.id === 'ovChart' && app.ovView) {
+        tipAt(app.ovTipIndex !== undefined && app.ovView.series[app.ovTipIndex] ? app.ovTipIndex : app.ovView.series.length - 1);
+      }
+    });
+    rootEl.addEventListener('focusout', ev => { if (ev.target && ev.target.id === 'ovChart') tipHide(); });
+    rootEl.addEventListener('keydown', ev => {
+      if (!ev.target || ev.target.id !== 'ovChart' || !app.ovView) return;
+      const n = app.ovView.series.length;
+      let i = app.ovTipIndex === undefined ? n - 1 : app.ovTipIndex;
+      if (ev.key === 'ArrowLeft') i = Math.max(0, i - 1);
+      else if (ev.key === 'ArrowRight') i = Math.min(n - 1, i + 1);
+      else if (ev.key === 'Home') i = 0;
+      else if (ev.key === 'End') i = n - 1;
+      else if (ev.key === 'Escape') { tipHide(); return; }
+      else return;
+      ev.preventDefault();
+      tipAt(i);
+    });
+
     rootEl.addEventListener('change', ev => {
       if (!app.data || !ev.target || ev.target.id !== 'baseSort') return;
       app.ui.baseSort = ev.target.value;
@@ -407,9 +703,15 @@
     const rootEl = opts.root;
     const cfg = opts.config || root.NIETTE_CONFIG || {};
     const makeClient = opts.createClient || (root.supabase && root.supabase.createClient);
+    const prefs = loadOvPrefs();
+    const preset = ['today', '7d', '30d', 'month', 'all'].indexOf(prefs.preset) >= 0 ? prefs.preset : 'month';
     const app = {
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
+      route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0,
+      now: opts.now || (() => new Date()),
+      ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
+              from: '', to: '', hidden: {} },
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP }
     };
 
@@ -436,6 +738,18 @@
     app.client = makeClient(cfg.supabaseUrl, cfg.supabaseKey,
                             { auth: { persistSession: true, autoRefreshToken: true } });
     wire(app);
+    if (root.addEventListener) {
+      // Назад/вперёд в браузере переключают экран так же, как вкладки.
+      root.addEventListener('hashchange', () => {
+        const r = routeFromHash();
+        if (r !== app.route && app.session) { app.route = r; openRoute(app); }
+      });
+      let t = null;
+      root.addEventListener('resize', () => {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => { if (app.route === 'overview') fitChart(app); }, 150);
+      });
+    }
     if (app.client.auth.onAuthStateChange) {
       app.client.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_OUT' && app.session) showLogin(app);
@@ -453,5 +767,5 @@
     return app;
   }
 
-  root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, SOURCES, PAGE };
+  root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, loadOverview, SOURCES, PAGE };
 })(typeof window !== 'undefined' ? window : globalThis);
