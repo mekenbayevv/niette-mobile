@@ -231,7 +231,10 @@
       '</div></div>';
   }
 
-  function renderHero(t, prevT, rg, prg) {
+  // label — подпись над суммой: «Общая выручка» на «Обзоре», «Выручка Kaspi»
+  // на экране Kaspi. parts — разметка под суммой (из чего она сложена);
+  // тогда содержимое прижимается к верху карточки, а не висит посередине.
+  function renderHero(t, prevT, rg, prg, label, parts) {
     let delta = '<div class="hero-delta muted">Сравнивать не с чем: период — всё время.</div>';
     if (prg && prevT) {
       const p = prevT.total;
@@ -246,9 +249,9 @@
           ' <span class="muted">· было ' + money(p) + '</span></div>';
       }
     }
-    return '<section class="card hero" aria-labelledby="ovHeroLabel">' +
-      '<div class="hero-label" id="ovHeroLabel">Общая выручка · ' + esc(rangeLabel(rg)) + '</div>' +
-      '<div class="hero-value">' + money(t.total) + '</div>' + delta + '</section>';
+    return '<section class="card hero' + (parts ? ' has-parts' : '') + '" aria-labelledby="ovHeroLabel">' +
+      '<div class="hero-label" id="ovHeroLabel">' + esc(label || 'Общая выручка') + ' · ' + esc(rangeLabel(rg)) + '</div>' +
+      '<div class="hero-value">' + money(t.total) + '</div>' + delta + (parts || '') + '</section>';
   }
 
   // Доли — одна полоса 100% и строки с суммами. Пончик для этого хуже: доли
@@ -431,7 +434,8 @@
   function renderNotes() {
     return '<ul class="notes">' +
       '<li><b>Kaspi</b> — выдано по дню выдачи, минус возвраты выданных по дню возврата, плюс удалённые оплаты по дню оплаты (без комиссии). Как в старом «Обзоре».</li>' +
-      '<li><b>Ozon и Wildberries</b> — выдано по дню выдачи, из приёма по API. Опрос раз в 4 часа, поэтому сегодняшний день по ним догоняет позже Kaspi.</li>' +
+      '<li><b>Ozon</b> — продажи минус возвраты по начислениям Ozon, в день начисления: ровно «Продажи» и «Возвраты» отчёта кабинета «Начисления». Опрос раз в 4 часа, поэтому сегодняшний день по нему догоняет позже Kaspi.</li>' +
+      '<li><b>Wildberries</b> — выкупы минус возвраты выкупленного, по дню операции, из приёма по API. Опрос раз в 4 часа.</li>' +
       '<li><b>B2B</b> — оплаты аптек и магазинов по дню оплаты: деньги пришли — выручка есть.</li>' +
       '<li><b>Teez</b> — выдано по дню выдачи, из зеркала Apps Script.</li>' +
       '<li>Последний период помечен «· идёт»: незакрытый день или месяц всегда ниже закрытого, это не падение.</li>' +

@@ -270,3 +270,29 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 
 .gaps { border-color: var(--amber); background: var(--amber-tint); }
 .gaps h2 { color: var(--amber); }
+
+/* ══════════════ «Kaspi» ══════════════
+   Изменение к прошлому периоду под числом карточки. Направление несут
+   стрелка и знак; цвет — подсказка, а не единственный носитель смысла. */
+.kpi-delta { font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.kpi-delta.up { color: var(--up); }
+.kpi-delta.down { color: var(--down); }
+
+/* Прибыль до расходов — лестницей: подпись слева, сумма справа, итог —
+   под жирной чертой. Не вошедшее в расчёт — серым, со своей суммой. */
+.pnl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pnl th { text-align: left; font-weight: 500; padding: 7px 0; color: var(--text-2); }
+.pnl td { padding: 7px 0 7px 12px; text-align: right; white-space: nowrap; vertical-align: top;
+          font-variant-numeric: tabular-nums; }
+.pnl tr + tr th, .pnl tr + tr td { border-top: 1px solid var(--border); }
+.pnl .strong th, .pnl .strong td { font-weight: 700; color: var(--text); }
+.pnl .off th, .pnl .off td { color: var(--text-3); }
+.pnl .total th, .pnl .total td { font-weight: 700; font-size: 15px; color: var(--text);
+                                 border-top: 2px solid var(--border-strong); }
+.pnl-sub { font-size: 12px; color: var(--text-3); font-weight: 400; }
+.warn-text { color: var(--amber); }
+.grid td.wrap { white-space: normal; min-width: 120px; }
+.hero.has-parts { justify-content: flex-start; }
+.hero-parts { margin-top: 14px; }
+.pnl-delta { margin-top: 10px; }
+.hero-delta.muted { color: var(--text-3); }
