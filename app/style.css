@@ -319,3 +319,7 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .legend.static .chip:hover { background: var(--surface); }
 .bar-row.peak .bar-label, .bar-row.peak .bar-value { font-weight: 700; color: var(--text); }
 .grid tr.rest th, .grid tr.rest td { color: var(--text-3); font-weight: 500; }
+.an-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.an-city { display: flex; align-items: center; gap: 6px; }
+.an-city label { font-size: 12px; color: var(--text-3); }
+.an-city select { max-width: 220px; }

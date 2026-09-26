@@ -167,6 +167,27 @@
                       String(a.city).localeCompare(String(b.city)));
   }
 
+  // ── Город на графике ─────────────────────────────────────────────────────
+  // Фильтр — только для графика, как в старой вкладке: карточки, таблица и
+  // разрезы ниже остаются по всем городам. Снимок городов несёт те же исходы
+  // по дням, поэтому график города строит тот же buildSeries.
+  function cityRows(rows, city) {
+    return rows.filter(r => (r.city === null || r.city === undefined ? '' : r.city) === city);
+  }
+  // Города периода — по числу заказов; выбранный остаётся в списке, даже
+  // если в новом периоде заказов у него нет (тогда график честно пустой).
+  function cityOptions(rows, rg, selected) {
+    const list = cityTotals(rows, rg).filter(e => e.city !== '').map(e => ({ city: e.city, orders: e.placed_orders }));
+    if (selected && !list.some(e => e.city === selected)) list.push({ city: selected, orders: 0 });
+    return list;
+  }
+  function renderCityPicker(options, selected) {
+    return '<div class="an-city"><label for="anCity">Город на графике</label><select id="anCity">' +
+      '<option value=""' + (selected ? '' : ' selected') + '>Все города</option>' +
+      options.map(o => '<option value="' + esc(o.city) + '"' + (o.city === selected ? ' selected' : '') + '>' +
+        esc(o.city) + ' · ' + int(o.orders) + '</option>').join('') + '</select></div>';
+  }
+
   // Код Kaspi → слова. Незнакомый код показывается как есть: лучше сырое
   // слово, чем выдуманная подпись.
   const METHODS = {
@@ -397,7 +418,7 @@
 
   root.NietteAnalytics = {
     OUTCOMES, SUM_COLS, METHODS, sumRange, metrics, buildSeries, weekdays, skuTotals, cityTotals, deliveryTotals,
-    methodLabel, change, renderKpis, renderLegend, tooltipHtml, renderTable, renderWeekdays, renderSkus,
-    renderCities, renderDelivery, renderNotes
+    cityRows, cityOptions, methodLabel, change, renderKpis, renderLegend, renderCityPicker, tooltipHtml, renderTable,
+    renderWeekdays, renderSkus, renderCities, renderDelivery, renderNotes
   };
 })(typeof window !== 'undefined' ? window : globalThis);

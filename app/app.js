@@ -814,21 +814,30 @@
     const today = O.todayIso(app.now());
     const rg = periodRange(app, an.rows);
     const prg = O.prevRange(ui.preset === 'custom' ? 'custom' : ui.preset, rg);
+    const series = A.buildSeries(an.rows, rg, ui.grouping, today);
+    // Упал снимок городов — фильтра нет, график по всем городам.
+    const city = an.errors.cities ? '' : app.anUi.city;
     app.anView = {
-      rg, prg,
+      rg, prg, city, series,
       k: A.metrics(an.rows, rg),
       pk: prg ? A.metrics(an.rows, prg) : null,
-      series: A.buildSeries(an.rows, rg, ui.grouping, today)
+      cityOptions: an.errors.cities ? null : A.cityOptions(an.cities, rg, city),
+      // у графика города те же бакеты, что у общего: индекс подсказки общий
+      chartSeries: city ? A.buildSeries(A.cityRows(an.cities, city), rg, ui.grouping, today) : series
     };
     return app.anView;
   }
 
   function anChartHtml(app, width) {
-    return root.NietteOverview.renderChart(app.anView.series, root.NietteAnalytics.OUTCOMES, {}, width,
-                                           app.ovUi.grouping, 'Заказы');
+    const v = app.anView;
+    return root.NietteOverview.renderChart(v.chartSeries, root.NietteAnalytics.OUTCOMES, {}, width,
+                                           app.ovUi.grouping, v.city ? 'Заказы в городе ' + v.city : 'Заказы');
   }
   function anTrendInner(app) {
-    return root.NietteOverview.renderGroupings(app.ovUi.grouping) + root.NietteAnalytics.renderLegend() +
+    const v = app.anView;
+    return '<div class="an-controls">' + root.NietteOverview.renderGroupings(app.ovUi.grouping) +
+      (v.cityOptions ? root.NietteAnalytics.renderCityPicker(v.cityOptions, v.city) : '') + '</div>' +
+      root.NietteAnalytics.renderLegend() +
       '<div id="ovChartBox">' + anChartHtml(app, app.ovChartWidth) + '</div>';
   }
   function anKpisHtml(app) {
@@ -925,7 +934,7 @@
       view: () => app.anView, ready: () => !!(app.an && app.anView),
       render: () => renderAnalytics(app), rerender: keep => rerenderAnalytics(app, keep),
       chart: w => anChartHtml(app, w),
-      tip: i => root.NietteAnalytics.tooltipHtml(app.anView.series[i]) };
+      tip: i => root.NietteAnalytics.tooltipHtml(app.anView.chartSeries[i]) };
     return null;
   }
   function periodView(app) { const s = periodScreen(app); return s ? s.view() : null; }
@@ -1074,6 +1083,18 @@
       const body = rootEl.querySelector('#baseBody');
       if (body) body.innerHTML = baseBodyHtml(app);
     });
+    // Город на графике «Аналитики»: перерисовывается только сам график —
+    // список остаётся тем же элементом, и фокус с клавиатуры не теряется.
+    rootEl.addEventListener('change', ev => {
+      const t = ev.target;
+      if (!t || t.id !== 'anCity' || app.route !== 'analytics' || !periodReady(app)) return;
+      app.anUi.city = t.value;
+      anCompute(app);
+      const box = rootEl.querySelector('#ovChartBox');
+      if (box) box.innerHTML = anChartHtml(app, app.ovChartWidth);
+      const tip = rootEl.querySelector('#ovTip');
+      if (tip) tip.hidden = true;
+    });
     // Свои даты периода: поле меняется — остальной экран пересчитывается, а
     // сами поля остаются теми же элементами.
     rootEl.addEventListener('change', ev => {
@@ -1166,7 +1187,7 @@
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
-      an: null, anView: null,
+      an: null, anView: null, anUi: { city: '' },
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
