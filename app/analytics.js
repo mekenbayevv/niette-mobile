@@ -185,7 +185,11 @@
       .map(e => Object.assign(withBuyout(e), {
         label: methodLabel(e.method),
         // средняя — по заказам с известной доставкой: неизвестная не ноль
-        costPerOrder: e.delivered_cost_known > 0 ? e.delivery_seller / e.delivered_cost_known : null
+        costPerOrder: e.delivered_cost_known > 0 ? e.delivery_seller / e.delivered_cost_known : null,
+        // Доля от суммы — только когда доставка известна у ВСЕХ выданных:
+        // иначе в числителе части заказов нет, а в знаменателе они есть.
+        costPct: e.delivered_orders > 0 && e.delivered_cost_known === e.delivered_orders && e.delivered_amount > 0
+          ? 100 * e.delivery_seller / e.delivered_amount : null
       }))
       .sort((a, b) => b.placed_orders - a.placed_orders || String(a.method).localeCompare(String(b.method)));
   }
@@ -370,12 +374,14 @@
         '<td class="num">' + (isNum(e.buyout) ? pct(e.buyout) : '—') + '</td>' +
         '<td class="num' + (e.cancelled_orders ? '' : ' muted') + '">' + (e.cancelled_orders ? int(e.cancelled_orders) : '—') + '</td>' +
         '<td class="num">' + (isNum(e.costPerOrder) ? money(e.costPerOrder) : '—') +
-          (e.delivered_orders > e.delivered_cost_known ? '<div class="where">известна у ' + int(e.delivered_cost_known) +
-            ' из ' + int(e.delivered_orders) + '</div>' : '') + '</td></tr>').join('');
+          (isNum(e.costPct) ? '<div class="where">' + pct(e.costPct) + ' суммы</div>'
+            : e.delivered_orders > e.delivered_cost_known ? '<div class="where">известна у ' + int(e.delivered_cost_known) +
+              ' из ' + int(e.delivered_orders) + '</div>' : '') + '</td></tr>').join('');
     return '<div class="table-scroll"><table class="grid sticky-first"><thead><tr>' +
       ['Способ', 'Поступило', 'Выкуп', 'Отменено', 'Доставка на выданный'].map(h => '<th scope="col">' + h + '</th>').join('') +
       '</tr></thead><tbody>' + body + '</tbody></table></div>' +
-      '<p class="note">Доставка — сколько платит продавец, по выданным заказам, как в прибыли экрана Kaspi. Доплата покупателя — деньги Kaspi.</p>';
+      '<p class="note">Доставка — сколько платит продавец, по выданным заказам, как в прибыли экрана Kaspi; доплата покупателя — деньги Kaspi. ' +
+      'Тариф Kaspi зависит от суммы заказа: заказ с мини-паком везут в разы дешевле, чем с большой пачкой. Поэтому тенге на заказ растут вместе с корзиной, а сравнивать периоды надёжнее по доле от суммы.</p>';
   }
 
   function renderNotes() {
