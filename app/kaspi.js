@@ -134,6 +134,7 @@
   }
   function deltaHtml(d) {
     if (d === null) return '';
+    if (Math.abs(d) < 0.05) return '<div class="kpi-delta flat">без изменений</div>';
     const up = d >= 0;
     return '<div class="kpi-delta ' + (up ? 'up' : 'down') + '"><span aria-hidden="true">' + (up ? '▲' : '▼') +
       '</span> ' + (up ? '+' : '−') + nf1.format(Math.abs(d)) + NBSP + '%</div>';

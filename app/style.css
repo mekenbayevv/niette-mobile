@@ -277,6 +277,7 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .kpi-delta { font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .kpi-delta.up { color: var(--up); }
 .kpi-delta.down { color: var(--down); }
+.kpi-delta.flat { color: var(--text-3); }
 
 /* Прибыль до расходов — лестницей: подпись слева, сумма справа, итог —
    под жирной чертой. Не вошедшее в расчёт — серым, со своей суммой. */
@@ -287,6 +288,7 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .pnl tr + tr th, .pnl tr + tr td { border-top: 1px solid var(--border); }
 .pnl .strong th, .pnl .strong td { font-weight: 700; color: var(--text); }
 .pnl .off th, .pnl .off td { color: var(--text-3); }
+.pnl .bad th, .pnl .bad td { color: var(--red); }
 .pnl .total th, .pnl .total td { font-weight: 700; font-size: 15px; color: var(--text);
                                  border-top: 2px solid var(--border-strong); }
 .pnl-sub { font-size: 12px; color: var(--text-3); font-weight: 400; }
