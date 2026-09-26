@@ -1,14 +1,16 @@
-/* NIETTE на Postgres: вход и четыре экрана — «Обзор», «Kaspi», «Ozon» и «Клиенты».
+/* NIETTE на Postgres: вход и пять экранов — «Обзор», «Kaspi», «Ozon», «Аналитика»
+ * и «Клиенты».
  *
  * Состояния по порядку: нет библиотеки / нет настроек / секретный ключ →
  * вход → проверка допуска (app_users) → загрузка → экран.
  *
  * ЭКРАНЫ — по адресу: …/app/ и …/app/#overview — «Обзор», …/app/#kaspi —
- * «Kaspi», …/app/#ozon — «Ozon», …/app/#clients — «Клиенты». Данные экрана
- * грузятся при первом заходе на него и дальше живут в памяти: переключение
- * между вкладками в базу не ходит. «Обновить» перечитывает открытый экран.
- * Период у «Обзора», «Kaspi» и «Ozon» общий: выбрал июль на одном —
- * остальные откроются на июле.
+ * «Kaspi», …/app/#ozon — «Ozon», …/app/#analytics — «Аналитика»,
+ * …/app/#clients — «Клиенты». Данные экрана грузятся при первом заходе на
+ * него и дальше живут в памяти: переключение между вкладками в базу не
+ * ходит. «Обновить» перечитывает открытый экран. Период у всех экранов,
+ * кроме «Клиентов», общий: выбрал июль на одном — остальные откроются на
+ * июле.
  *
  * ДОСТУП. Вход — Supabase Auth (email и пароль). «Вошёл» ещё ничего не
  * значит: читать можно, только если email есть в app_users (sql/12_auth.sql).
@@ -67,6 +69,13 @@
   const OZ_SKU = { table: 'snap_ozon_sku_daily', paged: true, order: ['day', 'sku'], what: 'Товары Ozon' };
   const OZ_ERRORS = { table: 'snap_ozon_errors', paged: true, order: ['day', 'accrual_id', 'fee_no'], what: 'Ошибки продавца' };
   const OZ_NOW = { table: 'snap_ozon_now', what: 'В работе' };
+  // «Аналитика» (sql/21_analytics.sql): спрос Kaspi по дню заказа — дни,
+  // товары, города, способы доставки. Порядок листания — уникальный ключ
+  // снимка: у города NULL бывает, но один на день.
+  const AN_DEMAND = { table: 'snap_an_demand', paged: true, order: ['day'], what: 'Заказы по дням' };
+  const AN_SKU = { table: 'snap_an_sku', paged: true, order: ['day', 'sku'], what: 'Товары' };
+  const AN_CITY = { table: 'snap_an_city', paged: true, order: ['day', 'city'], what: 'Города' };
+  const AN_DELIVERY = { table: 'snap_an_delivery', paged: true, order: ['day', 'method'], what: 'Способы доставки' };
   const GROUP_SUB = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' };
 
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
@@ -112,6 +121,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_ozon|v_ozon/.test(msg))
       return pre + 'снимка экрана Ozon в базе нет — выполните sql/20_ozon_screen.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_an_|v_an_/.test(msg))
+      return pre + 'снимка экрана «Аналитика» в базе нет — выполните sql/21_analytics.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_/.test(msg))
       return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
@@ -243,6 +255,22 @@
     };
   }
 
+  async function loadAnalytics(client) {
+    const snapP = fetchSnapState(client);
+    const [demand, skus, cities, delivery, fresh] = await Promise.allSettled([
+      fetchAll(client, AN_DEMAND), fetchAll(client, AN_SKU), fetchAll(client, AN_CITY), fetchAll(client, AN_DELIVERY),
+      fetchSmall(client, OV_FRESH)]);
+    const snap = await snapP;
+    const val = r => (r.status === 'fulfilled' ? r.value : []);
+    const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
+    return {
+      rows: val(demand), skus: val(skus), cities: val(cities), delivery: val(delivery), fresh: val(fresh)[0] || {},
+      errors: { daily: err(demand, AN_DEMAND), skus: err(skus, AN_SKU), cities: err(cities, AN_CITY),
+                delivery: err(delivery, AN_DELIVERY) },
+      snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
+    };
+  }
+
   // Застывший снимок по виду неотличим от «новых заказов не было». Поэтому
   // возраст снимка говорится словами, а не только временем в строке свежести.
   function staleNote(app) {   // app — любой носитель { snapAt, snapNever, loadedAt }
@@ -285,7 +313,7 @@
   }
 
   const ROUTES = [{ key: 'overview', label: 'Обзор' }, { key: 'kaspi', label: 'Kaspi' }, { key: 'ozon', label: 'Ozon' },
-                  { key: 'clients', label: 'Клиенты' }];
+                  { key: 'analytics', label: 'Аналитика' }, { key: 'clients', label: 'Клиенты' }];
 
   function headerHtml(app) {
     const email = app.session && app.session.user ? app.session.user.email : '';
@@ -766,10 +794,117 @@
     if (app.route === 'ozon') renderOzon(app);
   }
 
+  // ── «Аналитика» ───────────────────────────────────────────────────────────
+  // Спрос по дню заказа. График — та же стопка, что у «Обзора», только в
+  // столбике не каналы, а исходы заказов.
+  function anFreshHtml(app) {
+    const f = app.an.fresh || {};
+    const bits = [];
+    if (app.an.snapAt) bits.push('Данные на ' + when(app.an.snapAt));
+    if (f.kaspi_polled_at) bits.push('опрос Kaspi ' + when(f.kaspi_polled_at));
+    bits.push('загружено ' + when(app.an.loadedAt));
+    const txt = bits.join(' · ');
+    const stale = staleNote(app.an);
+    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
+      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+  }
+
+  function anCompute(app) {
+    const O = root.NietteOverview, A = root.NietteAnalytics, ui = app.ovUi, an = app.an;
+    const today = O.todayIso(app.now());
+    const rg = periodRange(app, an.rows);
+    const prg = O.prevRange(ui.preset === 'custom' ? 'custom' : ui.preset, rg);
+    app.anView = {
+      rg, prg,
+      k: A.metrics(an.rows, rg),
+      pk: prg ? A.metrics(an.rows, prg) : null,
+      series: A.buildSeries(an.rows, rg, ui.grouping, today)
+    };
+    return app.anView;
+  }
+
+  function anChartHtml(app, width) {
+    return root.NietteOverview.renderChart(app.anView.series, root.NietteAnalytics.OUTCOMES, {}, width,
+                                           app.ovUi.grouping, 'Заказы');
+  }
+  function anTrendInner(app) {
+    return root.NietteOverview.renderGroupings(app.ovUi.grouping) + root.NietteAnalytics.renderLegend() +
+      '<div id="ovChartBox">' + anChartHtml(app, app.ovChartWidth) + '</div>';
+  }
+  function anKpisHtml(app) {
+    return '<div id="anKpis">' + root.NietteAnalytics.renderKpis(app.anView.k, app.anView.pk) + '</div>';
+  }
+  function anTableHtml(app) {
+    return section('ovTable', 'По периодам', 'по дню заказа · новые сверху · итог сходится с карточками',
+                   root.NietteAnalytics.renderTable(app.anView.series));
+  }
+  function anWeekDeliveryHtml(app) {
+    const A = root.NietteAnalytics, an = app.an, rg = app.anView.rg;
+    return '<div class="two" id="anPair">' +
+      section('anWeek', 'Дни недели', 'в среднем за день · когда заказывают',
+              A.renderWeekdays(A.weekdays(an.rows, rg), rg)) +
+      section('anDelivery', 'Способы доставки', 'по дню заказа',
+              an.errors.delivery ? C.sectionError(an.errors.delivery) : A.renderDelivery(A.deliveryTotals(an.delivery, rg))) +
+    '</div>';
+  }
+  function anSkuHtml(app) {
+    const A = root.NietteAnalytics, an = app.an;
+    return section('anSkus', 'Товары', 'по дню заказа · что заказали и что выкупили',
+      an.errors.skus ? C.sectionError(an.errors.skus) : A.renderSkus(A.skuTotals(an.skus, app.anView.rg)));
+  }
+  function anCityHtml(app) {
+    const A = root.NietteAnalytics, an = app.an;
+    return section('anCities', 'Города', 'по дню заказа · город доставки',
+      an.errors.cities ? C.sectionError(an.errors.cities) : A.renderCities(A.cityTotals(an.cities, app.anView.rg), 15));
+  }
+
+  function analyticsHtml(app) {
+    const an = app.an;
+    if (an.errors.daily) {
+      app.anView = null;
+      return headerHtml(app) + page(anFreshHtml(app) + C.sectionError(an.errors.daily));
+    }
+    anCompute(app);
+    return headerHtml(app) + page(
+      anFreshHtml(app) +
+      root.NietteOverview.renderFilters(app.ovUi, app.anView.rg) +
+      anKpisHtml(app) +
+      section('ovTrend', 'Что стало с заказами', C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню заказа · незакрытый период бледнее',
+              '<div id="ovTrendBody">' + anTrendInner(app) + '</div>') +
+      anTableHtml(app) + anWeekDeliveryHtml(app) + anSkuHtml(app) + anCityHtml(app) +
+      section('anNotes', 'Как читать эти числа', '', root.NietteAnalytics.renderNotes()));
+  }
+
+  function renderAnalytics(app) {
+    show(app, analyticsHtml(app));
+    fitChart(app);
+  }
+
+  function rerenderAnalytics(app, keepFilters) {
+    if (!keepFilters || app.an.errors.daily) return renderAnalytics(app);
+    anCompute(app);
+    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
+    swap('#anKpis', anKpisHtml(app));
+    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = anTrendInner(app);
+    swap('#ovTable', anTableHtml(app));
+    swap('#anPair', anWeekDeliveryHtml(app));
+    swap('#anSkus', anSkuHtml(app));
+    swap('#anCities', anCityHtml(app));
+    syncPresetButtons(app);
+    fitChart(app);
+  }
+
+  async function loadAnalyticsScreen(app) {
+    app.anView = null;
+    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю аналитику…</div>'));
+    app.an = await loadAnalytics(app.client);
+    if (app.route === 'analytics') renderAnalytics(app);
+  }
+
   // ── Экраны с периодом ─────────────────────────────────────────────────────
   // Кнопки периода, группировка, свои даты, график и его подсказка у
-  // «Обзора», «Kaspi» и «Ozon» общие. Что у открытого экрана своё — здесь,
-  // одной таблицей: новый экран с периодом — одна строка.
+  // «Обзора», «Kaspi», «Ozon» и «Аналитики» общие. Что у открытого экрана
+  // своё — здесь, одной таблицей: новый экран с периодом — одна строка.
   function periodScreen(app) {
     if (app.route === 'overview') return {
       view: () => app.ovView, ready: () => !!(app.ov && app.ovView),
@@ -786,6 +921,11 @@
       render: () => renderOzon(app), rerender: keep => rerenderOzon(app, keep),
       chart: w => ozChartHtml(app, w),
       tip: i => root.NietteOzon.tooltipHtml(app.ozView.series[i]) };
+    if (app.route === 'analytics') return {
+      view: () => app.anView, ready: () => !!(app.an && app.anView),
+      render: () => renderAnalytics(app), rerender: keep => rerenderAnalytics(app, keep),
+      chart: w => anChartHtml(app, w),
+      tip: i => root.NietteAnalytics.tooltipHtml(app.anView.series[i]) };
     return null;
   }
   function periodView(app) { const s = periodScreen(app); return s ? s.view() : null; }
@@ -808,13 +948,14 @@
   // ── Экраны ────────────────────────────────────────────────────────────────
   function routeFromHash() {
     const h = String((root.location && root.location.hash) || '').replace(/^#/, '');
-    return h === 'clients' || h === 'kaspi' || h === 'ozon' ? h : 'overview';
+    return ROUTES.some(r => r.key === h) ? h : 'overview';
   }
 
   function openRoute(app) {
     if (app.route === 'clients') return app.data ? renderScreen(app) : loadAndRender(app);
     if (app.route === 'kaspi') return app.kp ? renderKaspi(app) : loadKaspiScreen(app);
     if (app.route === 'ozon') return app.oz ? renderOzon(app) : loadOzonScreen(app);
+    if (app.route === 'analytics') return app.an ? renderAnalytics(app) : loadAnalyticsScreen(app);
     return app.ov ? renderOverview(app) : loadOverviewScreen(app);
   }
 
@@ -863,6 +1004,7 @@
         if (app.route === 'clients') app.data = null;
         else if (app.route === 'kaspi') app.kp = null;
         else if (app.route === 'ozon') app.oz = null;
+        else if (app.route === 'analytics') app.an = null;
         else app.ov = null;
         return afterLogin(app);
       }
@@ -1024,6 +1166,7 @@
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
+      an: null, anView: null,
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
@@ -1082,5 +1225,6 @@
     return app;
   }
 
-  root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, loadOverview, loadKaspi, loadOzon, SOURCES, PAGE };
+  root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, loadOverview, loadKaspi, loadOzon, loadAnalytics,
+                     SOURCES, PAGE };
 })(typeof window !== 'undefined' ? window : globalThis);

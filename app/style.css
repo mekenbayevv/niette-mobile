@@ -176,7 +176,10 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .notes li { margin: 4px 0; }
 
 /* ══════════════ Вкладки экранов ══════════════ */
-.tabs { display: flex; gap: 4px; flex: 1 1 auto; }
+/* Пять вкладок на телефоне в 390 px: поля у́же, а если всё равно не влезли —
+   перенос на вторую строку, но не горизонтальная прокрутка страницы. */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
+@media (max-width: 480px) { .tab { padding: 8px; font-size: 13px; } }
 .tab { background: transparent; color: var(--text-2); border: 1px solid transparent; font-weight: 600; }
 .tab:hover { background: var(--surface-2); }
 .tab.on { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
@@ -298,3 +301,21 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .hero-parts { margin-top: 14px; }
 .pnl-delta { margin-top: 10px; }
 .hero-delta.muted { color: var(--text-3); }
+
+/* ══════════════ «Аналитика» ══════════════
+   Исходы заказа в стопке снизу вверх: выдано → в работе → возвращено →
+   отменено. Проверено на различимость (ΔE по CIELAB, симуляция дейтеранопии,
+   протанопии и тританопии): худшая пара — 27 в светлой теме, 26 в тёмной.
+   Зелёный и красный не соседи в стопке, и отмену отделяет ещё и яркость. */
+:root { --oc-delivered: #1baf7a; --oc-work: #94a3b8; --oc-returned: #f2b233; --oc-cancelled: #c8342b; }
+@media (prefers-color-scheme: dark) {
+  :root { --oc-delivered: #2bb581; --oc-work: #667487; --oc-returned: #f7c65a; --oc-cancelled: #d9463f; }
+}
+.ch-delivered { --ch: var(--oc-delivered); }
+.ch-work { --ch: var(--oc-work); }
+.ch-returned { --ch: var(--oc-returned); }
+.ch-cancelled { --ch: var(--oc-cancelled); }
+.legend.static .chip { display: inline-flex; align-items: center; cursor: default; }
+.legend.static .chip:hover { background: var(--surface); }
+.bar-row.peak .bar-label, .bar-row.peak .bar-value { font-weight: 700; color: var(--text); }
+.grid tr.rest th, .grid tr.rest td { color: var(--text-3); font-weight: 500; }

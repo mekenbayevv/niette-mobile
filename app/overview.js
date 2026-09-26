@@ -202,7 +202,7 @@
     const a = Math.abs(v), s = v < 0 ? '−' : '';
     if (a >= 1e6) return s + nf1.format(a / 1e6) + ' млн';
     if (a >= 1e3) return s + Math.round(a / 1e3) + ' тыс';
-    return s + Math.round(a);
+    return s + nf1.format(a);        // середина шкалы в 25 заказов — «12,5», а не «13»
   }
   // Верх шкалы — круглое число: 1, 2, 2,5, 5 × 10ⁿ.
   function niceMax(v) {
@@ -299,8 +299,9 @@
 
   // Столбики по каналам в стопку. Отрицательный день (возвраты больше
   // выдачи) рисуется нулём — шкала одна и от нуля, — а точная сумма со знаком
-  // живёт в подсказке и в таблице ниже.
-  function renderChart(series, chans, hidden, width, grouping) {
+  // живёт в подсказке и в таблице ниже. noun — что в столбиках, для чтения
+  // с экрана: «Выручка» по умолчанию, «Заказы» у «Аналитики».
+  function renderChart(series, chans, hidden, width, grouping, noun) {
     const vis = chans.filter(c => !hidden[c.key]);
     const W = Math.max(300, Math.round(width || 640)), H = 250;
     const padL = 58, padR = 10, padT = 26, padB = 28;
@@ -374,8 +375,8 @@
         '" width="' + band.toFixed(2) + '" height="' + ih + '"/>';
     });
 
-    const summary = 'Выручка по ' + ({ day: 'дням', week: 'неделям', decade: 'декадам', month: 'месяцам' })[grouping || 'day'] +
-      ', ' + n + ' столбцов. Точные суммы — в таблице ниже.';
+    const summary = (noun || 'Выручка') + ' по ' + ({ day: 'дням', week: 'неделям', decade: 'декадам', month: 'месяцам' })[grouping || 'day'] +
+      ', ' + n + ' столбцов. Точные ' + (noun ? 'числа' : 'суммы') + ' — в таблице ниже.';
     return '<div class="chart" id="ovChart" tabindex="0" aria-label="' + esc(summary) + '">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img" aria-label="' + esc(summary) + '">' +
       grid + '<line class="axis" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + (base + 0.5) + '" y2="' + (base + 0.5) + '"/>' +
