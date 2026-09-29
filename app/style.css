@@ -143,8 +143,10 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .grid thead th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-3);
                  font-weight: 600; font-size: 12px; z-index: 1;
                  white-space: normal; min-width: 64px; vertical-align: bottom; }
-/* Заголовки числовых колонок — по правому краю, как сами числа. */
+/* Заголовки числовых колонок — по правому краю, как сами числа. Текстовая
+   колонка не первой — класс txt, иначе заголовок уедет от своих строк. */
 .grid thead th:not(:first-child) { text-align: right; }
+.grid thead th.txt { text-align: left; }
 .grid tbody tr:last-child th, .grid tbody tr:last-child td { border-bottom: none; }
 .grid tbody th { font-weight: 600; }
 .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -323,3 +325,34 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .an-city { display: flex; align-items: center; gap: 6px; }
 .an-city label { font-size: 12px; color: var(--text-3); }
 .an-city select { max-width: 220px; }
+
+/* ══════════════ «Склад» ══════════════
+   Карточки товара — как в старом табе: цвет срока полосой слева и в подписи
+   дней. Цвет — подсказка, смысл несёт текст («срочно», «внимание»). На
+   телефоне в 390 px — две карточки в ряд. */
+.kpi-bad .kpi-value { color: var(--red); }
+.st-bad { --st: var(--red); }
+.st-warn { --st: var(--amber); }
+.st-good { --st: var(--green); }
+.sku-group + .sku-group { margin-top: 16px; }
+.sku-group-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+                   color: var(--text-2); margin: 0 0 8px; }
+.sku-group-title .muted { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sku-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.sku-card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--st);
+            border-radius: 0 10px 10px 0; padding: 12px 14px; min-width: 0; }
+/* Имя — до двух строк, а не многоточие, как в старом табе: на телефоне нет
+   подсказки при наведении, и «Влажные салф…» не прочесть. */
+.sku-name { font-weight: 600; margin-bottom: 8px; overflow: hidden; overflow-wrap: anywhere;
+            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.sku-value { font-size: 24px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.sku-unit { font-size: 11px; color: var(--text-3); margin: 2px 0 8px; }
+.sku-track { background: var(--surface-3); border-radius: 99px; height: 5px; overflow: hidden; margin-bottom: 8px; }
+.sku-fill { height: 100%; border-radius: 99px; background: var(--st); }
+.sku-row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.sku-days { font-size: 12px; font-weight: 600; color: var(--st); }
+.sku-rate, .sku-end { font-size: 11px; color: var(--text-3); }
+.sku-end { margin-top: 4px; }
+.sku-note { font-size: 11px; color: var(--text-3); margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
+.sku-note.bad { color: var(--red); }
+.sku-note.warn { color: var(--amber); }

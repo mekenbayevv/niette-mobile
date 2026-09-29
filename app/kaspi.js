@@ -22,7 +22,7 @@
   const C = root.NietteClients;
   const O = root.NietteOverview;
   const esc = C.esc, money = C.money, int = C.int, pct = C.pct, isNum = C.isNum;
-  const NBSP = ' ';
+  const NBSP = '\u00a0';   // U+00A0 escape-последовательностью: сам символ невидим и теряется при записи файла
   const nf1 = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   function num(v) { return isNum(v) ? Number(v) : 0; }
   function inRange(day, rg) { return !!rg && day >= rg.from && day <= rg.to; }

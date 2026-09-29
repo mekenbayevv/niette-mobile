@@ -1,16 +1,16 @@
-/* NIETTE на Postgres: вход и пять экранов — «Обзор», «Kaspi», «Ozon», «Аналитика»
- * и «Клиенты».
+/* NIETTE на Postgres: вход и шесть экранов — «Обзор», «Kaspi», «Ozon», «Аналитика»,
+ * «Клиенты» и «Склад».
  *
  * Состояния по порядку: нет библиотеки / нет настроек / секретный ключ →
  * вход → проверка допуска (app_users) → загрузка → экран.
  *
  * ЭКРАНЫ — по адресу: …/app/ и …/app/#overview — «Обзор», …/app/#kaspi —
  * «Kaspi», …/app/#ozon — «Ozon», …/app/#analytics — «Аналитика»,
- * …/app/#clients — «Клиенты». Данные экрана грузятся при первом заходе на
+ * …/app/#clients — «Клиенты», …/app/#stock — «Склад». Данные экрана грузятся при первом заходе на
  * него и дальше живут в памяти: переключение между вкладками в базу не
  * ходит. «Обновить» перечитывает открытый экран. Период у всех экранов,
- * кроме «Клиентов», общий: выбрал июль на одном — остальные откроются на
- * июле.
+ * кроме «Клиентов» и «Склада», общий: выбрал июль на одном — остальные
+ * откроются на июле. У «Склада» периода нет: остаток — на сейчас.
  *
  * ДОСТУП. Вход — Supabase Auth (email и пароль). «Вошёл» ещё ничего не
  * значит: читать можно, только если email есть в app_users (sql/12_auth.sql).
@@ -76,6 +76,12 @@
   const AN_SKU = { table: 'snap_an_sku', paged: true, order: ['day', 'sku'], what: 'Товары' };
   const AN_CITY = { table: 'snap_an_city', paged: true, order: ['day', 'city'], what: 'Города' };
   const AN_DELIVERY = { table: 'snap_an_delivery', paged: true, order: ['day', 'method'], what: 'Способы доставки' };
+  // «Склад» (sql/23_stock_screen.sql): строка на строку листа «Склад» и журнал
+  // списаний. Периода нет — остаток на сейчас; свежесть — когда приехали лист
+  // и продажи: снимок может быть свежим, а импорт — застывшим.
+  const ST_STOCK = { table: 'snap_stock', order: ['pos'], what: 'Остатки' };
+  const ST_WOFF = { table: 'snap_stock_writeoffs', order: ['day', 'id'], what: 'Журнал списаний' };
+  const ST_FRESH = { table: 'v_stock_freshness', what: 'Свежесть листов' };
   const GROUP_SUB = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' };
 
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
@@ -124,6 +130,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_an_|v_an_/.test(msg))
       return pre + 'снимка экрана «Аналитика» в базе нет — выполните sql/21_analytics.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_stock|v_stock/.test(msg))
+      return pre + 'снимка экрана «Склад» в базе нет — выполните sql/22_inventory_old.sql и sql/23_stock_screen.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_/.test(msg))
       return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
@@ -271,6 +280,20 @@
     };
   }
 
+  async function loadStock(client) {
+    const snapP = fetchSnapState(client);
+    const [stock, woffs, fresh] = await Promise.allSettled([
+      fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH)]);
+    const snap = await snapP;
+    const val = r => (r.status === 'fulfilled' ? r.value : []);
+    const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
+    return {
+      rows: val(stock), woffs: woffs.status === 'fulfilled' ? woffs.value : null, fresh: val(fresh)[0] || {},
+      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF) },
+      snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
+    };
+  }
+
   // Застывший снимок по виду неотличим от «новых заказов не было». Поэтому
   // возраст снимка говорится словами, а не только временем в строке свежести.
   function staleNote(app) {   // app — любой носитель { snapAt, snapNever, loadedAt }
@@ -313,7 +336,8 @@
   }
 
   const ROUTES = [{ key: 'overview', label: 'Обзор' }, { key: 'kaspi', label: 'Kaspi' }, { key: 'ozon', label: 'Ozon' },
-                  { key: 'analytics', label: 'Аналитика' }, { key: 'clients', label: 'Клиенты' }];
+                  { key: 'analytics', label: 'Аналитика' }, { key: 'clients', label: 'Клиенты' },
+                  { key: 'stock', label: 'Склад' }];
 
   function headerHtml(app) {
     const email = app.session && app.session.user ? app.session.user.email : '';
@@ -910,6 +934,54 @@
     if (app.route === 'analytics') renderAnalytics(app);
   }
 
+  // ── «Склад» ───────────────────────────────────────────────────────────────
+  // Разметка и расчёты — в stock.js. Периода нет: остаток на сейчас.
+  // Продажи из таблицы старше этого — остаток уже не учитывает свежие продажи.
+  // Тот же порог, что у тревоги mirror_stale в гейте опросника (sql/10).
+  const MIRROR_STALE_H = 6;
+
+  function stFreshHtml(app) {
+    const f = app.st.fresh || {};
+    const bits = [];
+    if (app.st.snapAt) bits.push('Данные на ' + when(app.st.snapAt));
+    if (f.stock_synced_at) bits.push('лист «Склад» ' + when(f.stock_synced_at));
+    if (f.sales_synced_at) bits.push('продажи ' + when(f.sales_synced_at));
+    bits.push('загружено ' + when(app.st.loadedAt));
+    const txt = bits.join(' · ');
+    const notes = [staleNote(app.st)];
+    const sales = f.sales_synced_at ? new Date(f.sales_synced_at) : null;
+    if (sales && !isNaN(sales) && app.st.loadedAt - sales > MIRROR_STALE_H * 3600000) {
+      notes.push('Продажи из таблицы не приезжали ' + Math.round((app.st.loadedAt - sales) / 3600000) +
+                 ' ч — остаток не учитывает свежие продажи. Проверьте импорт в Apps Script.');
+    }
+    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
+      notes.filter(Boolean).map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('');
+  }
+
+  function stockHtml(app) {
+    const S = root.NietteStock, st = app.st;
+    if (st.errors.stock) return headerHtml(app) + page(stFreshHtml(app) + C.sectionError(st.errors.stock));
+    const now = app.now();
+    return headerHtml(app) + page(
+      stFreshHtml(app) +
+      S.renderKpis(S.kpis(st.rows, st.woffs, now)) +
+      S.renderProblems(S.problems(st.rows)) +
+      section('stCards', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)) +
+      section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
+              S.renderTable(st.rows)) +
+      section('stWoff', 'Списания за 30 дней', 'брак, образцы, подарки — мимо продаж',
+              st.errors.woff ? C.sectionError(st.errors.woff) : S.renderWriteoffs(st.woffs, now)) +
+      section('stNotes', 'Как читать эти числа', '', S.renderNotes()));
+  }
+
+  function renderStock(app) { show(app, stockHtml(app)); }
+
+  async function loadStockScreen(app) {
+    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю склад…</div>'));
+    app.st = await loadStock(app.client);
+    if (app.route === 'stock') renderStock(app);
+  }
+
   // ── Экраны с периодом ─────────────────────────────────────────────────────
   // Кнопки периода, группировка, свои даты, график и его подсказка у
   // «Обзора», «Kaspi», «Ozon» и «Аналитики» общие. Что у открытого экрана
@@ -965,6 +1037,7 @@
     if (app.route === 'kaspi') return app.kp ? renderKaspi(app) : loadKaspiScreen(app);
     if (app.route === 'ozon') return app.oz ? renderOzon(app) : loadOzonScreen(app);
     if (app.route === 'analytics') return app.an ? renderAnalytics(app) : loadAnalyticsScreen(app);
+    if (app.route === 'stock') return app.st ? renderStock(app) : loadStockScreen(app);
     return app.ov ? renderOverview(app) : loadOverviewScreen(app);
   }
 
@@ -1014,6 +1087,7 @@
         else if (app.route === 'kaspi') app.kp = null;
         else if (app.route === 'ozon') app.oz = null;
         else if (app.route === 'analytics') app.an = null;
+        else if (app.route === 'stock') app.st = null;
         else app.ov = null;
         return afterLogin(app);
       }
@@ -1187,7 +1261,7 @@
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
-      an: null, anView: null, anUi: { city: '' },
+      an: null, anView: null, anUi: { city: '' }, st: null,
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
@@ -1247,5 +1321,5 @@
   }
 
   root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, loadOverview, loadKaspi, loadOzon, loadAnalytics,
-                     SOURCES, PAGE };
+                     loadStock, SOURCES, PAGE };
 })(typeof window !== 'undefined' ? window : globalThis);

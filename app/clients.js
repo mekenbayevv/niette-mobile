@@ -19,7 +19,7 @@
 (function (root) {
   'use strict';
 
-  const NBSP = ' ';
+  const NBSP = '\u00a0';   // U+00A0 escape-последовательностью: сам символ невидим и теряется при записи файла
   const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль',
                   'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
   const nf0 = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
