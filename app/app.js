@@ -980,7 +980,7 @@
               st.errors.woff ? C.sectionError(st.errors.woff) : S.renderWriteoffs(st.woffs, now)) +
       // Сверка и склады Kaspi — одно окно на двоих, как в старом табе.
       section('stRecon', 'Сверка: что не доехало до остатка', C.esc(S.reconSub(rep, win)),
-              S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win))) +
+              S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win, st.rows))) +
       section('stPoints', 'Склады отгрузки Kaspi', C.esc(S.pointsSub(rep, win)),
               st.errors.recon ? C.sectionError(st.errors.recon) : S.renderPoints(rep)) +
       section('stNotes', 'Как читать эти числа', '', S.renderNotes()));

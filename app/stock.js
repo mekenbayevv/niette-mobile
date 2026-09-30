@@ -297,7 +297,10 @@
       (sc.date ? ' · завышение остатка — с пересчёта ' + dm(sc.date) : '');
   }
 
-  function renderRecon(rep, win) {
+  // rows — строки остатков (snap_stock): дефицит старый таб показывал здесь
+  // же, в «Листе «Склад»». Без него блок говорил бы «лист в порядке» при
+  // строке, где расход превысил пересчёт.
+  function renderRecon(rep, win, rows) {
     if (!rep) return C.empty('Сверки в снимке нет — выполните sql/24_stock_recon.sql.');
     if (rep.fatal) return '<div class="error" role="alert">' + esc(rep.fatal) + '</div>';
     const H = [];
@@ -438,6 +441,10 @@
       'то же для B2B, который сходится по названию: ' + inv.dupName.join(', ')]);
     if ((inv.noSku || []).length) warn.push(['Без SKU: ' + int(inv.noSku.length),
       'такая строка не поймает ни одной продажи маркетплейса: ' + inv.noSku.slice(0, 8).join(', ')]);
+    const deficits = (rows || []).filter(r => num(r.deficit) > 0);
+    if (deficits.length) warn.push(['Расход превысил пересчёт: ' + int(deficits.length),
+      'остаток упёрся в ноль и дальше не уменьшается. Так не бывает физически: устарел пересчёт, расход вычтен ' +
+      'дважды или не внесён приход: ' + deficits.slice(0, 8).map(r => displayName(r.name, r.sku) + ' −' + qty(r.deficit)).join(', ')]);
     if ((inv.staleRows || []).length) warn.push(['Пересчёт старше 60 дней: ' + int(inv.staleRows.length),
       'чем дальше от пересчёта, тем больше накопилось ошибки. Самый старый — ' + int(inv.staleDays) + NBSP +
       'дн назад: ' + inv.staleRows.slice(0, 8).join(', ')]);
