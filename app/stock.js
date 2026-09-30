@@ -75,10 +75,14 @@
     if (d === INF) return '∞ дней';
     return int(d) + NBSP + 'дн' + (d < 7 ? ' — срочно' : d < 14 ? ' — внимание' : '');
   }
+  // Год — когда дата не в этом году. Старый таб пишет только день и месяц, и
+  // 30.09.2026 «Минипак M: 369 дн — закончится ~4 окт.» читалось как «через
+  // четыре дня», хотя это октябрь 2027-го.
   function endDate(d, now) {
     if (d === INF) return '∞';
     const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
-    return t.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+    return t.toLocaleDateString('ru-RU', t.getFullYear() === now.getFullYear()
+      ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function byDays(a, b) { return days(a) - days(b) || a.pos - b.pos; }
 
