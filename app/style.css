@@ -356,3 +356,17 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .sku-note { font-size: 11px; color: var(--text-3); margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
 .sku-note.bad { color: var(--red); }
 .sku-note.warn { color: var(--amber); }
+/* Сверка и склады Kaspi (sql/24). Цвет — подсказка, смысл несёт текст. */
+.st-subhead { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+              color: var(--text-2); margin: 16px 0 8px; }
+.st-explain { font-size: 13px; color: var(--text-2); margin: 8px 0 12px; }
+.st-alert { border: 1px solid var(--border); border-left: 3px solid var(--text-3); border-radius: 0 8px 8px 0;
+            padding: 8px 12px; margin: 0 0 8px; font-size: 13px; background: var(--surface-2); }
+.table-scroll + .st-alert { margin-top: 8px; }
+.st-alert-bad  { border-left-color: var(--red);   background: var(--red-tint); }
+.st-alert-warn { border-left-color: var(--amber); background: var(--amber-tint); }
+.st-alert-ok   { border-left-color: var(--green); background: var(--green-tint); }
+.st-alert code, .st-explain code { font-size: 12px; background: var(--surface); border: 1px solid var(--border);
+                                   border-radius: 4px; padding: 0 4px; }
+.st-bad-text { color: var(--red); }
+.st-good-text { color: var(--green); }

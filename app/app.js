@@ -82,6 +82,8 @@
   const ST_STOCK = { table: 'snap_stock', order: ['pos'], what: 'Остатки' };
   const ST_WOFF = { table: 'snap_stock_writeoffs', order: ['day', 'id'], what: 'Журнал списаний' };
   const ST_FRESH = { table: 'v_stock_freshness', what: 'Свежесть листов' };
+  // Сверка (sql/24_stock_recon.sql): строка на окно, 30 и 90 дней, отчёт jsonb.
+  const ST_RECON = { table: 'snap_stock_recon', order: ['window_days'], what: 'Сверка склада' };
   const GROUP_SUB = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' };
 
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
@@ -130,6 +132,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_an_|v_an_/.test(msg))
       return pre + 'снимка экрана «Аналитика» в базе нет — выполните sql/21_analytics.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_stock_recon|v_stock_recon/.test(msg))
+      return pre + 'снимка сверки склада в базе нет — выполните sql/24_stock_recon.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_stock|v_stock/.test(msg))
       return pre + 'снимка экрана «Склад» в базе нет — выполните sql/22_inventory_old.sql и sql/23_stock_screen.sql, затем sql/12_auth.sql.';
@@ -282,14 +287,15 @@
 
   async function loadStock(client) {
     const snapP = fetchSnapState(client);
-    const [stock, woffs, fresh] = await Promise.allSettled([
-      fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH)]);
+    const [stock, woffs, fresh, recon] = await Promise.allSettled([
+      fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH), fetchSmall(client, ST_RECON)]);
     const snap = await snapP;
     const val = r => (r.status === 'fulfilled' ? r.value : []);
     const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
     return {
       rows: val(stock), woffs: woffs.status === 'fulfilled' ? woffs.value : null, fresh: val(fresh)[0] || {},
-      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF) },
+      recon: recon.status === 'fulfilled' ? recon.value : null,
+      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF), recon: err(recon, ST_RECON) },
       snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
     };
   }
@@ -961,16 +967,22 @@
   function stockHtml(app) {
     const S = root.NietteStock, st = app.st;
     if (st.errors.stock) return headerHtml(app) + page(stFreshHtml(app) + C.sectionError(st.errors.stock));
-    const now = app.now();
+    const now = app.now(), win = app.stUi.win;
+    const rep = st.errors.recon ? null : S.reconFor(st.recon, win);
     return headerHtml(app) + page(
       stFreshHtml(app) +
       S.renderKpis(S.kpis(st.rows, st.woffs, now)) +
-      S.renderProblems(S.problems(st.rows)) +
+      S.renderProblems(S.problems(st.rows, rep)) +
       section('stCards', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)) +
       section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
               S.renderTable(st.rows)) +
       section('stWoff', 'Списания за 30 дней', 'брак, образцы, подарки — мимо продаж',
               st.errors.woff ? C.sectionError(st.errors.woff) : S.renderWriteoffs(st.woffs, now)) +
+      // Сверка и склады Kaspi — одно окно на двоих, как в старом табе.
+      section('stRecon', 'Сверка: что не доехало до остатка', C.esc(S.reconSub(rep, win)),
+              S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win))) +
+      section('stPoints', 'Склады отгрузки Kaspi', C.esc(S.pointsSub(rep, win)),
+              st.errors.recon ? C.sectionError(st.errors.recon) : S.renderPoints(rep)) +
       section('stNotes', 'Как читать эти числа', '', S.renderNotes()));
   }
 
@@ -1090,6 +1102,12 @@
         else if (app.route === 'stock') app.st = null;
         else app.ov = null;
         return afterLogin(app);
+      }
+      if (action === 'st-win') {
+        // Окно сверки: оба окна уже в памяти, в базу не ходим.
+        if (app.route !== 'stock' || !app.st) return;
+        app.stUi.win = Number(el.getAttribute('data-win')) === 90 ? 90 : 30;
+        return renderStock(app);
       }
       if (action === 'route') {
         const r = el.getAttribute('data-route');
@@ -1261,7 +1279,7 @@
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
-      an: null, anView: null, anUi: { city: '' }, st: null,
+      an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 },
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },

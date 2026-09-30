@@ -10,6 +10,9 @@
  *                         дашборда (22 доказан равным ему, 13 строк из 13)
  *   snap_stock_writeoffs  журнал списаний за 90 дней
  *   v_stock_freshness     когда приехали лист «Склад» и продажи
+ *   snap_stock_recon      сверка (sql/24): какой расход не доехал до остатка и
+ *                         сколько ушло с каждого склада Kaspi — отчёт на окно
+ *                         30 и 90 дней, той же формы, что inventoryHealthReport_
  *
  * Первая редакция экрана = старый таб по СТАРЫМ определениям (⚑ — в
  * renderNotes и в шапке sql/22). Группы, короткие имена и цвета сроков
@@ -144,16 +147,30 @@
   }
 
   // ── Что не сходится — как блок сверки старого таба ───────────────────────
-  function problems(rows) {
+  // rep — отчёт сверки (sql/24) или null: «не вычлось с пересчёта» не зависит
+  // от окна, поэтому годится любой из двух.
+  function problems(rows, rep) {
+    const sc = rep && !rep.fatal && rep.sinceCount ? rep.sinceCount : null;
     return {
       deficits: rows.filter(r => num(r.deficit) > 0),
-      noDate: rows.filter(r => r.no_count_date)
+      noDate: rows.filter(r => r.no_count_date),
+      notDeducted: sc && sc.lost ? num(sc.lost.total) : 0,
+      countDate: sc ? sc.date : null,
+      upperBound: !!sc && sc.exact === false
     };
   }
 
   function renderProblems(p) {
-    if (!p.deficits.length && !p.noDate.length) return '';
+    if (!p.deficits.length && !p.noDate.length && !p.notDeducted) return '';
     const items = [];
+    if (p.notDeducted) {
+      items.push('<li><b>Не вычлось с пересчёта ' + qty(p.notDeducted) + NBSP + 'шт</b>' +
+        (p.countDate ? ' (с ' + dm(p.countDate) + ')' : '') +
+        ' — продажи и отгрузки, которые не сошлись с листом «Склад». ' +
+        (p.upperBound ? 'Остаток выше реального не больше чем на столько: даты пересчёта у строк разные. '
+                      : 'На столько остаток выше реального. ') +
+        'Разбор — в «Сверке» ниже.</li>');
+    }
     if (p.deficits.length) {
       items.push('<li><b>Расход превысил пересчёт</b> у ' + int(p.deficits.length) + ' ' +
         plural(p.deficits.length, 'товара', 'товаров', 'товаров') + ': ' +
@@ -241,6 +258,253 @@
       '</tbody></table></div>';
   }
 
+  // ── Сверка: какой расход не доехал до остатка (sql/24) ─────────────────────
+  // Порт renderInvHealth и renderInvPoints старого таба. Отчёт той же формы,
+  // что отдавал inventoryHealthReport_ (24 доказан равным ему на 121
+  // проверке), строка снимка на окно: 30 и 90 дней.
+  const PLAT = { kaspi: 'Kaspi', ozon: 'Ozon', wb: 'Wildberries', teez: 'Teez' };
+
+  function reconFor(list, win) {
+    const r = (list || []).find(x => Number(x.window_days) === Number(win));
+    if (!r) return null;
+    return typeof r.report === 'string' ? JSON.parse(r.report) : r.report;
+  }
+
+  // Первый день окна. Старый отчёт отдаёт since = «сейчас минус N суток», и
+  // в окно попадают дни ПОСЛЕ этой даты — старый таб подписывал «с 31.08», а
+  // считал с 01.09. Здесь подпись совпадает с тем, что посчитано.
+  function winFrom(rep) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(rep && rep.since || ''));
+    if (!m) return '';
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1);
+    return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+  }
+
+  function winToolbar(win) {
+    const b = w => '<button type="button" data-action="st-win" data-win="' + w + '" aria-pressed="' + (win === w) +
+      '" class="seg' + (win === w ? ' on' : '') + '">' + w + NBSP + 'дней</button>';
+    return '<div class="toolbar" role="group" aria-label="Окно сверки">' + b(30) + b(90) + '</div>';
+  }
+
+  function alertBox(tone, html) { return '<div class="st-alert st-alert-' + tone + '">' + html + '</div>'; }
+  function subhead(t) { return '<h3 class="st-subhead">' + esc(t) + '</h3>'; }
+  function pcs(v) { return qty(Math.round(num(v))) + NBSP + 'шт'; }
+
+  function reconSub(rep, win) {
+    if (!rep || rep.fatal) return 'окно ' + win + NBSP + 'дней';
+    const sc = rep.sinceCount || {};
+    return 'окно ' + win + NBSP + 'дней, с ' + winFrom(rep) +
+      (sc.date ? ' · завышение остатка — с пересчёта ' + dm(sc.date) : '');
+  }
+
+  function renderRecon(rep, win) {
+    if (!rep) return C.empty('Сверки в снимке нет — выполните sql/24_stock_recon.sql.');
+    if (rep.fatal) return '<div class="error" role="alert">' + esc(rep.fatal) + '</div>';
+    const H = [];
+    const map = rep.mapping || {}, b = rep.b2b || {}, inv = rep.inventory || {};
+    const sc = rep.sinceCount || {}, scl = sc.lost || {}, lost = rep.lost || {};
+    const scLost = num(scl.total), winLost = num(lost.total);
+
+    // Справочники — первыми: без них сопоставление не работает вовсе, и это
+    // объясняет расхождение раньше любых других причин.
+    if (!map.ready) {
+      H.push(alertBox('bad', '<b>Справочники сопоставления пусты.</b> Листов «Артикулы» (' + int(map.aliasRows) +
+        ' ' + plural(map.aliasRows, 'строка', 'строки', 'строк') + ') или «Комплекты» (' + int(map.kitRows) +
+        ') нет или они пусты — артикулы площадок не переводятся в SKU склада, и расход Ozon и WB не вычитается. ' +
+        'Выполнить <code>setupInventoryMapping</code> в редакторе Apps Script.'));
+    }
+    if (!map.nomenSkuCol && num(b.unmatchedQty) > 0) {
+      H.push(alertBox('bad', '<b>В «Номенклатуре» нет колонки «SKU склада»</b> — расход B2B не вычитается. «Код» для ' +
+        'этого не годится: там бухгалтерский код для счетов, а остаток сходится по артикулу Kaspi. ' +
+        'Выполнить <code>setupInventoryMapping</code>.'));
+    } else if (map.nomenSkuCol && !num(map.nomenCodes) && num(b.unmatchedQty) > 0) {
+      H.push(alertBox('warn', '<b>Колонка «SKU склада» в «Номенклатуре» пуста.</b> B2B сравнивается по названию, а ' +
+        'названия в отгрузке и на складе разные — расход не вычитается.'));
+    }
+    if ((map.nomenBad || []).length) {
+      H.push(alertBox('warn', '<b>В «Номенклатуре» SKU, которого нет на складе: ' + int(map.nomenBad.length) + '.</b> ' +
+        'По этим позициям расход не вычтется — опечатка или чужая нумерация: ' +
+        esc(map.nomenBad.slice(0, 8).map(x => x.name + ' → ' + x.sku).join(', '))));
+    }
+
+    // Итог. Зелёный — только когда чисто и за окно, и с пересчёта: старый таб
+    // показывал «всё сматчилось» по одному окну, даже если с пересчёта что-то
+    // не вычлось.
+    if (!winLost && !scLost) {
+      H.push(alertBox('ok', '<b>Весь расход сошёлся с листом «Склад».</b> И за ' + win + NBSP +
+        'дней, и с пересчёта остаток вычитается по всем площадкам и B2B.'));
+    } else {
+      H.push('<div class="kpi-grid st-recon-kpis">' +
+        card('Остаток завышен на', pcs(scLost),
+             'не вычлось с пересчёта' + (sc.date ? ' ' + dm(sc.date) + ', ' + int(sc.days) + NBSP + 'дн назад' : ''),
+             scLost > 0 ? 'bad' : '') +
+        card('Не сошлось за ' + win + NBSP + 'дней', pcs(winLost), 'мера качества сопоставления', winLost > 0 ? 'warn' : '') +
+        card('Маркетплейсы', pcs(lost.marketplaces), 'артикул не найден на «Складе»') +
+        card('Без артикула', pcs(lost.noSku), 'пустой артикул в продаже') +
+        card('B2B', pcs(lost.b2b), 'позиция отгрузки не сошлась') +
+        '</div>');
+      H.push('<p class="st-explain">Из остатка расход вычитается только с даты пересчёта' +
+        (sc.date ? ' — с ' + dm(sc.date) + ', это ' + int(sc.days) + NBSP + 'дн' : '') +
+        '. Всё, что уехало раньше, уже внутри пересчитанного количества, поэтому «завышен» и «не сошлось за окно» ' +
+        'не совпадают и не должны. Перед закупкой смотрят на первую цифру.' +
+        (sc.exact === false
+          ? ' <b>Даты пересчёта у строк разные</b> (разброс ' + int(sc.spreadDays) + NBSP + 'дн), поэтому «завышен» — ' +
+            'верхняя граница: чьей строке принадлежит несошедшийся расход, неизвестно — её артикула на «Складе» нет.'
+          : '') + '</p>');
+    }
+
+    // Площадки
+    const plats = Object.keys(rep.platforms || {}).sort();
+    const ign = rep.ignored || {};
+    if (plats.length) {
+      let t = subhead('По площадкам') + '<div class="table-scroll"><table class="grid"><thead><tr>' +
+        '<th>Площадка</th><th>Сошлось</th><th>Потеряно</th><th>Доля потерь</th><th class="txt">Что это значит</th>' +
+        '</tr></thead><tbody>';
+      plats.forEach(p => {
+        const d = rep.platforms[p], ok = num(d.matchedQty), miss = num(d.unmatchedQty), tot = ok + miss;
+        const share = tot > 0 ? Math.round(miss / tot * 100) : 0;
+        const cls = share >= 90 ? 'bad' : share >= 20 ? 'warn' : '';
+        t += '<tr><th class="who">' + esc(PLAT[p] || p) + '</th>' +
+          '<td class="num">' + pcs(ok) + '</td>' +
+          '<td class="num' + (cls ? ' ' + cls : '') + '">' + pcs(miss) + '</td>' +
+          '<td class="num' + (cls ? ' ' + cls : '') + '">' + share + NBSP + '%</td>' +
+          '<td class="wrap muted">' + (share >= 90 ? 'артикулы не стыкуются вообще' :
+                                       share >= 20 ? 'часть артикулов не заведена' : 'в порядке') + '</td></tr>';
+      });
+      t += '<tr class="rest"><th class="who">' + esc((ign.platforms || []).map(x => PLAT[x] || x).join(', ') || '—') +
+        ' <span class="where">исключено</span></th><td class="num">—</td><td class="num">' + pcs(ign.qty) + '</td>' +
+        '<td class="num">—</td><td class="wrap">сознательно не сопоставляем, в потери не входит</td></tr>';
+      H.push(t + '</tbody></table></div>');
+    }
+
+    // Артикулы, по которым теряется расход: это и есть список «что завести».
+    const misses = [];
+    plats.forEach(p => (rep.platforms[p].misses || []).forEach(m => misses.push(m)));
+    misses.sort((a, b2) => num(b2.qty) - num(a.qty));
+    if (misses.length) {
+      let t = subhead('Артикулы, которых нет на «Складе»') +
+        '<div class="table-scroll tall"><table class="grid"><thead><tr>' +
+        '<th>Площадка</th><th class="txt">Артикул площадки</th><th class="txt">После псевдонима</th>' +
+        '<th>Потеряно</th><th class="txt">Товар</th></tr></thead><tbody>';
+      misses.slice(0, 20).forEach(m => {
+        t += '<tr><th class="who">' + esc(PLAT[m.platform] || m.platform) + '</th>' +
+          '<td><b>' + esc(m.sku) + '</b></td>' +
+          '<td class="muted">' + (m.aliased ? esc(m.resolved) : 'псевдонима нет') + '</td>' +
+          '<td class="num strong">' + pcs(m.qty) + '</td>' +
+          '<td class="wrap muted">' + esc(m.name || '') + '</td></tr>';
+      });
+      H.push(t + '</tbody></table></div>' +
+        '<p class="st-explain">Чинится строкой в листе «Артикулы»: <code>Площадка | Артикул площадки | SKU склада</code>. ' +
+        'Цифры сойдутся после синхронизации таблицы и пересчёта снимка' +
+        (misses.length > 20 ? ' · показаны 20 худших из ' + int(misses.length) : '') + '.</p>');
+    }
+
+    // B2B
+    if (num(b.matchedQty) || num(b.unmatchedQty) || (b.misses || []).length || (b.parserGap || []).length) {
+      let t = subhead('B2B') + '<p class="st-explain">Сошлось <b>' + pcs(b.matchedQty) + '</b>, потеряно <b class="' +
+        (num(b.unmatchedQty) > 0 ? 'st-bad-text' : 'st-good-text') + '">' + pcs(b.unmatchedQty) + '</b>' +
+        ' · из «Позиций поставки» ' + int(b.itemsRows) + ' ' + plural(b.itemsRows, 'строка', 'строки', 'строк') +
+        (num(b.textOnlyShipments) ? ', ещё ' + int(b.textOnlyShipments) + ' ' +
+          plural(b.textOnlyShipments, 'поставка читается', 'поставки читаются', 'поставок читаются') +
+          ' из текста «Товары»' : '') + '</p>';
+      if ((b.misses || []).length) {
+        t += '<div class="table-scroll"><table class="grid"><thead><tr><th>Позиция из отгрузки</th><th>Потеряно</th>' +
+          '<th class="txt">Как сравнивали</th></tr></thead><tbody>';
+        b.misses.slice(0, 15).forEach(m => {
+          t += '<tr><th class="who">' + esc(String(m.name || '').trim() || '—') + '</th>' +
+            '<td class="num strong">' + pcs(m.qty) + '</td><td class="wrap muted">' +
+            (m.viaCode ? 'по «SKU склада» из «Номенклатуры» — такого SKU нет на листе «Склад»'
+                       : 'по названию — в «Номенклатуре» не проставлен «SKU склада»') + '</td></tr>';
+        });
+        t += '</tbody></table></div>';
+      }
+      if ((b.parserGap || []).length) {
+        t += alertBox('warn', '<b>Строк, которые понял B2B, но не понял склад: ' + int(b.parserGap.length) + '.</b> ' +
+          'Склад считает только «шт», B2B — ещё уп/кг/л/усл, и такая отгрузка со склада не вычитается. ' +
+          'Например: ' + esc(b.parserGap[0].line));
+      }
+      H.push(t);
+    }
+
+    // Сам лист «Склад»
+    const warn = [];
+    if ((inv.noCountDate || []).length) warn.push(['Без даты пересчёта: ' + int(inv.noCountDate.length),
+      'по этим строкам расход не вычитается вовсе, а «расход в день» считается — строка выглядит здоровой: ' +
+      inv.noCountDate.slice(0, 8).join(', ')]);
+    if ((inv.dupSku || []).length) warn.push(['Повторяющийся SKU: ' + int(inv.dupSku.length),
+      'каждая строка вычтет весь расход по артикулу — он вычтется несколько раз, остаток станет ниже реального: ' +
+      inv.dupSku.join(', ')]);
+    if ((inv.dupName || []).length) warn.push(['Повторяющееся название: ' + int(inv.dupName.length),
+      'то же для B2B, который сходится по названию: ' + inv.dupName.join(', ')]);
+    if ((inv.noSku || []).length) warn.push(['Без SKU: ' + int(inv.noSku.length),
+      'такая строка не поймает ни одной продажи маркетплейса: ' + inv.noSku.slice(0, 8).join(', ')]);
+    if ((inv.staleRows || []).length) warn.push(['Пересчёт старше 60 дней: ' + int(inv.staleRows.length),
+      'чем дальше от пересчёта, тем больше накопилось ошибки. Самый старый — ' + int(inv.staleDays) + NBSP +
+      'дн назад: ' + inv.staleRows.slice(0, 8).join(', ')]);
+    H.push(subhead('Лист «Склад» · ' + int(inv.rows) + ' ' + plural(inv.rows, 'строка', 'строки', 'строк')) +
+      (warn.length
+        ? warn.map(w => alertBox('warn', '<b>' + esc(w[0]) + '.</b> ' + esc(w[1]))).join('')
+        : '<p class="st-explain st-good-text">Лист в порядке: у всех строк есть SKU и дата пересчёта, дублей нет.</p>'));
+
+    return H.join('');
+  }
+
+  // ── Склады отгрузки Kaspi — renderInvPoints ──────────────────────────────
+  function pointsSub(rep, win) {
+    return 'сколько штук ушло с каждого склада · только Kaspi · ' + win + NBSP + 'дней' +
+      (rep && !rep.fatal ? ', с ' + winFrom(rep) : '');
+  }
+
+  function renderPoints(rep) {
+    if (!rep) return C.empty('Сверки в снимке нет — выполните sql/24_stock_recon.sql.');
+    if (rep.fatal) return C.empty('Лист «Склад» пуст — считать не с чем.');
+    const pts = rep.points || {};
+    if (!pts.available) {
+      return alertBox('warn', '<b>В «База_продаж» ещё нет колонки «Склад передачи КД».</b> Она появляется при ' +
+        'пересборке базы продаж — после ближайшего импорта выгрузки Kaspi блок посчитается сам.');
+    }
+    const unk = pts.unknown || { qty: 0, rows: 0, items: [] };
+    const cols = (pts.list || []).slice();
+    if (num(unk.qty) > 0) cols.push({ code: '', name: '', qty: unk.qty, rows: unk.rows, items: unk.items || [], unknown: true });
+    if (!cols.length) return C.empty('За окно выданных заказов Kaspi не было.');
+    const total = num(pts.qty);
+    const label = c => c.unknown ? 'Склад не указан' : c.code + (c.name ? ' · ' + c.name : '');
+
+    const H = ['<div class="kpi-grid">' + cols.map(c => card(label(c), pcs(c.qty),
+      c.unknown ? 'колонка «Склад передачи КД» пустая — показано отдельно, а не выброшено'
+                : int(c.rows) + ' ' + plural(c.rows, 'строка', 'строки', 'строк') + ' · ' +
+                  (total ? Math.round(num(c.qty) / total * 100) : 0) + NBSP + '% расхода Kaspi',
+      c.unknown ? 'warn' : '')).join('') + '</div>'];
+
+    // Товар × склад: позиции разных складов склеиваются по артикулу, без него —
+    // по названию, как в старом табе.
+    const prod = {}, order = [];
+    cols.forEach((c, ci) => (c.items || []).forEach(it => {
+      const k = it.sku || it.name || '—';
+      if (!prod[k]) { prod[k] = { name: it.name || it.sku || '—', sku: it.sku || '', total: 0, cells: [] }; order.push(k); }
+      const r = prod[k];
+      r.cells[ci] = (r.cells[ci] || 0) + num(it.qty);
+      r.total += num(it.qty);
+      if ((r.name === '—' || r.name === r.sku) && it.name) r.name = it.name;
+    }));
+    const rows = order.map(k => prod[k]).sort((a, b) => b.total - a.total);
+    let t = '<div class="table-scroll tall"><table class="grid sticky-first"><thead><tr><th>Товар</th>' +
+      cols.map(c => '<th>' + esc(label(c)) + '</th>').join('') + '<th>Итого</th></tr></thead><tbody>';
+    rows.forEach(r => {
+      t += '<tr><th class="who">' + esc(r.name) + (r.sku ? '<div class="where">' + esc(r.sku) + '</div>' : '') + '</th>' +
+        cols.map((c, ci) => r.cells[ci] ? '<td class="num">' + qty(Math.round(r.cells[ci])) + '</td>'
+                                         : '<td class="num muted">—</td>').join('') +
+        '<td class="num strong">' + qty(Math.round(r.total)) + '</td></tr>';
+    });
+    t += '</tbody><tfoot><tr><th>Всего</th>' + cols.map(c => '<td class="num">' + qty(Math.round(num(c.qty))) + '</td>').join('') +
+      '<td class="num">' + qty(Math.round(total)) + '</td></tr></tfoot></table></div>';
+    H.push(t);
+    H.push('<p class="st-explain">По выданным заказам Kaspi за окно сверки. Ozon, Wildberries, Teez и B2B сюда не ' +
+      'входят: склад отгрузки есть только в данных Kaspi, поэтому это каспийская часть расхода, а не весь. ' +
+      'Остаток по городам не считается — лист «Склад» держит все склады одним числом.</p>');
+    return H.join('');
+  }
+
   function renderNotes() {
     return '<ul class="notes">' +
       '<li><b>Остаток</b> = пересчёт + приходы − продажи − B2B − вложено в упаковки − списано, всё после даты пересчёта. Ровно так считает старый таб: цифры сверены с листом «Склад», 13 строк из 13 (29.09.2026).</li>' +
@@ -249,12 +513,14 @@
       '<li><b>Вложено</b> — пачки салфеток, которые едут в каждой большой упаковке с 25.07.2026 (лист «Довески»). Входят и в остаток, и в расход в день.</li>' +
       '<li><b>Расход в день</b> — продажи, B2B и вложения за 30 дней, включая сегодня. Списания в него не входят: разовый брак не должен сдвигать дату обнуления.</li>' +
       '<li><b>Приход</b> вносят в старом дашборде, на табе «Склад»; сюда он приезжает с синхронизацией таблицы. Не внесённая после пересчёта партия занижает остаток на всю партию.</li>' +
-      '<li>Пока нет: остатков на площадках (WB, Ozon FBO и FBS), сверки и расхода по точкам Kaspi, форм прихода и списания — они переедут следующими шагами.</li>' +
+      '<li><b>Сверка</b> — какой расход не доехал до остатка: артикул площадки не нашёлся на листе «Склад», пустой артикул, позиция B2B не сошлась. «Остаток завышен на» считается с даты пересчёта — это то, что смотрят перед закупкой; «не сошлось за окно» — мера качества сопоставления.</li>' +
+      '<li>Пока нет: остатков на площадках (WB, Ozon FBO и FBS) и форм прихода, списания и пересчёта — они переедут следующими шагами.</li>' +
     '</ul>';
   }
 
   root.NietteStock = {
     INF, GROUPS, groupOf, displayName, status, daysLabel, endDate, kpis, woff30, problems,
-    renderKpis, renderProblems, renderCards, renderTable, renderWriteoffs, renderNotes
+    renderKpis, renderProblems, renderCards, renderTable, renderWriteoffs, renderNotes,
+    reconFor, winFrom, winToolbar, reconSub, renderRecon, pointsSub, renderPoints
   };
 })(typeof window !== 'undefined' ? window : globalThis);
