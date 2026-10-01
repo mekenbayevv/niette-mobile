@@ -370,3 +370,11 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
                                    border-radius: 4px; padding: 0 4px; }
 .st-bad-text { color: var(--red); }
 .st-good-text { color: var(--green); }
+/* Остатки по площадкам (sql/25): склады WB и Ozon — два столбца, на телефоне один. */
+.st-wh { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; }
+.st-wh-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 4px 0;
+             border-bottom: 1px solid var(--border); }
+.st-wh-row span { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.st-wh-row b { font-variant-numeric: tabular-nums; }
+.st-wh-more { font-size: 12px; padding-top: 4px; }
+.grid th .warn { color: var(--amber); font-size: 11px; font-weight: 500; }

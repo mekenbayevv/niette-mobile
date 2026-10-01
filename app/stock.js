@@ -286,7 +286,7 @@
     return '<div class="toolbar" role="group" aria-label="Окно сверки">' + b(30) + b(90) + '</div>';
   }
 
-  function alertBox(tone, html) { return '<div class="st-alert st-alert-' + tone + '">' + html + '</div>'; }
+  function alertBox(tone, html) { return '<div class="st-alert' + (tone ? ' st-alert-' + tone : '') + '">' + html + '</div>'; }
   function subhead(t) { return '<h3 class="st-subhead">' + esc(t) + '</h3>'; }
   function pcs(v) { return qty(Math.round(num(v))) + NBSP + 'шт'; }
 
@@ -512,6 +512,237 @@
     return H.join('');
   }
 
+  // ── Остатки по площадкам — порт mpStocksReport_ и renderMpStocks ──────────
+  // Площадки приходят из v_mp_stocks (sql/25): строка на площадку в форме,
+  // которую отдавали ozStocks_ и wbStocks_, с SKU склада у каждого артикула.
+  // Свой склад — из тех же строк snap_stock, что и весь экран. Склеивает их
+  // mpReport — mpStocksReport_ один в один (tests/pg/mp_stocks_parity.js).
+  //
+  // Склад Kaspi в Астане — KASPI_HOME_POINT в kaspi_script.js. Тест сверяет
+  // значение с исходником: перепишут там — тест покраснеет здесь.
+  const KASPI_HOME = 'PP2';
+  const MP_STALE_H = 12;   // опросник ходит раз в 4 часа: 12 ч — три пропуска подряд
+  const MP_NAME = { wb: 'Wildberries', ozon: 'Ozon' };
+
+  function mpJson(v, dflt) {
+    if (v === null || v === undefined || v === '') return dflt;
+    return typeof v === 'string' ? JSON.parse(v) : v;
+  }
+
+  // Строка v_mp_stocks → площадка в форме старого кода. Нет строки — значит
+  // 25 не прогнан или площадку не спрашивали: «не спрашивали», а не ноль.
+  function mpSide(list, channel) {
+    const r = (list || []).find(x => x.channel === channel);
+    if (!r) return { ok: false, error: 'not_called', warehouses: [], skus: [] };
+    return {
+      ok: !!r.ok, error: r.ok ? '' : (r.error || 'error'),
+      updatedAt: r.updated_at || null, triedAt: r.tried_at || null,
+      lastError: r.last_error || '', lastNote: r.last_note || '',
+      stale: !!r.ok && r.last_try_ok === false,
+      totalQty: num(r.total_qty), fbo: num(r.fbo), fbs: num(r.fbs), reserved: num(r.reserved),
+      inWayToClient: num(r.in_way_to_client), inWayFromClient: num(r.in_way_from_client),
+      warehouses: mpJson(r.warehouses, []), skus: mpJson(r.skus, [])
+    };
+  }
+
+  // mpStocksReport_: свой склад + WB + Ozon в одной таблице по SKU. Отличие
+  // одно — артикул в SKU переведён базой (v_inv_old_alias, тот же лист
+  // «Артикулы» и та же нормализация), а не здесь.
+  function mpReport(rows, list) {
+    const wb = mpSide(list, 'wb'), oz = mpSide(list, 'ozon');
+    const out = {
+      bySku: [], unmatched: { wb: [], oz: [] }, wb, oz,
+      totals: { own: 0, wb: 0, ozFbo: 0, ozFbs: 0, mp: 0, all: 0, unmatchedWb: 0, unmatchedOz: 0 }
+    };
+    const bySku = {}, order = [];
+    const touch = (sku, name) => {
+      if (!bySku[sku]) {
+        bySku[sku] = { sku, name: name || '', own: 0, wb: 0, ozFbo: 0, ozFbs: 0,
+                       onSite: false, minStock: 0, daysRemaining: null, avgDailyRate: 0 };
+        order.push(sku);
+      }
+      if (!bySku[sku].name && name) bySku[sku].name = name;
+      return bySku[sku];
+    };
+
+    (rows || []).forEach(r => {
+      const sku = String(r.sku || '').trim();
+      if (!sku) return;                       // без SKU — и в «Свой склад» не идёт, как в старом
+      const it = touch(sku, r.name);
+      it.own += Number(r.current_stock) || 0;
+      it.onSite = true;
+      it.minStock = Number(r.min_stock) || 0;
+      it.daysRemaining = !isNum(r.days_remaining) || Number(r.days_remaining) === INF ? null : Number(r.days_remaining);
+      it.avgDailyRate = Number(r.avg_daily_rate) || 0;
+      out.totals.own += Number(r.current_stock) || 0;
+    });
+
+    if (wb.ok) {
+      wb.skus.forEach(s => {
+        const q = Number(s.qty) || 0;
+        if (!s.sku) {
+          if (q > 0) { out.unmatched.wb.push({ article: s.article, name: s.name, qty: q }); out.totals.unmatchedWb += q; }
+          return;
+        }
+        touch(s.sku, '').wb += q;
+      });
+      out.totals.wb = wb.totalQty;
+    }
+    if (oz.ok) {
+      oz.skus.forEach(s => {
+        const q = Number(s.qty) || 0, fbo = Number(s.fbo) || 0, fbs = Number(s.fbs) || 0;
+        if (!s.sku) {
+          if (q > 0) { out.unmatched.oz.push({ article: s.article, name: s.name, qty: q, fbo, fbs }); out.totals.unmatchedOz += q; }
+          return;
+        }
+        const it = touch(s.sku, '');
+        it.ozFbo += fbo;
+        it.ozFbs += fbs;
+      });
+      out.totals.ozFbo = oz.fbo;
+      out.totals.ozFbs = oz.fbs;
+    }
+
+    // Уехавшее на площадки — отдельно от своего склада (правка старого кода
+    // 15.09.2026): со склада WB по заказу Kaspi не отгрузишь. FBS — тот же
+    // ящик в Астане: ни в одну сумму. Несопоставленное — в итоге площадки.
+    out.totals.mp = out.totals.wb + out.totals.ozFbo;
+    out.totals.all = out.totals.own + out.totals.mp;
+    out.bySku = order.map(k => {
+      const r = bySku[k];
+      r.mp = r.wb + r.ozFbo;
+      r.total = r.own + r.wb + r.ozFbo;
+      return r;
+    }).sort((a, b) => b.total - a.total);
+    return out;
+  }
+
+  // Причина отказа — словами. Коды те же, что у старого кода (mpErrText).
+  function mpErrText(code, channel) {
+    const c = String(code || '');
+    if (c === 'not_called') return 'ещё не спрашивали — появятся после ближайшего прогона опросника площадок';
+    if (c === 'unauthorized') return channel === 'wb' ? 'токену WB не хватает прав: нужна категория «Аналитика»'
+                                                     : 'ключу Ozon не хватает прав';
+    if (c === 'timeout') return 'площадка не успела собрать отчёт';
+    if (c === 'rate_limit') return 'лимит запросов площадки';
+    if (c === 'bad_shape') return 'площадка ответила в неожиданной форме';
+    if (c === 'too_many') return 'слишком много страниц — снимок был бы неполным';
+    if (c === 'no_task') return 'WB не выдал номер отчёта';
+    if (/^report_/.test(c)) return 'WB отменил отчёт';
+    if (c === 'exception') return 'нет связи с площадкой';
+    return 'ошибка запроса (' + (c || '—') + ')';
+  }
+
+  function dmhm(ts) {
+    const d = new Date(ts);
+    return isNaN(d) ? '—' : d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function mpSub() {
+    return 'свой склад отдельно, склады площадок отдельно · Teez остатков не отдаёт, его здесь нет';
+  }
+
+  // Когда снят каждый снимок и что с ним не так. Снимок, который перестал
+  // обновляться, по виду неотличим от свежего — поэтому словами.
+  function mpFresh(rep, now) {
+    const bits = [], notes = [];
+    [['wb', rep.wb], ['ozon', rep.oz]].forEach(([ch, s]) => {
+      const nm = MP_NAME[ch];
+      if (!s.ok) { bits.push(nm + ' — нет данных'); return; }
+      bits.push(nm + ' ' + dmhm(s.updatedAt));
+      const ageH = s.updatedAt ? (now - new Date(s.updatedAt)) / 3600000 : 0;
+      if (s.stale) {
+        notes.push(nm + ': показан снимок ' + dmhm(s.updatedAt) + ' — последняя попытка ' + dmhm(s.triedAt) +
+                   ' не удалась: ' + mpErrText(s.lastError, ch) + '.');
+      } else if (ageH > MP_STALE_H) {
+        notes.push(nm + ': снимку ' + int(ageH) + NBSP + 'ч — опросник площадок до остатков не доходит. ' +
+                   'Проверьте прогоны «Приём Ozon и WB» на GitHub.');
+      }
+    });
+    return '<div class="fresh muted">' + esc('Снимок площадок: ' + bits.join(' · ')) + '</div>' +
+      notes.map(n => '<div class="stale" role="status">' + esc(n) + '</div>').join('');
+  }
+
+  // rep — mpReport; recon — отчёт сверки за выбранное окно (для складов Kaspi
+  // вне Астаны) или null; win — окно сверки в днях.
+  function renderMp(rep, recon, win, now) {
+    const t = rep.totals, wb = rep.wb, oz = rep.oz;
+    const H = [mpFresh(rep, now)];
+    const none = '<span class="muted">нет данных</span>';
+
+    // Главная цифра — только свой склад: этим можно торговать завтра. Дробь —
+    // как в «На складе» выше (старый блок округлял до штуки), чтобы на одном
+    // экране одна и та же сумма не читалась двумя числами.
+    H.push('<div class="kpi-grid">' +
+      card('Свой склад', qty(t.own) + NBSP + 'шт', 'отсюда уходят Kaspi, Teez и B2B — этим можно торговать завтра') + '</div>');
+
+    H.push(subhead('Уехало на площадки · в «свой склад» не входит') + '<div class="kpi-grid">' +
+      card('Wildberries', wb.ok ? pcs(t.wb) : none,
+           wb.ok ? int(wb.warehouses.length) + ' ' + plural(wb.warehouses.length, 'склад', 'склада', 'складов') +
+                   ' · в пути к клиенту ' + pcs(wb.inWayToClient)
+                 : esc(mpErrText(wb.error, 'wb'))) +
+      card('Ozon FBO', oz.ok ? pcs(t.ozFbo) : none,
+           oz.ok ? 'склады Ozon' + (t.ozFbs ? ' · FBS ' + pcs(t.ozFbs) + ' — это свой склад, сюда не входит' : '')
+                 : esc(mpErrText(oz.error, 'ozon'))) +
+      card('Итого на площадках', pcs(t.mp), 'WB + Ozon FBO') + '</div>');
+
+    H.push('<p class="st-explain">Всего по всем складам, справочно: <b>' + qty(t.all) + NBSP + 'шт</b>' +
+      (t.ozFbs ? '. Ozon FBS ' + pcs(t.ozFbs) + ' — это тот же ящик в Астане, о котором знает Ozon; ' +
+                 'ни в одну из сумм не входит' : '') + '.</p>');
+
+    // Склады Kaspi вне Астаны: расход есть, остатка нет — пробел показываем.
+    const pts = recon && !recon.fatal && recon.points && recon.points.list ? recon.points.list : [];
+    const away = pts.filter(c => c.code && c.code !== KASPI_HOME && num(c.qty) > 0)
+                    .sort((a, b) => num(b.qty) - num(a.qty));
+    if (away.length) {
+      H.push(alertBox('', '<b>Склады Kaspi вне Астаны — остатка не знаем.</b> Kaspi отдаёт по API только заказы, ' +
+        'остатков по складам в нём нет. Поэтому лист «Склад» держит все города одним числом, и «Свой склад» выше — ' +
+        'это Астана вместе с ними. Отгружено за ' + win + NBSP + 'дней: ' +
+        away.map(c => '<b>' + esc(c.code) + '</b>' + (c.name ? ' · ' + esc(c.name) : '') + ' — ' + pcs(c.qty)).join(' · ')));
+    }
+
+    // Несопоставленные артикулы — честный пробел, а не тихий ноль.
+    const un = (rep.unmatched.wb || []).map(x => ['WB', x]).concat((rep.unmatched.oz || []).map(x => ['Ozon', x]));
+    if (un.length) {
+      H.push(alertBox('warn', '<b>Не сопоставлено с SKU: ' + pcs(t.unmatchedWb + t.unmatchedOz) + ' в ' + int(un.length) +
+        ' ' + plural(un.length, 'артикуле', 'артикулах', 'артикулах') + '.</b> Они посчитаны в итоге площадки, но не попали ' +
+        'в таблицу по SKU: артикула нет в листе «Артикулы». Чинится строкой там — <code>Площадка | Артикул площадки | SKU склада</code>.' +
+        '<br>' + un.slice(0, 12).map(([p, x]) => '<b>' + p + '</b> · <code>' + esc(x.article) + '</code> — ' + pcs(x.qty) +
+          (x.name ? ' <span class="muted">(' + esc(x.name) + ')</span>' : '')).join('<br>') +
+        (un.length > 12 ? '<br>… и ещё ' + int(un.length - 12) : '')));
+    }
+
+    // Таблица по SKU: где лежит каждый товар.
+    const rows = rep.bySku.filter(r => r.total > 0 || r.ozFbs > 0);
+    if (rows.length) {
+      const cell = v => v > 0 ? '<td class="num">' + qty(v) + '</td>' : '<td class="num muted">—</td>';
+      H.push('<div class="table-scroll"><table class="grid sticky-first"><thead><tr>' +
+        '<th>Товар</th><th>Свой склад</th><th>WB</th><th>Ozon FBO</th><th>Везде</th><th>Ozon FBS</th><th>Хватит на</th>' +
+        '</tr></thead><tbody>' + rows.map(r =>
+          '<tr><th class="who">' + esc(displayName(r.name, r.sku)) +
+            (r.onSite ? '' : ' <span class="warn" title="SKU есть на площадке, но строки на листе «Склад» нет">· нет на складе</span>') +
+            '<div class="where">' + esc(r.sku) + '</div></th>' +
+          cell(r.own) + cell(r.wb) + cell(r.ozFbo) +
+          (r.total > 0 ? '<td class="num strong">' + qty(r.total) + '</td>' : '<td class="num muted">—</td>') +
+          (r.ozFbs > 0 ? '<td class="num muted">' + qty(r.ozFbs) + '</td>' : '<td class="num muted">—</td>') +
+          (r.daysRemaining === null ? '<td class="num muted">—</td>'
+                                    : '<td class="num ' + status(r.daysRemaining) + '">' + int(r.daysRemaining) + NBSP + 'дн</td>') +
+          '</tr>').join('') + '</tbody></table></div>');
+      H.push('<p class="st-explain">«Везде» — свой склад, WB и Ozon FBO. Ozon FBS показан для сверки, в «Везде» не входит. ' +
+        '«Хватит на» — по своему складу, как в карточках выше.</p>');
+    }
+
+    // По складам площадок
+    const whList = (title, arr) => !arr || !arr.length ? '' :
+      '<div><h3 class="st-subhead">' + esc(title) + '</h3>' +
+      arr.slice(0, 12).map(w => '<div class="st-wh-row"><span>' + esc(w[0]) + '</span><b>' + qty(w[1]) + '</b></div>').join('') +
+      (arr.length > 12 ? '<div class="muted st-wh-more">… и ещё ' + int(arr.length - 12) + '</div>' : '') + '</div>';
+    const wh = whList('Склады Wildberries', wb.ok && wb.warehouses) + whList('Склады Ozon', oz.ok && oz.warehouses);
+    if (wh) H.push('<div class="st-wh">' + wh + '</div>');
+
+    return H.join('');
+  }
+
   function renderNotes() {
     return '<ul class="notes">' +
       '<li><b>Остаток</b> = пересчёт + приходы − продажи − B2B − вложено в упаковки − списано, всё после даты пересчёта. Ровно так считает старый таб: цифры сверены с листом «Склад», 13 строк из 13 (29.09.2026).</li>' +
@@ -521,13 +752,15 @@
       '<li><b>Расход в день</b> — продажи, B2B и вложения за 30 дней, включая сегодня. Списания в него не входят: разовый брак не должен сдвигать дату обнуления.</li>' +
       '<li><b>Приход</b> вносят в старом дашборде, на табе «Склад»; сюда он приезжает с синхронизацией таблицы. Не внесённая после пересчёта партия занижает остаток на всю партию.</li>' +
       '<li><b>Сверка</b> — какой расход не доехал до остатка: артикул площадки не нашёлся на листе «Склад», пустой артикул, позиция B2B не сошлась. «Остаток завышен на» считается с даты пересчёта — это то, что смотрят перед закупкой; «не сошлось за окно» — мера качества сопоставления.</li>' +
-      '<li>Пока нет: остатков на площадках (WB, Ozon FBO и FBS) и форм прихода, списания и пересчёта — они переедут следующими шагами.</li>' +
+      '<li><b>Остатки по площадкам</b> — снимок складов WB и Ozon, который опросник площадок делает вместе с заказами, раз в 4 часа (старый таб спрашивал площадки при каждом открытии). Время снимка — над плитками. Не удалась последняя попытка — показан прошлый снимок с причиной, а не ноль.</li>' +
+      '<li>Пока нет: форм прихода, списания и пересчёта — их вносят в старом дашборде, они переедут последними, вместе с выключением старого таба.</li>' +
     '</ul>';
   }
 
   root.NietteStock = {
     INF, GROUPS, groupOf, displayName, status, daysLabel, endDate, kpis, woff30, problems,
     renderKpis, renderProblems, renderCards, renderTable, renderWriteoffs, renderNotes,
-    reconFor, winFrom, winToolbar, reconSub, renderRecon, pointsSub, renderPoints
+    reconFor, winFrom, winToolbar, reconSub, renderRecon, pointsSub, renderPoints,
+    KASPI_HOME, MP_STALE_H, mpSide, mpReport, mpErrText, mpSub, mpFresh, renderMp
   };
 })(typeof window !== 'undefined' ? window : globalThis);

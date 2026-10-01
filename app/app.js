@@ -84,6 +84,9 @@
   const ST_FRESH = { table: 'v_stock_freshness', what: 'Свежесть листов' };
   // Сверка (sql/24_stock_recon.sql): строка на окно, 30 и 90 дней, отчёт jsonb.
   const ST_RECON = { table: 'snap_stock_recon', order: ['window_days'], what: 'Сверка склада' };
+  // Остатки на складах WB и Ozon (sql/25_mp_stocks.sql): строка на площадку.
+  // Витрина, а не снимок: строк две, считать нечего — снимок опросника уже в базе.
+  const ST_MP = { table: 'v_mp_stocks', order: ['channel'], what: 'Остатки площадок' };
   const GROUP_SUB = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' };
 
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
@@ -132,6 +135,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_an_|v_an_/.test(msg))
       return pre + 'снимка экрана «Аналитика» в базе нет — выполните sql/21_analytics.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /v_mp_stock|mp_stock_r/.test(msg))
+      return pre + 'остатков площадок в базе нет — выполните sql/25_mp_stocks.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_stock_recon|v_stock_recon/.test(msg))
       return pre + 'снимка сверки склада в базе нет — выполните sql/24_stock_recon.sql, затем sql/12_auth.sql.';
@@ -287,15 +293,17 @@
 
   async function loadStock(client) {
     const snapP = fetchSnapState(client);
-    const [stock, woffs, fresh, recon] = await Promise.allSettled([
-      fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH), fetchSmall(client, ST_RECON)]);
+    const [stock, woffs, fresh, recon, mp] = await Promise.allSettled([
+      fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH), fetchSmall(client, ST_RECON),
+      fetchSmall(client, ST_MP)]);
     const snap = await snapP;
     const val = r => (r.status === 'fulfilled' ? r.value : []);
     const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
     return {
       rows: val(stock), woffs: woffs.status === 'fulfilled' ? woffs.value : null, fresh: val(fresh)[0] || {},
       recon: recon.status === 'fulfilled' ? recon.value : null,
-      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF), recon: err(recon, ST_RECON) },
+      mp: mp.status === 'fulfilled' ? mp.value : null,
+      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF), recon: err(recon, ST_RECON), mp: err(mp, ST_MP) },
       snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
     };
   }
@@ -973,6 +981,9 @@
       stFreshHtml(app) +
       S.renderKpis(S.kpis(st.rows, st.woffs, now)) +
       S.renderProblems(S.problems(st.rows, rep)) +
+      // Где лежит товар — сразу под сводкой, как в старом табе.
+      section('stMp', 'Остатки по площадкам', C.esc(S.mpSub()),
+              st.errors.mp ? C.sectionError(st.errors.mp) : S.renderMp(S.mpReport(st.rows, st.mp), rep, win, now)) +
       section('stCards', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)) +
       section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
               S.renderTable(st.rows)) +
