@@ -47,6 +47,8 @@
     { key: 'ltv',     table: 'snap_client_ltv',       order: 'cohort', what: 'Когорты' },
     // Удержание (sql/27): строка — когорта × месяц после первого, десятки строк.
     { key: 'retention', table: 'snap_client_retention', order: ['cohort', 'k'], what: 'Удержание по месяцам' },
+    { key: 'retentionEntry', table: 'snap_client_retention_entry', order: ['entry', 'cohort', 'k'],
+      what: 'Удержание по первой покупке' },
     { key: 'monthly', table: 'snap_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
     { key: 'entry',   table: 'snap_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
   ];
@@ -407,15 +409,32 @@
       btn('высокий', 'Высокий') + btn('средний', 'Средний') + '</div>';
   }
 
-  // Удержание: «купили в месяце» или «подряд» — те же строки, в базу не ходим.
+  // Удержание: «купили в месяце» или «подряд», все новые или по первой
+  // покупке — всё из загруженных строк, в базу не ходим. Нет снимка разреза
+  // (27 не прогнан заново) — переключателя первой покупки нет, общая таблица
+  // работает как раньше.
   function retentionSection(app) {
-    const m = app.ui.retMode;
-    const btn = (mode) => '<button type="button" data-action="ret-mode" data-mode="' + mode + '"' +
-      ' aria-pressed="' + (m === mode) + '" class="seg' + (m === mode ? ' on' : '') + '">' + C.esc(C.RET_MODES[mode]) + '</button>';
+    const m = app.ui.retMode, d = app.data, e = app.errors;
+    const seg = (action, attr, val, on, label) => '<button type="button" data-action="' + action + '" ' + attr + '="' + val + '"' +
+      ' aria-pressed="' + on + '" class="seg' + (on ? ' on' : '') + '">' + C.esc(label) + '</button>';
+    const byEntry = !e.retentionEntry && (d.retentionEntry || []).length > 0;
+    const ent = byEntry && C.RET_ENTRIES[app.ui.retEntry] ? app.ui.retEntry : 'all';
+    const entryBar = byEntry
+      ? '<div class="toolbar" role="group" aria-label="Первая покупка"><span class="toolbar-label">Первая покупка:</span>' +
+        Object.keys(C.RET_ENTRIES).map(k => seg('ret-entry', 'data-entry', k, ent === k, C.RET_ENTRIES[k])).join('') + '</div>'
+      : (e.retentionEntry ? '<p class="note">Разрез по первой покупке недоступен. ' + C.esc(e.retentionEntry) + '</p>' : '');
+    const render = () => {
+      if (ent === 'all') return C.renderRetention(d.retention, m, { entry: 'all' });
+      const totals = {};
+      (d.retention || []).forEach(r => { if (Number(r.k) === 0) totals[String(r.cohort).slice(0, 7)] = Number(r.new_clients); });
+      return C.renderRetention(d.retentionEntry.filter(r => r.entry === ent), m, { entry: ent, totals });
+    };
     return section('retention', 'Удержание по месяцам', 'Новые клиенты месяца — сколько из них купили в следующие месяцы',
-      or(app.errors, 'retention', () =>
-        '<div class="toolbar" role="group" aria-label="Как считать месяцы">' + btn('any') + btn('streak') + '</div>' +
-        C.renderRetention(app.data.retention, m)));
+      or(e, 'retention', () =>
+        '<div class="toolbar" role="group" aria-label="Как считать месяцы">' +
+          seg('ret-mode', 'data-mode', 'any', m === 'any', C.RET_MODES.any) +
+          seg('ret-mode', 'data-mode', 'streak', m === 'streak', C.RET_MODES.streak) + '</div>' +
+        entryBar + render()));
   }
 
   function riskBodyHtml(app) {
@@ -1362,8 +1381,9 @@
           riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>');
         return;
       }
-      if (action === 'ret-mode') {
-        app.ui.retMode = C.RET_MODES[el.getAttribute('data-mode')] ? el.getAttribute('data-mode') : 'any';
+      if (action === 'ret-mode' || action === 'ret-entry') {
+        if (action === 'ret-mode') app.ui.retMode = C.RET_MODES[el.getAttribute('data-mode')] ? el.getAttribute('data-mode') : 'any';
+        else app.ui.retEntry = C.RET_ENTRIES[el.getAttribute('data-entry')] ? el.getAttribute('data-entry') : 'all';
         const box = rootEl.querySelector('#retention');
         if (box) box.outerHTML = retentionSection(app);
         return;
@@ -1503,7 +1523,7 @@
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
-            retMode: 'any' }
+            retMode: 'any', retEntry: 'all' }
     };
 
     if (!makeClient) {

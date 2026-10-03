@@ -13,6 +13,7 @@
  *   v_new_vs_returning  новые и повторные по месяцам
  *   v_client_entry      вход через мини-пак против обычного
  *   v_client_retention  удержание когорт по месяцам (sql/27)
+ *   v_client_retention_entry  то же по первой покупке: мини-пак / обычная пачка
  *
  * Всё строковое, что пришло из базы (имена, города), экранируется через esc():
  * имя клиента — это ввод человека, а не наш текст.
@@ -208,6 +209,14 @@
   // (покупали каждый месяц с +1, пропустил — выпал). Цвет — подсказка, число
   // в ячейке всегда написано: одна зелёная шкала, темнее — больше.
   const RET_MODES = { any: 'Купили в месяце', streak: 'Подряд, без пропусков' };
+  // Разрез по первой покупке (v_client_retention_entry, 03.10.2026): у
+  // пришедших через мини-пак удержание вдвое ниже, а их доля среди новых
+  // меняется от месяца к месяцу — общая цифра смешивает две разные группы.
+  const RET_ENTRIES = { all: 'Любая', mini: 'Мини-пак', regular: 'Обычная пачка' };
+  const RET_ENTRY_NOTE = {
+    mini: 'Мини-пак — в первый день клиент купил только мини-паки (по 3 шт.).',
+    regular: 'Обычная пачка — в первый день была хотя бы одна большая пачка (или состав заказа неизвестен).'
+  };
   const RET_HEAT_MAX = 0.6;   // доля 60 % и выше — самая тёмная ячейка
 
   function pctInt(v) { return isNum(v) ? nf0.format(Math.round(Number(v) * 100)) + NBSP + '%' : '—'; }
@@ -255,17 +264,29 @@
       '<span class="ret-n">' + int(v) + '</span></td>';
   }
 
-  function renderRetention(rows, mode) {
+  // opts.entry — группа первой покупки; opts.totals — новых всего по когорте
+  // ('YYYY-MM' → число), чтобы в группе было видно её долю: состав новых
+  // меняется, и это объясняет сдвиги общей цифры.
+  function renderRetention(rows, mode, opts) {
     const g = retentionGrid(rows);
-    if (!g.cohorts.length) return empty('Когорт пока нет.');
+    const o = opts || {};
+    const entry = RET_ENTRIES[o.entry] ? o.entry : 'all';
+    if (!g.cohorts.length) return empty(entry === 'all' ? 'Когорт пока нет.' : 'В этой группе клиентов пока нет.');
     const m = RET_MODES[mode] ? mode : 'any';
+    const totals = entry !== 'all' && o.totals ? o.totals : null;
+    const newCell = c => {
+      if (!totals) return '<td class="num">' + int(c.newClients) + '</td>';
+      const t = totals[c.cohort];
+      return '<td class="ret same"><b>' + int(c.newClients) + '</b><span class="ret-n">' +
+        (isNum(t) && t > 0 ? pctInt(c.newClients / t) + ' всех' : '') + '</span></td>';
+    };
     const ks = [];
     for (let k = 1; k <= g.maxK; k++) ks.push(k);
     const head = '<tr><th scope="col">Когорта</th><th scope="col">Новых</th><th scope="col">В том же месяце</th>' +
       ks.map(k => '<th scope="col">+' + k + NBSP + 'мес.</th>').join('') + '</tr>';
     const body = g.cohorts.map(c =>
       '<tr><th scope="row">' + monthName(c.cohort) + (c.forming ? '*' : '') + '</th>' +
-        '<td class="num">' + int(c.newClients) + '</td>' +
+        newCell(c) +
         '<td class="ret same"><b>' + pctInt(share(c.sameMonth, c.newClients)) + (c.forming ? '*' : '') + '</b>' +
           '<span class="ret-n">' + int(c.sameMonth) + '</span></td>' +
         ks.map(k => retCell(c, c.cells[k], m)).join('') +
@@ -277,7 +298,9 @@
       '<p class="note">' + (m === 'streak'
         ? '«Подряд» — покупали в каждом месяце с первого следующего, без пропуска. Пропустил месяц — выпал, даже если потом вернулся.'
         : '«Купили в месяце» — купили в этом месяце хотя бы раз, неважно, был ли пропуск до него.') +
-      ' «В том же месяце» — ещё одна покупка в месяце первой, позже её дня. Доля — от новых клиентов месяца. ' +
+      (entry === 'all' ? ' Доля — от новых клиентов месяца.'
+                       : ' ' + RET_ENTRY_NOTE[entry] + ' Доля — от новых этой группы; под числом новых — её доля среди всех новых месяца.') +
+      ' «В том же месяце» — ещё одна покупка в месяце первой, позже её дня. ' +
       'Месяц — календарный, по дню выдачи. * — месяц ещё идёт, число вырастет. На компьютере наведите на ячейку — ' +
       'оба счёта и доля от прошлого месяца. Сравнивать когорты — по одному столбцу.</p>';
   }
@@ -371,6 +394,6 @@
     esc, int, money, pct, times, days, date, monthName, isNum,
     computeKpis, renderKpis, renderCohorts, renderRepeat, riskRows, renderRisk,
     renderMonthly, renderEntry, SORTS, filterBase, renderBaseTable, renderNotes,
-    sectionError, empty, RET_MODES, RET_HEAT_MAX, retentionGrid, renderRetention
+    sectionError, empty, RET_MODES, RET_ENTRIES, RET_HEAT_MAX, retentionGrid, renderRetention
   };
 })(typeof window !== 'undefined' ? window : globalThis);
