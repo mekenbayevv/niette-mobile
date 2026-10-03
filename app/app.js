@@ -80,7 +80,11 @@
   // списаний. Периода нет — остаток на сейчас; свежесть — когда приехали лист
   // и продажи: снимок может быть свежим, а импорт — застывшим.
   const ST_STOCK = { table: 'snap_stock', order: ['pos'], what: 'Остатки' };
-  const ST_WOFF = { table: 'snap_stock_writeoffs', order: ['day', 'id'], what: 'Журнал списаний' };
+  // Журналы и «ещё не в остатке» — витрины, а не снимки (sql/23, 26): записанное
+  // формой видно сразу, а снимок остатка догоняет через минуту–две.
+  const ST_WOFF = { table: 'v_stock_writeoffs', order: ['day', 'id'], what: 'Журнал списаний' };
+  const ST_ARR = { table: 'v_stock_arrivals', order: ['day', 'id'], what: 'Журнал приходов' };
+  const ST_PEND = { table: 'v_stock_pending', what: 'Ещё не в остатке' };
   const ST_FRESH = { table: 'v_stock_freshness', what: 'Свежесть листов' };
   // Сверка (sql/24_stock_recon.sql): строка на окно, 30 и 90 дней, отчёт jsonb.
   const ST_RECON = { table: 'snap_stock_recon', order: ['window_days'], what: 'Сверка склада' };
@@ -135,6 +139,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_an_|v_an_/.test(msg))
       return pre + 'снимка экрана «Аналитика» в базе нет — выполните sql/21_analytics.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /v_stock_arrivals|v_stock_pending|stock_arrivals|stock_writeoffs/.test(msg))
+      return pre + 'журналов форм в базе нет — выполните sql/00_tables.sql, 22, 23 и 26, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /v_mp_stock|mp_stock_r/.test(msg))
       return pre + 'остатков площадок в базе нет — выполните sql/25_mp_stocks.sql, затем sql/12_auth.sql.';
@@ -293,17 +300,25 @@
 
   async function loadStock(client) {
     const snapP = fetchSnapState(client);
-    const [stock, woffs, fresh, recon, mp] = await Promise.allSettled([
+    // Право записи: нет функции (26 и 12 не прогнаны) или нет права — форм
+    // не показываем, остальной экран работает.
+    const writerP = Promise.resolve().then(() => client.rpc('is_app_writer'))
+      .then(res => !res.error && res.data === true, () => false);
+    const [stock, woffs, fresh, recon, mp, arrs, pending] = await Promise.allSettled([
       fetchSmall(client, ST_STOCK), fetchSmall(client, ST_WOFF), fetchSmall(client, ST_FRESH), fetchSmall(client, ST_RECON),
-      fetchSmall(client, ST_MP)]);
+      fetchSmall(client, ST_MP), fetchSmall(client, ST_ARR), fetchSmall(client, ST_PEND)]);
     const snap = await snapP;
+    const canWrite = await writerP;
     const val = r => (r.status === 'fulfilled' ? r.value : []);
     const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
     return {
       rows: val(stock), woffs: woffs.status === 'fulfilled' ? woffs.value : null, fresh: val(fresh)[0] || {},
       recon: recon.status === 'fulfilled' ? recon.value : null,
       mp: mp.status === 'fulfilled' ? mp.value : null,
-      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF), recon: err(recon, ST_RECON), mp: err(mp, ST_MP) },
+      arrs: arrs.status === 'fulfilled' ? arrs.value : null,
+      pending: val(pending), canWrite,
+      errors: { stock: err(stock, ST_STOCK), woff: err(woffs, ST_WOFF), recon: err(recon, ST_RECON), mp: err(mp, ST_MP),
+                arr: err(arrs, ST_ARR) },
       snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
     };
   }
@@ -977,8 +992,14 @@
     if (st.errors.stock) return headerHtml(app) + page(stFreshHtml(app) + C.sectionError(st.errors.stock));
     const now = app.now(), win = app.stUi.win;
     const rep = st.errors.recon ? null : S.reconFor(st.recon, win);
+    const form = app.stForm || (app.stForm = S.newForm(now));
+    const del = { canWrite: st.canWrite, confirmDel: form.confirmDel };
+    const delMsg = kind => (form.msg.del && form.msg.del.kind === kind
+      ? '<div class="st-msg ' + (form.msg.del.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' +
+        C.esc(form.msg.del.text) + '</div>' : '');
     return headerHtml(app) + page(
       stFreshHtml(app) +
+      S.pendingNote(st.pending, now) +
       S.renderKpis(S.kpis(st.rows, st.woffs, now)) +
       S.renderProblems(S.problems(st.rows, rep)) +
       // Где лежит товар — сразу под сводкой, как в старом табе.
@@ -987,8 +1008,12 @@
       section('stCards', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)) +
       section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
               S.renderTable(st.rows)) +
+      section('stForms', 'Приход и списание', 'записанное видно в журналах сразу, в остатке — через минуту–две',
+              S.renderForms(st.rows, form, { canWrite: st.canWrite, woffs: st.woffs, now })) +
       section('stWoff', 'Списания за 30 дней', 'брак, образцы, подарки — мимо продаж',
-              st.errors.woff ? C.sectionError(st.errors.woff) : S.renderWriteoffs(st.woffs, now)) +
+              st.errors.woff ? C.sectionError(st.errors.woff) : delMsg('writeoff') + S.renderWriteoffs(st.woffs, now, del)) +
+      section('stArr', 'Приходы за 90 дней', 'из формы и из листа «Приходы»',
+              st.errors.arr ? C.sectionError(st.errors.arr) : delMsg('arrival') + S.renderArrivals(st.arrs, now, del)) +
       // Сверка и склады Kaspi — одно окно на двоих, как в старом табе.
       section('stRecon', 'Сверка: что не доехало до остатка', C.esc(S.reconSub(rep, win)),
               S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win, st.rows))) +
@@ -998,6 +1023,153 @@
   }
 
   function renderStock(app) { show(app, stockHtml(app)); }
+
+  // ── Формы «Склада» (sql/26) ──────────────────────────────────────────────
+  // Ошибки форм — текстом базы: его пишет sql/26 по-русски и для человека.
+  // Поверх — только то, что база сказать не может.
+  function formError(err) {
+    const msg = String((err && (err.message || err.error_description)) || err || '');
+    const code = String((err && err.code) || '');
+    if (code === 'PGRST202' || /could not find the function/i.test(msg))
+      return 'Форм ещё нет в базе — выполните sql/26_stock_forms.sql, затем sql/12_auth.sql.';
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg))
+      return 'Нет связи с базой. Прежде чем вносить снова, обновите экран и проверьте журнал — запись могла дойти.';
+    if (code === '57014' || /statement timeout|canceling statement/i.test(msg))
+      return 'База не успела ответить. Обновите экран и проверьте журнал, прежде чем вносить снова.';
+    if (/jwt expired|invalid jwt/i.test(msg) || /^PGRST30/.test(code)) return 'Сессия истекла — войдите заново. Ничего не записано.';
+    return msg || 'Не записано: неизвестная ошибка.';
+  }
+
+  async function stReload(app) {
+    const st = await loadStock(app.client);
+    app.st = st;
+    if (app.route === 'stock') renderStock(app);
+  }
+
+  function stMsg(app, slot, tone, text) {
+    app.stForm.msg[slot] = { tone, text };
+    renderStock(app);
+  }
+
+  async function stSaveArrival(app) {
+    const S = root.NietteStock, f = app.stForm, a = f.arr;
+    if (f.busy) return;
+    const row = (app.st.rows || []).find(r => S.itemKey(r) === a.key);
+    if (!row) return stMsg(app, 'arr', 'bad', 'Выберите товар.');
+    const n = Number(String(a.qty).replace(',', '.'));
+    if (!(n > 0)) return stMsg(app, 'arr', 'bad', 'Укажите количество.');
+    f.busy = 'arr'; f.msg.arr = null;
+    renderStock(app);
+    let res;
+    try {
+      res = await app.client.rpc('form_add_arrival', { entry: {
+        sku: row.sku || '', name: row.name || '', qty: n, day: a.day || '', supplier: a.supplier || '', comment: a.comment || '' } });
+    } catch (e) { res = { error: e }; }
+    f.busy = null;
+    if (res.error) return stMsg(app, 'arr', 'bad', formError(res.error));
+    const d = res.data || {};
+    a.qty = ''; a.supplier = ''; a.comment = '';
+    f.msg.arr = { tone: 'ok', text: 'Записано ' + (d.id || '') + ': +' + n + ' шт — ' + S.displayName(row.name, row.sku) + '. ' +
+      (d.before_count ? 'Дата раньше пересчёта — на остаток не повлияет: пересчёт уже включает эту партию.'
+                      : 'В остатке — через минуту–две.') };
+    return stReload(app);
+  }
+
+  async function stSaveWriteoffs(app) {
+    const S = root.NietteStock, f = app.stForm, w = f.wo, rows = app.st.rows || [];
+    if (f.busy) return;
+    const sel = S.woSelected(f, rows);
+    if (!sel.length) return stMsg(app, 'wo', 'bad', 'Отметьте позиции и укажите количество.');
+    if (!String(w.who || '').trim()) return stMsg(app, 'wo', 'bad', 'Укажите, кто взял.');
+    // Больше, чем лежит, — почти всегда опечатка. Один раз на всю партию,
+    // поимённо, как в старом табе; второе нажатие — «всё равно списать».
+    if (S.woOver(f, rows).length && !w.confirmOver) {
+      w.confirmOver = true; f.msg.wo = null;
+      return renderStock(app);
+    }
+    f.busy = 'wo'; f.msg.wo = null;
+    renderStock(app);
+    let res;
+    try {
+      res = await app.client.rpc('form_add_writeoffs', { entry: {
+        items: sel.map(x => ({ sku: x.row.sku || '', name: x.row.name || '', qty: x.qty })),
+        day: w.day || '', reason: w.reason, taken_by: String(w.who).trim(), comment: w.comment || '' } });
+    } catch (e) { res = { error: e }; }
+    f.busy = null;
+    if (res.error) return stMsg(app, 'wo', 'bad', formError(res.error));
+    const d = res.data || {}, late = d.before_count || [];
+    w.sel = {}; w.search = ''; w.comment = ''; w.confirmOver = false;
+    f.msg.wo = { tone: 'ok', text: 'Списано: ' + sel.length + ' ' + (sel.length === 1 ? 'позиция' : sel.length < 5 ? 'позиции' : 'позиций') +
+      ', ' + sel.reduce((a, x) => a + x.qty, 0) + ' шт. ' +
+      (late.length ? 'Дата раньше пересчёта у: ' + late.join(', ') + ' — на их остаток не повлияет. ' : '') +
+      'В остатке — через минуту–две.' };
+    return stReload(app);
+  }
+
+  async function stDelete(app, kind, id) {
+    const f = app.stForm;
+    if (f.busy) return;
+    f.busy = 'del'; f.msg.del = null;
+    let res;
+    try { res = await app.client.rpc('form_delete_entry', { kind, entry_id: id }); }
+    catch (e) { res = { error: e }; }
+    f.busy = null; f.confirmDel = null;
+    if (res.error) { f.msg.del = { kind, tone: 'bad', text: formError(res.error) }; return renderStock(app); }
+    f.msg.del = { kind, tone: 'ok', text: 'Удалено: ' + id + '. Остаток вернётся через минуту–две.' };
+    return stReload(app);
+  }
+
+  // Поле формы поменялось: состояние — в app.stForm, экран НЕ перерисовываем,
+  // чтобы не терять фокус и курсор. Перерисовываются только список позиций
+  // (при поиске) и сводка «выбрано N».
+  const ST_FIELDS = { stArrItem: ['arr', 'key'], stArrQty: ['arr', 'qty'], stArrDay: ['arr', 'day'],
+                      stArrSupplier: ['arr', 'supplier'], stArrComment: ['arr', 'comment'],
+                      stWoReason: ['wo', 'reason'], stWoDay: ['wo', 'day'], stWoWho: ['wo', 'who'], stWoComment: ['wo', 'comment'] };
+  function stFormInput(app, t) {
+    if (!t || app.route !== 'stock' || !app.st || !app.stForm) return;
+    const S = root.NietteStock, f = app.stForm, rootEl = app.root;
+    const pick = rootEl.querySelector('#stWoPick');
+    if (ST_FIELDS[t.id]) { const m = ST_FIELDS[t.id]; f[m[0]][m[1]] = t.value; return; }
+    if (t.id === 'stWoSearch') {
+      f.wo.search = t.value;
+      if (pick) pick.innerHTML = S.renderWoPick(app.st.rows, f);
+      return;
+    }
+    const kc = t.getAttribute ? t.getAttribute('data-wo-key') : null;
+    const kq = t.getAttribute ? t.getAttribute('data-wo-qty') : null;
+    if (kc === null && kq === null) return;
+    const row = t.closest ? t.closest('.st-pick-row') : null;
+    const box = row ? row.querySelector('input[type="checkbox"]') : null;
+    const num = row ? row.querySelector('input[type="number"]') : null;
+    if (kc !== null) {
+      const s = f.wo.sel[kc] || { on: false, qty: '' };
+      s.on = !!t.checked;
+      if (!s.on) { s.qty = ''; if (num) num.value = ''; }
+      f.wo.sel[kc] = s;
+      if (s.on && !s.qty && num && num.focus) num.focus();
+    } else {
+      const s = f.wo.sel[kq] || { on: false, qty: '' };
+      s.qty = t.value;
+      if (Number(s.qty) > 0) { s.on = true; if (box) box.checked = true; }
+      f.wo.sel[kq] = s;
+    }
+    // Выбор поменялся — прежнее «всё равно списать» больше не про эту партию.
+    if (f.wo.confirmOver) {
+      f.wo.confirmOver = false;
+      const warn = rootEl.querySelector('#stWoForm .st-alert');
+      if (warn && warn.parentNode) warn.parentNode.removeChild(warn);
+    }
+    const key = kc !== null ? kc : kq, r = (app.st.rows || []).find(x => S.itemKey(x) === key);
+    const s = f.wo.sel[key];
+    if (row && r) row.classList.toggle('over', !!(s && s.on && Number(s.qty) > 0 && C.isNum(r.current_stock) &&
+                                                 Number(s.qty) > Number(r.current_stock)));
+    const sel = S.woSelected(f, app.st.rows || []);
+    const sum = rootEl.querySelector('#stWoSum');
+    if (sum) sum.textContent = S.woSumText(sel);
+    const btn = rootEl.querySelector('[data-action="st-wo-save"]');
+    if (btn && !f.busy) btn.textContent = sel.length > 1 ? 'Списать ' + sel.length + ' ' +
+      (sel.length < 5 ? 'позиции' : 'позиций') : 'Списать';
+  }
 
   async function loadStockScreen(app) {
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю склад…</div>'));
@@ -1114,6 +1286,15 @@
         else app.ov = null;
         return afterLogin(app);
       }
+      if (action === 'st-arr-save' && app.route === 'stock' && app.st) return stSaveArrival(app);
+      if (action === 'st-wo-save' && app.route === 'stock' && app.st) return stSaveWriteoffs(app);
+      if ((action === 'st-del' || action === 'st-del-no' || action === 'st-del-yes') && app.route === 'stock' && app.st) {
+        const kind = el.getAttribute('data-kind'), id = el.getAttribute('data-id');
+        if (action === 'st-del-yes') return stDelete(app, kind, id);
+        app.stForm.confirmDel = action === 'st-del' ? kind + ':' + id : null;
+        app.stForm.msg.del = null;
+        return renderStock(app);
+      }
       if (action === 'st-win') {
         // Окно сверки: оба окна уже в памяти, в базу не ходим.
         if (app.route !== 'stock' || !app.st) return;
@@ -1176,6 +1357,10 @@
         if (body) body.innerHTML = baseBodyHtml(app);
       }
     });
+
+    // Формы «Склада»: поле → состояние, без перерисовки экрана.
+    rootEl.addEventListener('input', ev => stFormInput(app, ev.target));
+    rootEl.addEventListener('change', ev => stFormInput(app, ev.target));
 
     // Поиск и сортировка перерисовывают только таблицу: поле поиска остаётся
     // тем же элементом, и фокус с курсором не прыгают на каждой букве.
@@ -1290,7 +1475,7 @@
       opts, root: rootEl, client: null, session: null, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
-      an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 },
+      an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 }, stForm: null,
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },

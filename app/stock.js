@@ -8,7 +8,9 @@
  *   snap_stock            строка на строку листа «Склад»: остаток и из чего он
  *                         сложился — ровно восемь расчётных колонок старого
  *                         дашборда (22 доказан равным ему, 13 строк из 13)
- *   snap_stock_writeoffs  журнал списаний за 90 дней
+ *   v_stock_writeoffs     журнал списаний за 90 дней: лист и записи формы
+ *   v_stock_arrivals      журнал приходов за 90 дней, так же (sql/23)
+ *   v_stock_pending       записи форм, которых ещё нет в снимке остатка (sql/26)
  *   v_stock_freshness     когда приехали лист «Склад» и продажи
  *   snap_stock_recon      сверка (sql/24): какой расход не доехал до остатка и
  *                         сколько ушло с каждого склада Kaspi — отчёт на окно
@@ -242,19 +244,58 @@
   }
 
   // ── Журнал списаний за 30 дней ────────────────────────────────────────────
-  function renderWriteoffs(list, now) {
-    const rows = woff30(list, now).slice().sort((a, b) => String(b.day).localeCompare(String(a.day)));
+  // Удалить можно только запись формы нового экрана (source = 'form') и
+  // только с правом записи. Строку листа удаляют там, где вносили. Удаление
+  // в два нажатия: «Удалить» → «Да, удалить» — без системного confirm().
+  function delCell(kind, w, opts) {
+    if (!opts || !opts.canWrite) return '';
+    if (w.source !== 'form') return '<td class="muted st-src">из листа</td>';
+    const key = kind + ':' + w.id;
+    if (opts.confirmDel === key) {
+      return '<td class="st-del"><button type="button" class="danger small" data-action="st-del-yes" data-kind="' + kind +
+        '" data-id="' + esc(w.id) + '">Да, удалить</button> <button type="button" class="ghost small" data-action="st-del-no">Нет</button></td>';
+    }
+    return '<td class="st-del"><button type="button" class="ghost small" data-action="st-del" data-kind="' + kind +
+      '" data-id="' + esc(w.id) + '" aria-label="Удалить запись ' + esc(w.id) + '">Удалить</button></td>';
+  }
+
+  // opts: { canWrite, confirmDel } — для кнопки удаления; без opts — как раньше.
+  function renderWriteoffs(list, now, opts) {
+    const rows = woff30(list, now).slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) ||
+                                                           String(b.added_at || '').localeCompare(String(a.added_at || '')));
     if (!rows.length) return C.empty('За 30 дней списаний не было.');
+    const del = opts && opts.canWrite;
     return '<div class="table-scroll"><table class="grid"><thead><tr>' +
       '<th>Дата</th><th class="txt">Товар</th><th>Штук</th><th class="txt">Причина</th>' +
-      '<th class="txt">Кто взял</th><th class="txt">Кто внёс</th>' +
+      '<th class="txt">Кто взял</th><th class="txt">Кто внёс</th>' + (del ? '<th class="txt"></th>' : '') +
       '</tr></thead><tbody>' + rows.map(w =>
         '<tr><td>' + esc(dm(w.day)) + '</td>' +
-        '<td class="wrap">' + esc(w.name ? displayName(w.name, w.sku) : (w.sku || '—')) + '</td>' +
+        '<td class="wrap">' + esc(w.name ? displayName(w.name, w.sku) : (w.sku || '—')) +
+          (w.comment ? '<div class="where">' + esc(w.comment) + '</div>' : '') + '</td>' +
         '<td class="num">' + qty(w.qty) + '</td>' +
         '<td class="wrap">' + esc(w.reason || '—') + '</td>' +
         '<td>' + esc(w.taken_by || '—') + '</td>' +
-        '<td>' + esc(w.added_by || '—') + '</td></tr>').join('') +
+        '<td>' + esc(w.added_by || '—') + '</td>' + delCell('writeoff', w, opts) + '</tr>').join('') +
+      '</tbody></table></div>';
+  }
+
+  // Журнал приходов за 90 дней — у старого таба его не было: приход был
+  // виден только в колонке «Приход с пересчёта».
+  function renderArrivals(list, now, opts) {
+    const rows = (list || []).slice().sort((a, b) => String(b.day).localeCompare(String(a.day)) ||
+                                                     String(b.added_at || '').localeCompare(String(a.added_at || '')));
+    if (!rows.length) return C.empty('За 90 дней приходов не внесено. Партия после пересчёта, которую не внесли, занижает остаток на всю партию.');
+    const del = opts && opts.canWrite;
+    return '<div class="table-scroll"><table class="grid"><thead><tr>' +
+      '<th>Дата</th><th class="txt">Товар</th><th>Штук</th><th class="txt">Поставщик</th>' +
+      '<th class="txt">Кто внёс</th>' + (del ? '<th class="txt"></th>' : '') +
+      '</tr></thead><tbody>' + rows.map(a =>
+        '<tr><td>' + esc(dm(a.day)) + '<div class="where">' + esc(a.id || '') + '</div></td>' +
+        '<td class="wrap">' + esc(a.name ? displayName(a.name, a.sku) : (a.sku || '—')) +
+          (a.comment ? '<div class="where">' + esc(a.comment) + '</div>' : '') + '</td>' +
+        '<td class="num">+' + qty(a.qty) + '</td>' +
+        '<td class="wrap">' + esc(a.supplier || '—') + '</td>' +
+        '<td>' + esc(a.added_by || '—') + '</td>' + delCell('arrival', a, opts) + '</tr>').join('') +
       '</tbody></table></div>';
   }
 
@@ -743,6 +784,160 @@
     return H.join('');
   }
 
+  // ── Приход и списание — формы старого таба (sql/26) ──────────────────────
+  // Поля и проверки — как у «Зафиксировать приход товара» и «Списать со
+  // склада» в Dashboard.html. Состояние — в app.stForm (newForm), чтобы
+  // перерисовка экрана не стирала набранное. Сеть и события — в app.js.
+  const WO_REASONS = ['Брак / порча', 'Образцы и тесты', 'Подарки / благотворительность',
+                      'Личное пользование', 'Недостача после пересчёта', 'Другое'];
+
+  function itemKey(r) { return String(r.sku || '') + '|' + String(r.name || ''); }
+  function itemLabel(r) { return displayName(r.name, r.sku) + (r.sku ? ' · ' + r.sku : ''); }
+
+  function newForm(now) {
+    const today = isoDay(now);
+    return {
+      arr: { key: '', qty: '', day: today, supplier: '', comment: '' },
+      wo: { sel: {}, search: '', reason: WO_REASONS[0], day: today, who: '', comment: '', confirmOver: false },
+      msg: { arr: null, wo: null, del: null }, busy: null, confirmDel: null
+    };
+  }
+
+  // Отмеченное к списанию: отметка без количества не считается, как в старом.
+  function woSelected(form, rows) {
+    return rows.filter(r => { const s = form.wo.sel[itemKey(r)]; return s && s.on && Number(s.qty) > 0; })
+               .map(r => ({ row: r, qty: Number(form.wo.sel[itemKey(r)].qty) }));
+  }
+  function woOver(form, rows) {
+    return woSelected(form, rows).filter(x => isNum(x.row.current_stock) && x.qty > Number(x.row.current_stock));
+  }
+  function woSumText(sel) {
+    if (!sel.length) return '';
+    return '· выбрано ' + int(sel.length) + ', всего ' + qty(sel.reduce((a, x) => a + x.qty, 0)) + NBSP + 'шт';
+  }
+  // «Кто взял» — подсказки из журнала: список растёт сам, как в старом табе.
+  function woPeople(woffs) {
+    const set = {};
+    (woffs || []).forEach(w => { if (w.taken_by) set[w.taken_by] = 1; });
+    return Object.keys(set).sort((a, b) => a.localeCompare(b, 'ru'));
+  }
+
+  function renderWoPick(rows, form) {
+    const q = String(form.wo.search || '').trim().toLowerCase();
+    const list = rows.filter(r => !q || String(r.name || '').toLowerCase().indexOf(q) !== -1 ||
+                                  String(r.sku || '').toLowerCase().indexOf(q) !== -1);
+    if (!list.length) return '<p class="empty">Ничего не найдено</p>';
+    return list.map(r => {
+      const k = itemKey(r), s = form.wo.sel[k] || {};
+      const over = s.on && Number(s.qty) > 0 && isNum(r.current_stock) && Number(s.qty) > Number(r.current_stock);
+      // Название — первой строкой, SKU и остаток — второй: на телефоне в
+      // одну строку название не помещалось («Влажные са…»).
+      return '<div class="st-pick-row' + (over ? ' over' : '') + '">' +
+        '<label><input type="checkbox" data-wo-key="' + esc(k) + '"' + (s.on ? ' checked' : '') + '>' +
+        '<span class="st-pick-name">' + esc(displayName(r.name, r.sku)) +
+          '<span class="st-pick-sub">' + (r.sku ? esc(r.sku) + ' · ' : '') + 'ост.' + NBSP + qty(r.current_stock) + '</span>' +
+        '</span></label>' +
+        '<input type="number" inputmode="numeric" min="1" step="1" placeholder="шт" data-wo-qty="' + esc(k) + '"' +
+        ' aria-label="Сколько списать: ' + esc(displayName(r.name, r.sku)) + '" value="' + (s.qty ? esc(s.qty) : '') + '">' +
+      '</div>';
+    }).join('');
+  }
+
+  function field(id, label, control, wide) {
+    return '<div class="st-field' + (wide ? ' wide' : '') + '"><label for="' + id + '">' + esc(label) + '</label>' + control + '</div>';
+  }
+  function msgHtml(m) {
+    return m ? '<div class="st-msg ' + (m.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' + esc(m.text) + '</div>' : '';
+  }
+
+  // opts: { canWrite, woffs, now }
+  function renderForms(rows, form, opts) {
+    if (!opts.canWrite) {
+      return '<p class="st-explain">Вносить приход и списание могут те, кому владелец включил право записи ' +
+        '(<code>app_users.can_write</code>). Пересчёт по-прежнему вносят в лист «Склад».</p>';
+    }
+    if (!rows.length) return C.empty('Лист «Склад» пуст — вносить не к чему.');
+    const today = isoDay(opts.now);
+    const busy = form.busy;
+    const arr = '<div class="st-form" id="stArrForm">' +
+      '<h3 class="st-subhead">Приход товара</h3>' +
+      '<p class="st-explain">Поступление от поставщика — увеличит остаток.</p>' +
+      '<div class="st-fields">' +
+      field('stArrItem', 'Товар', '<select id="stArrItem"><option value="">— выберите товар —</option>' +
+        rows.map(r => '<option value="' + esc(itemKey(r)) + '"' + (form.arr.key === itemKey(r) ? ' selected' : '') + '>' +
+                      esc(itemLabel(r)) + '</option>').join('') + '</select>', true) +
+      field('stArrQty', 'Количество, шт', '<input id="stArrQty" type="number" inputmode="numeric" min="1" step="1" value="' +
+        esc(form.arr.qty) + '">') +
+      field('stArrDay', 'Дата прихода', '<input id="stArrDay" type="date" max="' + today + '" value="' + esc(form.arr.day) + '">') +
+      field('stArrSupplier', 'Поставщик', '<input id="stArrSupplier" type="text" maxlength="200" autocomplete="off" value="' +
+        esc(form.arr.supplier) + '">', true) +
+      field('stArrComment', 'Комментарий', '<input id="stArrComment" type="text" maxlength="500" autocomplete="off" value="' +
+        esc(form.arr.comment) + '">', true) +
+      '</div><div class="st-form-actions"><button type="button" data-action="st-arr-save"' + (busy ? ' disabled' : '') + '>' +
+        (busy === 'arr' ? 'Сохраняю…' : 'Сохранить приход') + '</button></div>' + msgHtml(form.msg.arr) + '</div>';
+
+    const sel = woSelected(form, rows), over = woOver(form, rows);
+    const people = woPeople(opts.woffs);
+    const woLabel = busy === 'wo' ? 'Списываю…'
+      : form.wo.confirmOver && over.length ? 'Всё равно списать'
+      : sel.length > 1 ? 'Списать ' + sel.length + ' ' + plural(sel.length, 'позицию', 'позиции', 'позиций') : 'Списать';
+    const wo = '<div class="st-form" id="stWoForm">' +
+      '<h3 class="st-subhead">Списать со склада</h3>' +
+      '<p class="st-explain">Брак, образцы, «взял сотрудник» — всё, что ушло мимо продаж.</p>' +
+      '<div class="st-fields">' +
+      '<div class="st-field wide"><label for="stWoSearch">Позиции и количество <span id="stWoSum" class="muted">' +
+        esc(woSumText(sel)) + '</span></label>' +
+        '<input id="stWoSearch" type="search" autocomplete="off" placeholder="Поиск по названию или SKU" value="' +
+        esc(form.wo.search) + '">' +
+        '<div id="stWoPick" class="st-pick">' + renderWoPick(rows, form) + '</div></div>' +
+      field('stWoReason', 'Причина', '<select id="stWoReason">' + WO_REASONS.map(r =>
+        '<option' + (form.wo.reason === r ? ' selected' : '') + '>' + esc(r) + '</option>').join('') + '</select>') +
+      field('stWoDay', 'Дата', '<input id="stWoDay" type="date" max="' + today + '" value="' + esc(form.wo.day) + '">') +
+      field('stWoWho', 'Кто взял', '<input id="stWoWho" type="text" list="stWoWhoList" maxlength="100" autocomplete="off" ' +
+        'placeholder="Имя — из списка или своё" value="' + esc(form.wo.who) + '"><datalist id="stWoWhoList">' +
+        people.map(n => '<option value="' + esc(n) + '">').join('') + '</datalist>', true) +
+      field('stWoComment', 'Комментарий — что и зачем', '<input id="stWoComment" type="text" maxlength="500" autocomplete="off" ' +
+        'placeholder="Напр.: 2 упаковки XL на съёмку блогеру" value="' + esc(form.wo.comment) + '">', true) +
+      '</div>' +
+      (form.wo.confirmOver && over.length
+        ? alertBox('warn', '<b>Списываете больше, чем лежит на складе:</b> ' + over.map(x =>
+            esc(displayName(x.row.name, x.row.sku)) + ' — есть ' + qty(x.row.current_stock) + ', списываете ' + qty(x.qty)).join('; ') +
+            '. Если так и есть — нажмите «Всё равно списать».')
+        : '') +
+      '<div class="st-form-actions"><button type="button" class="danger" data-action="st-wo-save"' + (busy ? ' disabled' : '') + '>' +
+        esc(woLabel) + '</button></div>' + msgHtml(form.msg.wo) + '</div>';
+
+    return '<div class="st-forms">' + arr + wo + '</div>';
+  }
+
+  // Обычно запись доезжает до остатка за минуту–две: задача niette-stock-forms
+  // (sql/26) пересчитывает снимок раз в минуту. Висит дольше PENDING_STUCK_MIN —
+  // пересчёт не проходит (упал, пауза после падения, задачи нет). Тогда не
+  // обещать «минуту–две», а сказать прямо и попросить не вносить второй раз:
+  // запись, которой «нет в остатке», так и тянет внести заново.
+  const PENDING_STUCK_MIN = 5;
+
+  // Записи форм, которых ещё нет в снимке остатка. Внесли и тут же удалили
+  // (оба после снимка) — остатка не меняет, не показываем.
+  function pendingNote(pending, now) {
+    const list = (pending || []).filter(p => !(p.deleted && p.snap_at && String(p.added_at) > String(p.snap_at)));
+    if (!list.length) return '';
+    const one = p => (p.deleted ? 'удалено ' : '') + (p.kind === 'arrival' ? '+' : '−') + qty(p.qty) + NBSP + 'шт ' +
+      displayName(p.name, p.sku) + ' (' + (p.kind === 'arrival' ? 'приход' : 'списание') + ')';
+    // Время события: у удаления, которое ждёт снимка, — время удаления
+    // (запись внесена ещё до снимка), у остальных — время записи.
+    const t = list.map(p => new Date(p.deleted ? p.deleted_at : p.added_at).getTime()).filter(x => !isNaN(x));
+    const oldest = t.length ? Math.min.apply(null, t) : NaN;
+    if (now && !isNaN(oldest) && now.getTime() - oldest > PENDING_STUCK_MIN * 60000) {
+      return '<div class="stale st-pending st-pending-stuck" role="status">Ещё не в остатке — дольше обычного, с ' +
+        esc(dmhm(oldest)) + ': ' + esc(list.map(one).join(' · ')) +
+        '. Записи сохранены, они в журналах ниже — повторно не вносите. Остаток выше их пока не учитывает: ' +
+        'пересчёт снимков сейчас не проходит. Причина — <code>select refresh_client_snapshots();</code> в SQL Editor.</div>';
+    }
+    return '<div class="stale st-pending" role="status">Ещё не в остатке: ' + esc(list.map(one).join(' · ')) +
+      '. Снимок остатка пересчитается в течение минуты–двух — затем «Обновить».</div>';
+  }
+
   function renderNotes() {
     return '<ul class="notes">' +
       '<li><b>Остаток</b> = пересчёт + приходы − продажи − B2B − вложено в упаковки − списано, всё после даты пересчёта. Ровно так считает старый таб: цифры сверены с листом «Склад», 13 строк из 13 (29.09.2026).</li>' +
@@ -750,10 +945,11 @@
       '<li><b>Ozon FBO и WB</b> сейчас вычитаются в день продажи покупателю, хотя коробка ушла со склада раньше — в день отгрузки на площадку. Пока отгрузки нигде не фиксируются, остаток врёт в обе стороны. Следующий шаг — отгрузки по API и отдельной строкой разница со старым расчётом.</li>' +
       '<li><b>Вложено</b> — пачки салфеток, которые едут в каждой большой упаковке с 25.07.2026 (лист «Довески»). Входят и в остаток, и в расход в день.</li>' +
       '<li><b>Расход в день</b> — продажи, B2B и вложения за 30 дней, включая сегодня. Списания в него не входят: разовый брак не должен сдвигать дату обнуления.</li>' +
-      '<li><b>Приход</b> вносят в старом дашборде, на табе «Склад»; сюда он приезжает с синхронизацией таблицы. Не внесённая после пересчёта партия занижает остаток на всю партию.</li>' +
+      '<li><b>Приход и списание</b> вносят формами на этом экране. Записанное попадает в журналы сразу, в остаток — через минуту–две, когда пересчитается снимок. Записи старого дашборда и мобильного кабинета тоже считаются — они приезжают с синхронизацией таблицы; одну партию в оба места не вносить. Не внесённая после пересчёта партия занижает остаток на всю партию.</li>' +
+      '<li><b>Пересчёт</b> по-прежнему вносят в лист «Склад»: количество и дату пересчёта. Формы для него не было и в старом табе.</li>' +
       '<li><b>Сверка</b> — какой расход не доехал до остатка: артикул площадки не нашёлся на листе «Склад», пустой артикул, позиция B2B не сошлась. «Остаток завышен на» считается с даты пересчёта — это то, что смотрят перед закупкой; «не сошлось за окно» — мера качества сопоставления.</li>' +
       '<li><b>Остатки по площадкам</b> — снимок складов WB и Ozon, который опросник площадок делает вместе с заказами, раз в 4 часа (старый таб спрашивал площадки при каждом открытии). Время снимка — над плитками. Не удалась последняя попытка — показан прошлый снимок с причиной, а не ноль.</li>' +
-      '<li>Пока нет: форм прихода, списания и пересчёта — их вносят в старом дашборде, они переедут последними, вместе с выключением старого таба.</li>' +
+
     '</ul>';
   }
 
@@ -761,6 +957,8 @@
     INF, GROUPS, groupOf, displayName, status, daysLabel, endDate, kpis, woff30, problems,
     renderKpis, renderProblems, renderCards, renderTable, renderWriteoffs, renderNotes,
     reconFor, winFrom, winToolbar, reconSub, renderRecon, pointsSub, renderPoints,
-    KASPI_HOME, MP_STALE_H, mpSide, mpReport, mpErrText, mpSub, mpFresh, renderMp
+    KASPI_HOME, MP_STALE_H, mpSide, mpReport, mpErrText, mpSub, mpFresh, renderMp,
+    WO_REASONS, itemKey, newForm, woSelected, woOver, woSumText, woPeople, renderWoPick, renderForms,
+    renderArrivals, pendingNote, PENDING_STUCK_MIN, isoDay
   };
 })(typeof window !== 'undefined' ? window : globalThis);

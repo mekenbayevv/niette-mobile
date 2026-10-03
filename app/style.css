@@ -378,3 +378,38 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .st-wh-row b { font-variant-numeric: tabular-nums; }
 .st-wh-more { font-size: 12px; padding-top: 4px; }
 .grid th .warn { color: var(--amber); font-size: 11px; font-weight: 500; }
+/* Формы «Склада» (sql/26): приход и списание рядом на широком экране, одна под другой на телефоне. */
+.st-forms { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 900px) { .st-forms { grid-template-columns: 1fr 1fr; align-items: start; } }
+.st-form { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface-2); min-width: 0; }
+.st-form .st-subhead { margin-top: 0; }
+.st-form .st-explain { margin-top: 0; }
+.st-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.st-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.st-field.wide { grid-column: 1 / -1; }
+.st-field > label { font-size: 12px; color: var(--text-3); }
+.st-field input, .st-field select { width: 100%; min-width: 0; }
+.st-pick { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;
+           background: var(--surface); margin-top: 6px; }
+.st-pick .empty { padding: 8px 10px; }
+.st-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.st-pick-row:last-child { border-bottom: none; }
+.st-pick-row label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; font-size: 13px; }
+.st-pick-row input[type="checkbox"] { min-height: 0; width: 18px; height: 18px; padding: 0; flex: none; }
+.st-pick-name { display: flex; flex-direction: column; min-width: 0; color: var(--text); font-weight: 500; }
+.st-pick-sub { font-size: 11px; color: var(--text-3); font-weight: 400; white-space: nowrap; }
+.st-field .st-pick-row input[type="number"] { width: 76px; flex: none; min-height: 32px; padding: 4px 8px; }
+.st-pick-row.over input[type="number"] { border-color: var(--red); color: var(--red); }
+.st-form-actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.st-form .st-alert { margin-top: 12px; }
+.st-msg { font-size: 13px; margin: 8px 0; }
+button.danger { background: var(--red); }
+button.danger:hover { background: var(--red); filter: brightness(.92); }
+button.small { min-height: 28px; padding: 4px 10px; font-size: 12px; }
+.grid td.st-del { white-space: nowrap; text-align: right; }
+.grid td.st-src { font-size: 11px; white-space: nowrap; text-align: right; }
+.st-pending { margin-bottom: 12px; }
+/* Запись висит дольше пяти минут: пересчёт снимков не проходит (sql/26, pendingNote в stock.js). */
+.stale.st-pending-stuck { background: var(--red-tint); color: var(--red); border-color: var(--red); }
+.st-pending-stuck code { font-size: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border);
+                         border-radius: 4px; padding: 0 4px; }
