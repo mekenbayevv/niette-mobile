@@ -12,6 +12,7 @@
  *   v_client_ltv        LTV и окупаемость по когортам
  *   v_new_vs_returning  новые и повторные по месяцам
  *   v_client_entry      вход через мини-пак против обычного
+ *   v_client_retention  удержание когорт по месяцам (sql/27)
  *
  * Всё строковое, что пришло из базы (имена, города), экранируется через esc():
  * имя клиента — это ввод человека, а не наш текст.
@@ -200,6 +201,87 @@
       '</tr></thead><tbody>' + body + '</tbody></table></div>';
   }
 
+  // ── Удержание когорт по месяцам (sql/27) ─────────────────────────────────
+  // Строка — новые клиенты месяца, столбец — календарный месяц после первого.
+  // Доля — от новых этого месяца. Два счёта на одних строках, переключатель
+  // над таблицей: «купили в месяце» (пропуски до него не важны) и «подряд»
+  // (покупали каждый месяц с +1, пропустил — выпал). Цвет — подсказка, число
+  // в ячейке всегда написано: одна зелёная шкала, темнее — больше.
+  const RET_MODES = { any: 'Купили в месяце', streak: 'Подряд, без пропусков' };
+  const RET_HEAT_MAX = 0.6;   // доля 60 % и выше — самая тёмная ячейка
+
+  function pctInt(v) { return isNum(v) ? nf0.format(Math.round(Number(v) * 100)) + NBSP + '%' : '—'; }
+  function share(part, whole) { return num(whole) > 0 ? num(part) / num(whole) : null; }
+
+  // Строки снимка (когорта × k) → когорты с ячейками по k. k = 0 — месяц
+  // первой покупки: размер когорты и повтор в том же месяце.
+  function retentionGrid(rows) {
+    const by = new Map();
+    (rows || []).forEach(r => {
+      const key = String(r.cohort || '').slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(key)) return;
+      if (!by.has(key)) by.set(key, { cohort: key, newClients: num(r.new_clients), sameMonth: null, forming: false, cells: [] });
+      const c = by.get(key), k = Number(r.k);
+      if (k === 0) {
+        c.sameMonth = isNum(r.same_month) ? Number(r.same_month) : null;
+        c.forming = r.complete === false;
+      } else if (k > 0) {
+        c.cells[k] = { k, month: String(r.month || '').slice(0, 7), active: num(r.active), streak: num(r.streak),
+                       complete: r.complete === true };
+      }
+    });
+    const cohorts = Array.from(by.values()).sort((a, b) => (a.cohort < b.cohort ? -1 : a.cohort > b.cohort ? 1 : 0));
+    const maxK = cohorts.reduce((m, c) => Math.max(m, c.cells.length - 1), 0);
+    return { cohorts, maxK };
+  }
+
+  function retTitle(c, cell) {
+    const n = c.newClients, prev = cell.k > 1 ? c.cells[cell.k - 1] : null;
+    return monthName(c.cohort) + ' → ' + monthName(cell.month) + ': купили ' + int(cell.active) + ' из ' + int(n) +
+      ' (' + pctInt(share(cell.active, n)) + '); подряд с первого месяца — ' + int(cell.streak) +
+      ' (' + pctInt(share(cell.streak, n)) + ')' +
+      (prev && prev.streak > 0 ? ', это ' + pctInt(share(cell.streak, prev.streak)) + ' от покупавших подряд месяцем раньше' : '') +
+      (cell.complete ? '' : '. Месяц ещё идёт — число вырастет.');
+  }
+
+  function retCell(c, cell, mode) {
+    if (!cell) return '<td class="ret na"></td>';
+    const v = mode === 'streak' ? cell.streak : cell.active;
+    const sh = share(v, c.newClients);
+    // Идущий месяц не красим: его доля ещё растёт и с соседями несравнима.
+    const h = cell.complete && sh !== null ? Math.min(1, sh / RET_HEAT_MAX) : 0;
+    return '<td class="ret' + (cell.complete ? '' : ' part') + '" style="--h:' + h.toFixed(2) + '" title="' +
+      esc(retTitle(c, cell)) + '"><b>' + pctInt(sh) + (cell.complete ? '' : '*') + '</b>' +
+      '<span class="ret-n">' + int(v) + '</span></td>';
+  }
+
+  function renderRetention(rows, mode) {
+    const g = retentionGrid(rows);
+    if (!g.cohorts.length) return empty('Когорт пока нет.');
+    const m = RET_MODES[mode] ? mode : 'any';
+    const ks = [];
+    for (let k = 1; k <= g.maxK; k++) ks.push(k);
+    const head = '<tr><th scope="col">Когорта</th><th scope="col">Новых</th><th scope="col">В том же месяце</th>' +
+      ks.map(k => '<th scope="col">+' + k + NBSP + 'мес.</th>').join('') + '</tr>';
+    const body = g.cohorts.map(c =>
+      '<tr><th scope="row">' + monthName(c.cohort) + (c.forming ? '*' : '') + '</th>' +
+        '<td class="num">' + int(c.newClients) + '</td>' +
+        '<td class="ret same"><b>' + pctInt(share(c.sameMonth, c.newClients)) + (c.forming ? '*' : '') + '</b>' +
+          '<span class="ret-n">' + int(c.sameMonth) + '</span></td>' +
+        ks.map(k => retCell(c, c.cells[k], m)).join('') +
+      '</tr>').join('');
+    const scale = [0.2, 0.4, 0.6, 0.8, 1].map(h => '<i style="--h:' + h + '"></i>').join('');
+    return '<div class="table-scroll"><table class="grid sticky-first ret-grid">' +
+      '<thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' +
+      '<div class="ret-legend" aria-hidden="true">0' + NBSP + '%' + scale + '60' + NBSP + '% и выше</div>' +
+      '<p class="note">' + (m === 'streak'
+        ? '«Подряд» — покупали в каждом месяце с первого следующего, без пропуска. Пропустил месяц — выпал, даже если потом вернулся.'
+        : '«Купили в месяце» — купили в этом месяце хотя бы раз, неважно, был ли пропуск до него.') +
+      ' «В том же месяце» — ещё одна покупка в месяце первой, позже её дня. Доля — от новых клиентов месяца. ' +
+      'Месяц — календарный, по дню выдачи. * — месяц ещё идёт, число вырастет. На компьютере наведите на ячейку — ' +
+      'оба счёта и доля от прошлого месяца. Сравнивать когорты — по одному столбцу.</p>';
+  }
+
   // ── Вход через мини-пак ───────────────────────────────────────────────────
   function renderEntry(rows) {
     if (!rows.length) return empty('Нет данных.');
@@ -278,6 +360,10 @@
       '<li>Прибыль — по заказам с известной себестоимостью и комиссией; неизвестное — прочерк, а не ноль.</li>' +
       '<li>Цифры — снимок, база пересчитывает его раз в 10 минут. На какой момент они верны — ' +
       'в строке «Данные на» вверху страницы.</li>' +
+      '<li><b>Удержание по месяцам</b> — когортное: доля от новых клиентов своего месяца, поэтому от объёма ' +
+      'привлечения не зависит. «Доля повторных» в помесячной динамике растёт сама, когда новых становится меньше, — ' +
+      'сравнивать месяцы по ней нельзя. Старый дашборд считал удержание окнами по 30 дней от первой покупки и ' +
+      'накопительно — с этой таблицей его цифры не совпадут.</li>' +
     '</ul>';
   }
 
@@ -285,6 +371,6 @@
     esc, int, money, pct, times, days, date, monthName, isNum,
     computeKpis, renderKpis, renderCohorts, renderRepeat, riskRows, renderRisk,
     renderMonthly, renderEntry, SORTS, filterBase, renderBaseTable, renderNotes,
-    sectionError, empty
+    sectionError, empty, RET_MODES, RET_HEAT_MAX, retentionGrid, renderRetention
   };
 })(typeof window !== 'undefined' ? window : globalThis);

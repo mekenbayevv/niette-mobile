@@ -22,6 +22,9 @@
   --amber: #d97706; --amber-tint: #fffbeb;
   --accent: var(--brand-green);
   --radius: 12px;
+  /* Тепловая шкала удержания (clients.js): цвет и предел прозрачности подобраны
+     так, что текст и мелкие числа на самой тёмной ячейке держат контраст 4,5:1. */
+  --heat-rgb: 0, 107, 69; --heat-max: .45;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -41,6 +44,7 @@
     --green: #34d399; --green-tint: #10251c;
     --red: #f87171;   --red-tint: #2a1416;
     --amber: #fbbf24; --amber-tint: #26200e;
+    --heat-rgb: 52, 211, 153; --heat-max: .35;
   }
 }
 
@@ -413,3 +417,17 @@ button.small { min-height: 28px; padding: 4px 10px; font-size: 12px; }
 .stale.st-pending-stuck { background: var(--red-tint); color: var(--red); border-color: var(--red); }
 .st-pending-stuck code { font-size: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border);
                          border-radius: 4px; padding: 0 4px; }
+/* Удержание по месяцам (sql/27): одна зелёная шкала, темнее — больше; число в ячейке написано всегда.
+   Идущий месяц (.part) не красится: его доля ещё растёт. */
+.grid td.ret { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums;
+               background: rgba(var(--heat-rgb), calc(var(--h, 0) * var(--heat-max)));
+               box-shadow: inset 0 0 0 1px var(--surface); }   /* зазор между закрашенными соседями */
+.grid td.ret b { display: block; font-weight: 600; color: var(--text); }
+.grid td.ret .ret-n { display: block; font-size: 11px; color: var(--text-2); }
+.grid td.ret.part b { font-weight: 500; font-style: italic; }
+.grid td.ret.na { background: none; }
+.ret-legend { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--text-3); margin: 8px 0 0; }
+.ret-legend i { display: inline-block; width: 18px; height: 12px; border-radius: 3px; border: 1px solid var(--border);
+                background: rgba(var(--heat-rgb), calc(var(--h) * var(--heat-max))); }
+.ret-legend i:first-of-type { margin-left: 4px; }
+.ret-legend i:last-of-type { margin-right: 4px; }

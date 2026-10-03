@@ -45,6 +45,8 @@
       select: 'client_key,name,city,orders,revenue,last_at,days_since_last,expected_gap,overdue_x,risk' },
     { key: 'repeat',  table: 'snap_client_repeat',    order: 'sort',   what: 'Время до второго заказа' },
     { key: 'ltv',     table: 'snap_client_ltv',       order: 'cohort', what: 'Когорты' },
+    // Удержание (sql/27): строка — когорта × месяц после первого, десятки строк.
+    { key: 'retention', table: 'snap_client_retention', order: ['cohort', 'k'], what: 'Удержание по месяцам' },
     { key: 'monthly', table: 'snap_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
     { key: 'entry',   table: 'snap_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
   ];
@@ -151,6 +153,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_stock|v_stock/.test(msg))
       return pre + 'снимка экрана «Склад» в базе нет — выполните sql/22_inventory_old.sql и sql/23_stock_screen.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_client_retention|v_client_retention/.test(msg))
+      return pre + 'снимка удержания в базе нет — выполните sql/27_client_retention.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_/.test(msg))
       return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
@@ -402,6 +407,17 @@
       btn('высокий', 'Высокий') + btn('средний', 'Средний') + '</div>';
   }
 
+  // Удержание: «купили в месяце» или «подряд» — те же строки, в базу не ходим.
+  function retentionSection(app) {
+    const m = app.ui.retMode;
+    const btn = (mode) => '<button type="button" data-action="ret-mode" data-mode="' + mode + '"' +
+      ' aria-pressed="' + (m === mode) + '" class="seg' + (m === mode ? ' on' : '') + '">' + C.esc(C.RET_MODES[mode]) + '</button>';
+    return section('retention', 'Удержание по месяцам', 'Новые клиенты месяца — сколько из них купили в следующие месяцы',
+      or(app.errors, 'retention', () =>
+        '<div class="toolbar" role="group" aria-label="Как считать месяцы">' + btn('any') + btn('streak') + '</div>' +
+        C.renderRetention(app.data.retention, m)));
+  }
+
   function riskBodyHtml(app) {
     return C.renderRisk(app.data.risk, app.ui.riskLevel, app.ui.riskAll ? Infinity : RISK_STEP);
   }
@@ -442,6 +458,7 @@
       (e.base ? C.sectionError(e.base) : C.renderKpis(k)) +
       section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
               or(e, 'ltv', () => C.renderCohorts(d.ltv))) +
+      retentionSection(app) +
       '<div class="two">' +
         section('repeat', 'Время до второго заказа', '', or(e, 'repeat', () => C.renderRepeat(d.repeat))) +
         section('entry', 'Вход через мини-пак', 'С чего начал клиент',
@@ -1345,6 +1362,12 @@
           riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>');
         return;
       }
+      if (action === 'ret-mode') {
+        app.ui.retMode = C.RET_MODES[el.getAttribute('data-mode')] ? el.getAttribute('data-mode') : 'any';
+        const box = rootEl.querySelector('#retention');
+        if (box) box.outerHTML = retentionSection(app);
+        return;
+      }
       if (action === 'risk-all') {
         app.ui.riskAll = true;
         const body = rootEl.querySelector('#riskBody');
@@ -1479,7 +1502,8 @@
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
-      ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP }
+      ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
+            retMode: 'any' }
     };
 
     if (!makeClient) {
