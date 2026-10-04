@@ -1,12 +1,12 @@
-/* NIETTE на Postgres: вход и шесть экранов — «Обзор», «Kaspi», «Ozon», «Аналитика»,
- * «Клиенты» и «Склад».
+/* NIETTE на Postgres: вход и семь экранов — «Обзор», «Kaspi», «Ozon», «Аналитика»,
+ * «Клиенты», «Склад» и «B2B».
  *
  * Состояния по порядку: нет библиотеки / нет настроек / секретный ключ →
  * вход → проверка допуска (app_users) → загрузка → экран.
  *
  * ЭКРАНЫ — по адресу: …/app/ и …/app/#overview — «Обзор», …/app/#kaspi —
  * «Kaspi», …/app/#ozon — «Ozon», …/app/#analytics — «Аналитика»,
- * …/app/#clients — «Клиенты», …/app/#stock — «Склад». Данные экрана грузятся при первом заходе на
+ * …/app/#clients — «Клиенты», …/app/#stock — «Склад», …/app/#b2b — «B2B». Данные экрана грузятся при первом заходе на
  * него и дальше живут в памяти: переключение между вкладками в базу не
  * ходит. «Обновить» перечитывает открытый экран. Период у всех экранов,
  * кроме «Клиентов» и «Склада», общий: выбрал июль на одном — остальные
@@ -95,6 +95,24 @@
   // Остатки на складах WB и Ozon (sql/25_mp_stocks.sql): строка на площадку.
   // Витрина, а не снимок: строк две, считать нечего — снимок опросника уже в базе.
   const ST_MP = { table: 'v_mp_stocks', order: ['channel'], what: 'Остатки площадок' };
+  // «B2B» (sql/28_b2b.sql): таблицы мини-CRM целиком — их сотни строк, не
+  // тысячи, а карточка партнёра открывается мгновенно из памяти. Таблицы, а
+  // не снимки: после переключения записанное должно быть видно сразу.
+  // alive — без мягко удалённых строк (deleted_at, появятся с записью).
+  const B2B_SRC = [
+    { key: 'clients',   table: 'b2b_clients',    paged: true, order: ['sheet_row', 'id'], what: 'Партнёры' },
+    { key: 'shipments', table: 'b2b_shipments',  paged: true, order: ['sheet_row', 'id'], what: 'Поставки', alive: true },
+    { key: 'payments',  table: 'b2b_payments',   paged: true, order: ['sheet_row', 'id'], what: 'Оплаты', alive: true },
+    { key: 'visits',    table: 'b2b_visits',     paged: true, order: ['sheet_row', 'id'], what: 'Визиты', alive: true,
+      select: 'id,day,client_id,result,next_day,rep,comment,files' },
+    { key: 'items',     table: 'b2b_ship_items', paged: true, order: ['sheet_row', 'id'], what: 'Позиции поставок', alive: true },
+    { key: 'payItems',  table: 'b2b_pay_items',  paged: true, order: ['sheet_row', 'id'], what: 'Позиции оплат', alive: true },
+    { key: 'branches',  table: 'b2b_branches',   paged: true, order: ['sheet_row', 'id'], what: 'Филиалы', alive: true },
+    { key: 'docs',      table: 'b2b_docs',       paged: true, order: ['sheet_row', 'id'], what: 'Документы', alive: true },
+    { key: 'rounds',    table: 'b2b_rounds',     paged: true, order: ['sheet_row', 'id'], what: 'Обходы', alive: true }
+  ];
+  const B2B_CORE = ['clients', 'shipments', 'payments'];   // без них экрану показать нечего
+  const B2B_STATUS = { table: 'v_b2b_status', what: 'Перенос B2B' };
   const GROUP_SUB = { day: 'по дням', week: 'по неделям', decade: 'по декадам', month: 'по месяцам' };
 
   // Снимок старше этого — предупреждение на экране. Тот же порог, что у
@@ -159,6 +177,9 @@
         /snap_client_retention|v_client_retention/.test(msg))
       return pre + 'снимка удержания в базе нет — выполните sql/27_client_retention.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /b2b_/.test(msg))
+      return pre + 'данных B2B в базе нет — выполните sql/00_tables.sql, 01_functions.sql и 28_b2b.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_/.test(msg))
       return pre + 'снимка в базе нет — выполните sql/15_snapshots.sql, затем sql/12_auth.sql.';
     if (code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg))
@@ -174,7 +195,7 @@
   async function fetchAll(client, src) {
     const out = [];
     for (let from = 0, guard = 0; guard < 50; guard++) {
-      const q = ordered(client.from(src.table).select(src.select || '*'), src.order);
+      const q = ordered(alive(client.from(src.table).select(src.select || '*'), src), src.order);
       const res = await q.range(from, from + PAGE - 1);
       if (res.error) throw res.error;
       const rows = res.data || [];
@@ -188,13 +209,16 @@
     throw new Error(src.table + ': больше 50 страниц — проверьте сортировку');
   }
 
+  // Мягко удалённые строки (deleted_at) — мимо: удалённое должно пропасть с экрана.
+  function alive(q, src) { return src.alive ? q.is('deleted_at', null) : q; }
+
   function ordered(q, order) {
     [].concat(order || []).forEach(col => { q = q.order(col, { ascending: true }); });
     return q;
   }
 
   async function fetchSmall(client, src) {
-    const res = await ordered(client.from(src.table).select(src.select || '*'), src.order);
+    const res = await ordered(alive(client.from(src.table).select(src.select || '*'), src), src.order);
     if (res.error) throw res.error;
     return res.data || [];
   }
@@ -330,6 +354,19 @@
     };
   }
 
+  async function loadB2b(client) {
+    const res = await Promise.allSettled(B2B_SRC.map(s => (s.paged ? fetchAll : fetchSmall)(client, s))
+                                                .concat([fetchSmall(client, B2B_STATUS)]));
+    const data = {}, errors = {};
+    B2B_SRC.forEach((s, i) => {
+      const r = res[i];
+      if (r.status === 'fulfilled') data[s.key] = r.value;
+      else { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
+    });
+    const st = res[B2B_SRC.length];
+    return { data, errors, status: st.status === 'fulfilled' ? (st.value[0] || {}) : {}, loadedAt: new Date() };
+  }
+
   // Застывший снимок по виду неотличим от «новых заказов не было». Поэтому
   // возраст снимка говорится словами, а не только временем в строке свежести.
   function staleNote(app) {   // app — любой носитель { snapAt, snapNever, loadedAt }
@@ -373,7 +410,7 @@
 
   const ROUTES = [{ key: 'overview', label: 'Обзор' }, { key: 'kaspi', label: 'Kaspi' }, { key: 'ozon', label: 'Ozon' },
                   { key: 'analytics', label: 'Аналитика' }, { key: 'clients', label: 'Клиенты' },
-                  { key: 'stock', label: 'Склад' }];
+                  { key: 'stock', label: 'Склад' }, { key: 'b2b', label: 'B2B' }];
 
   function headerHtml(app) {
     const email = app.session && app.session.user ? app.session.user.email : '';
@@ -1213,6 +1250,121 @@
     if (app.route === 'stock') renderStock(app);
   }
 
+  // ── «B2B» ─────────────────────────────────────────────────────────────────
+  // Расчёты и разметка — в b2b.js. Период — общий с «Обзором»: им режутся
+  // только потоки («Поставлено», «Оплачено»); остаток — всегда на сегодня.
+  // «Всё время» здесь — без границ, как в старом табе: поставка 23 марта и
+  // поставка без единой оплаты считаются одинаково.
+  function b2bPer(app) {
+    if (app.ovUi.preset === 'all') return { from: '', to: '' };
+    return periodRange(app, []);
+  }
+  // Даты в полях периода: у «всего времени» — с первой поставки или оплаты.
+  function b2bInputsRange(app) {
+    const per = b2bPer(app);
+    if (per.from) return per;
+    const O = root.NietteOverview, today = O.todayIso(app.now()), d = app.b2b.data;
+    let min = '';
+    (d.shipments || []).forEach(s => { if (s.ship_day && (!min || s.ship_day < min)) min = s.ship_day; });
+    (d.payments || []).forEach(p => { if (p.pay_day && (!min || p.pay_day < min)) min = p.pay_day; });
+    return { from: min && min < today ? min : today, to: today };
+  }
+
+  function b2bModel(app) {
+    return app.b2bModel || (app.b2bModel = root.NietteB2b.prepare(app.b2b.data, root.NietteOverview.todayIso(app.now())));
+  }
+
+  function b2bFreshHtml(app) {
+    const st = app.b2b.status || {}, bits = [], notes = [];
+    if (st.imported_at) bits.push('Перенос из таблицы ' + when(st.imported_at));
+    if (st.mirror_synced_at) bits.push('зеркало ' + when(st.mirror_synced_at));
+    bits.push('загружено ' + when(app.b2b.loadedAt));
+    const txt = bits.join(' · ');
+    const synced = st.mirror_synced_at ? new Date(st.mirror_synced_at) : null;
+    const imported = st.imported_at ? new Date(st.imported_at) : null;
+    if (!imported) notes.push('Перенос из таблицы ещё ни разу не работал — Supabase → SQL Editor: select b2b_import(true);');
+    if (synced && !isNaN(synced) && app.b2b.loadedAt - synced > MIRROR_STALE_H * 3600000) {
+      notes.push('Таблица не приезжала ' + Math.round((app.b2b.loadedAt - synced) / 3600000) +
+                 ' ч — новых поставок и оплат здесь нет. Проверьте Apps Script.');
+    }
+    if (st.mode !== 'live' && synced && imported && synced - imported > 15 * 60000) {
+      notes.push('Перенос отстаёт от зеркала: листы приехали, а таблицы не обновились. Проверка: sql/diag_b2b.sql.');
+    }
+    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
+      notes.map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('') +
+      (st.mode === 'live' ? '' : '<p class="note b2b-ro">Только чтение: поставки, оплаты и визиты пока вносятся в старом табе B2B ' +
+        'и в мобильном торгпреда — сюда они приходят с зеркалом таблицы, днём обычно через 15–30 минут.</p>');
+  }
+
+  function b2bOvInner(app, m, per, k) {
+    const B = root.NietteB2b, ui = app.b2bUi;
+    const urg = B.renderUrgent(B.urgent(m, ui), m.today);
+    return B.renderKpis(k, per, ui) +
+      (urg ? section('b2bUrgent', 'Горит сегодня', 'требует внимания прямо сейчас', urg) : '') +
+      section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
+              B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), ui.overdueOpen)) +
+      b2bForecastHtml(app, m);
+  }
+  function b2bForecastHtml(app, m) {
+    const B = root.NietteB2b;
+    return section('b2bForecast', 'Прогноз поступлений', 'по срокам оплаты из поставок',
+                   B.renderForecast(B.forecast(m, app.b2bUi), app.b2bUi.fc, m.today));
+  }
+  function b2bPartnersHtml(app, m) {
+    const B = root.NietteB2b;
+    return section('b2bPartners', 'Партнёры', 'контрагенты, деньги и последний контакт · клик по названию — карточка партнёра',
+                   B.renderPartnerToolbar(app.b2bUi.p) + '<div id="b2bPartnersBody">' + b2bPartnersBody(app, m) + '</div>');
+  }
+  function b2bPartnersBody(app, m) {
+    const B = root.NietteB2b;
+    return B.renderPartners(B.partnerRows(m, app.b2bUi.p, app.b2bUi.showClosed), app.b2bUi.p, m.today);
+  }
+
+  function b2bHtml(app) {
+    const B = root.NietteB2b, b = app.b2b;
+    const core = B2B_CORE.map(k => b.errors[k]).filter(Boolean);
+    if (core.length) return headerHtml(app) + page(b2bFreshHtml(app) + C.sectionError(core[0]));
+    const m = b2bModel(app);
+    if (app.b2bUi.card) {
+      const cm = B.cardModel(m, app.b2bUi.card);
+      const partial = Object.keys(b.errors).map(k => b.errors[k]);
+      if (cm) {
+        return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today));
+      }
+      app.b2bUi.card = null;                     // партнёра больше нет (обновили) — к списку
+    }
+    const per = b2bPer(app), k = B.kpis(m, app.b2bUi, per);
+    return headerHtml(app) + page(
+      b2bFreshHtml(app) +
+      root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)) +
+      B.renderFilters(app.b2bUi, k) +
+      '<div id="b2bOv">' + b2bOvInner(app, m, per, k) + '</div>' +
+      b2bPartnersHtml(app, m) +
+      section('b2bNotes', 'Как читать эти числа', '', B.renderNotes()));
+  }
+
+  function renderB2b(app) { show(app, b2bHtml(app)); }
+
+  // Период поменялся — пересчитать всё, что от него зависит, не трогая поля дат.
+  function rerenderB2b(app, keep) {
+    if (!keep || app.b2bUi.card) return renderB2b(app);
+    const m = b2bModel(app), per = b2bPer(app), k = root.NietteB2b.kpis(m, app.b2bUi, per);
+    const box = app.root.querySelector('#b2bOv');
+    if (box) box.innerHTML = b2bOvInner(app, m, per, k);
+    syncPresetButtons(app);
+  }
+  function swapSection(app, id, html) {
+    const el = app.root.querySelector('#' + id);
+    if (el) el.outerHTML = html;
+  }
+
+  async function loadB2bScreen(app) {
+    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю B2B…</div>'));
+    app.b2b = await loadB2b(app.client);
+    app.b2bModel = null;
+    if (app.route === 'b2b') renderB2b(app);
+  }
+
   // ── Экраны с периодом ─────────────────────────────────────────────────────
   // Кнопки периода, группировка, свои даты, график и его подсказка у
   // «Обзора», «Kaspi», «Ozon» и «Аналитики» общие. Что у открытого экрана
@@ -1233,6 +1385,11 @@
       render: () => renderOzon(app), rerender: keep => rerenderOzon(app, keep),
       chart: w => ozChartHtml(app, w),
       tip: i => root.NietteOzon.tooltipHtml(app.ozView.series[i]) };
+    if (app.route === 'b2b') return {
+      view: () => (app.b2b ? { rg: b2bInputsRange(app), series: [] } : null),
+      ready: () => !!(app.b2b && !app.b2bUi.card),
+      render: () => renderB2b(app), rerender: keep => rerenderB2b(app, keep),
+      chart: () => '', tip: () => '' };
     if (app.route === 'analytics') return {
       view: () => app.anView, ready: () => !!(app.an && app.anView),
       render: () => renderAnalytics(app), rerender: keep => rerenderAnalytics(app, keep),
@@ -1269,6 +1426,7 @@
     if (app.route === 'ozon') return app.oz ? renderOzon(app) : loadOzonScreen(app);
     if (app.route === 'analytics') return app.an ? renderAnalytics(app) : loadAnalyticsScreen(app);
     if (app.route === 'stock') return app.st ? renderStock(app) : loadStockScreen(app);
+    if (app.route === 'b2b') return app.b2b ? renderB2b(app) : loadB2bScreen(app);
     return app.ov ? renderOverview(app) : loadOverviewScreen(app);
   }
 
@@ -1319,6 +1477,7 @@
         else if (app.route === 'ozon') app.oz = null;
         else if (app.route === 'analytics') app.an = null;
         else if (app.route === 'stock') app.st = null;
+        else if (app.route === 'b2b') { app.b2b = null; app.b2bModel = null; }
         else app.ov = null;
         return afterLogin(app);
       }
@@ -1336,6 +1495,59 @@
         if (app.route !== 'stock' || !app.st) return;
         app.stUi.win = Number(el.getAttribute('data-win')) === 90 ? 90 : 30;
         return renderStock(app);
+      }
+      if (action.indexOf('b2b-') === 0) {
+        if (app.route !== 'b2b' || !app.b2b) return;
+        const ui = app.b2bUi, m = b2bModel(app);
+        if (action === 'b2b-card') {
+          ui.scroll = root.scrollY || 0;
+          ui.card = el.getAttribute('data-id');
+          renderB2b(app);
+          if (root.scrollTo) root.scrollTo(0, 0);
+          return;
+        }
+        if (action === 'b2b-back') {
+          ui.card = null;
+          renderB2b(app);
+          if (root.scrollTo) root.scrollTo(0, ui.scroll || 0);
+          return;
+        }
+        if (action === 'b2b-ovtype' || action === 'b2b-nows' || action === 'b2b-closed') {
+          if (action === 'b2b-ovtype') ui.type = el.getAttribute('data-type') || 'all';
+          else if (action === 'b2b-nows') ui.noWholesale = !ui.noWholesale;
+          else ui.showClosed = !ui.showClosed;
+          return renderB2b(app);
+        }
+        if (action === 'b2b-ptype' || action === 'b2b-presult' || action === 'b2b-sort') {
+          if (action === 'b2b-ptype') ui.p.type = el.getAttribute('data-type') || 'all';
+          else if (action === 'b2b-presult') ui.p.result = el.getAttribute('data-result') || 'all';
+          else {
+            const col = el.getAttribute('data-col');
+            if (ui.p.sort === col) ui.p.dir = ui.p.dir === 'asc' ? 'desc' : 'asc';
+            else { ui.p.sort = col; ui.p.dir = 'desc'; }
+          }
+          return swapSection(app, 'b2bPartners', b2bPartnersHtml(app, m));
+        }
+        if (action === 'b2b-fc-nav' || action === 'b2b-fc-day') {
+          if (action === 'b2b-fc-nav') {
+            const ym = ui.fc.month || m.today.slice(0, 7);
+            let y = Number(ym.slice(0, 4)), mo = Number(ym.slice(5, 7)) + Number(el.getAttribute('data-dir'));
+            if (mo > 12) { mo = 1; y++; } else if (mo < 1) { mo = 12; y--; }
+            ui.fc.month = y + '-' + String(mo).padStart(2, '0');
+            ui.fc.day = '';
+          } else {
+            const d = el.getAttribute('data-day');
+            ui.fc.day = ui.fc.day === d ? '' : d;
+          }
+          return swapSection(app, 'b2bForecast', b2bForecastHtml(app, m));
+        }
+        if (action === 'b2b-overdue') {
+          ui.overdueOpen = true;
+          const B = root.NietteB2b;
+          return swapSection(app, 'b2bOverdue', section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
+            B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), true)));
+        }
+        return;
       }
       if (action === 'route') {
         const r = el.getAttribute('data-route');
@@ -1404,6 +1616,14 @@
     // Формы «Склада»: поле → состояние, без перерисовки экрана.
     rootEl.addEventListener('input', ev => stFormInput(app, ev.target));
     rootEl.addEventListener('change', ev => stFormInput(app, ev.target));
+
+    // Поиск партнёров «B2B» — та же схема: перерисовывается только таблица.
+    rootEl.addEventListener('input', ev => {
+      if (!ev.target || ev.target.id !== 'b2bSearch' || app.route !== 'b2b' || !app.b2b) return;
+      app.b2bUi.p.query = ev.target.value;
+      const body = rootEl.querySelector('#b2bPartnersBody');
+      if (body) body.innerHTML = b2bPartnersBody(app, b2bModel(app));
+    });
 
     // Поиск и сортировка перерисовывают только таблицу: поле поиска остаётся
     // тем же элементом, и фокус с курсором не прыгают на каждой букве.
@@ -1519,6 +1739,9 @@
       riskByKey: {}, synced: null, loadedAt: null,
       route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
       an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 }, stForm: null,
+      b2b: null, b2bModel: null,
+      b2bUi: { type: 'all', noWholesale: false, showClosed: false, card: null, scroll: 0, overdueOpen: false,
+               fc: { month: '', day: '' }, p: { type: 'all', result: 'all', query: '', sort: null, dir: 'desc' } },
       now: opts.now || (() => new Date()),
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
@@ -1579,5 +1802,5 @@
   }
 
   root.NietteApp = { start, keyProblem, humanError, fetchAll, loadAll, loadOverview, loadKaspi, loadOzon, loadAnalytics,
-                     loadStock, SOURCES, PAGE };
+                     loadStock, loadB2b, SOURCES, B2B_SRC, PAGE };
 })(typeof window !== 'undefined' ? window : globalThis);
