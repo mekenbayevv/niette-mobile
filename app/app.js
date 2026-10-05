@@ -18,6 +18,14 @@
  * проверяется ЯВНО, rpc('is_app_user'): иначе он увидел бы пустой экран и
  * решил, что клиентов нет.
  *
+ * РАЗДЕЛЫ (05.10.2026). Что открыто вошедшему — rpc('app_me'): торгпред с
+ * разделом {b2b} видит одну вкладку «B2B», остальные ему не показываются, а
+ * адрес …/app/#kaspi открывает его вкладку. Права держит база (политики 12),
+ * не страница: вкладки прячутся, чтобы торгпред не открывал пустые экраны.
+ * Нет app_me в базе (страница выложена раньше SQL) — все вкладки, как раньше.
+ * Выход стирает из памяти всё загруженное: следующий вошедший на этом
+ * телефоне не должен найти в ней чужие экраны.
+ *
  * ДАННЫЕ. Читаются снимки витрин (snap_*, sql/15_snapshots.sql) — готовые
  * таблицы, а не пересчёт на каждый заход. Каждый снимок грузится отдельно
  * (Promise.allSettled): упал один — его раздел показывает причину, остальные
@@ -408,13 +416,28 @@
       '</form></section>');
   }
 
-  const ROUTES = [{ key: 'overview', label: 'Обзор' }, { key: 'kaspi', label: 'Kaspi' }, { key: 'ozon', label: 'Ozon' },
-                  { key: 'analytics', label: 'Аналитика' }, { key: 'clients', label: 'Клиенты' },
-                  { key: 'stock', label: 'Склад' }, { key: 'b2b', label: 'B2B' }];
+  // sec — раздел app_users.sections, которому принадлежит экран (sql/12_auth.sql):
+  // 'all' — всё, что не отнесено к разделу; его видят только NULL и {all}.
+  const ROUTES = [{ key: 'overview', label: 'Обзор', sec: 'all' }, { key: 'kaspi', label: 'Kaspi', sec: 'all' },
+                  { key: 'ozon', label: 'Ozon', sec: 'all' }, { key: 'analytics', label: 'Аналитика', sec: 'all' },
+                  { key: 'clients', label: 'Клиенты', sec: 'all' }, { key: 'stock', label: 'Склад', sec: 'all' },
+                  { key: 'b2b', label: 'B2B', sec: 'b2b' }];
+  const FULL_ME = { allowed: true, full: true, sections: ['all'], can_write: false };
+
+  // Пока допуск не проверен (app.me нет), не открыто ничего: все вкладки —
+  // только явным решением afterLogin (FULL_ME, когда app_me в базе нет).
+  function meSees(app, sec) {   // sections — всегда список: так его кладёт afterLogin
+    const me = app.me;
+    return !!me && (me.full === true || me.sections.indexOf(sec) >= 0);
+  }
+  function routesFor(app) { return ROUTES.filter(r => meSees(app, r.sec)); }
+  function setHash(r) {
+    try { if (root.history && root.history.replaceState) root.history.replaceState(null, '', '#' + r); } catch (e) { /* неважно */ }
+  }
 
   function headerHtml(app) {
     const email = app.session && app.session.user ? app.session.user.email : '';
-    const tabs = ROUTES.map(r => '<button type="button" class="tab' + (app.route === r.key ? ' on' : '') +
+    const tabs = routesFor(app).map(r => '<button type="button" class="tab' + (app.route === r.key ? ' on' : '') +
       '" data-action="route" data-route="' + r.key + '"' + (app.route === r.key ? ' aria-current="page"' : '') + '>' +
       C.esc(r.label) + '</button>').join('');
     return '<header class="top"><div class="top-inner">' +
@@ -532,20 +555,45 @@
   // ── Показ ─────────────────────────────────────────────────────────────────
   function show(app, html) { app.root.innerHTML = html; }
 
+  // Всё загруженное — из памяти вон: на том же телефоне следующим может войти
+  // торгпред, и экраны владельца (Kaspi, склад, клиенты) не должны его ждать.
+  // gen — поколение: ответ, который грузился ДО сброса (вышли, вошёл другой),
+  // приходит в старое поколение и выбрасывается, а не рисуется поверх входа.
+  function resetScreens(app) {
+    app.gen = (app.gen || 0) + 1;
+    app.me = null;
+    app.data = null; app.errors = {}; app.riskByKey = {}; app.synced = null; app.snapAt = null; app.snapNever = false;
+    app.ov = null; app.ovView = null; app.kp = null; app.kpView = null; app.oz = null; app.ozView = null;
+    app.an = null; app.anView = null; app.st = null; app.stForm = null; app.b2b = null; app.b2bModel = null;
+    if (app.b2bUi) app.b2bUi.card = null;
+  }
+
   function showLogin(app, errorText, email) {
     app.session = null;
-    app.data = null;
+    resetScreens(app);
     show(app, loginHtml(errorText, email));
     const f = app.root.querySelector(email ? '#loginPassword' : '#loginEmail');
     if (f && f.focus) f.focus();
   }
 
   function showDenied(app) {
+    resetScreens(app);
     const email = app.session && app.session.user ? app.session.user.email : '';
     show(app, messageHtml('Нет доступа',
       '<p>Вы вошли как <b>' + C.esc(email) + '</b>, но этого email нет в списке допущенных.</p>' +
       '<p class="muted">Добавить можно в Supabase → SQL Editor:</p>' +
       '<pre><code>insert into app_users (email, note) values (\'' + C.esc(email) + '\', \'кто это\');</code></pre>',
+      '<button type="button" data-action="logout">Выйти</button>'));
+  }
+
+  // В списке, но ни одного открытого раздела: {} — доступ приостановлен.
+  function showNoSections(app) {
+    resetScreens(app);
+    const email = app.session && app.session.user ? app.session.user.email : '';
+    show(app, messageHtml('Разделы закрыты',
+      '<p>Вы вошли как <b>' + C.esc(email) + '</b>: вы в списке допущенных, но ни один раздел вам не открыт.</p>' +
+      '<p class="muted">Открывает владелец — Supabase → SQL Editor:</p>' +
+      '<pre><code>update app_users set sections = \'{b2b}\' where email = \'' + C.esc(email) + '\';</code></pre>',
       '<button type="button" data-action="logout">Выйти</button>'));
   }
 
@@ -562,8 +610,10 @@
   }
 
   async function loadAndRender(app) {
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю клиентов…</div>'));
     const res = await loadAll(app.client);
+    if (g !== app.gen) return;                 // пока грузилось, вышли или вошёл другой
     app.data = res.data;
     app.errors = res.errors;
     app.synced = res.synced;
@@ -700,8 +750,11 @@
   }
 
   async function loadOverviewScreen(app) {
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю выручку…</div>'));
-    app.ov = await loadOverview(app.client);
+    const ov = await loadOverview(app.client);
+    if (g !== app.gen) return;
+    app.ov = ov;
     if (app.route === 'overview') renderOverview(app);
   }
 
@@ -808,8 +861,11 @@
 
   async function loadKaspiScreen(app) {
     app.kpView = null;
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю Kaspi…</div>'));
-    app.kp = await loadKaspi(app.client);
+    const kp = await loadKaspi(app.client);
+    if (g !== app.gen) return;
+    app.kp = kp;
     if (app.route === 'kaspi') renderKaspi(app);
   }
 
@@ -915,8 +971,11 @@
 
   async function loadOzonScreen(app) {
     app.ozView = null;
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю Ozon…</div>'));
-    app.oz = await loadOzon(app.client);
+    const oz = await loadOzon(app.client);
+    if (g !== app.gen) return;
+    app.oz = oz;
     if (app.route === 'ozon') renderOzon(app);
   }
 
@@ -1031,8 +1090,11 @@
 
   async function loadAnalyticsScreen(app) {
     app.anView = null;
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю аналитику…</div>'));
-    app.an = await loadAnalytics(app.client);
+    const an = await loadAnalytics(app.client);
+    if (g !== app.gen) return;
+    app.an = an;
     if (app.route === 'analytics') renderAnalytics(app);
   }
 
@@ -1114,7 +1176,9 @@
   }
 
   async function stReload(app) {
+    const g = app.gen;
     const st = await loadStock(app.client);
+    if (g !== app.gen) return;
     app.st = st;
     if (app.route === 'stock') renderStock(app);
   }
@@ -1133,11 +1197,13 @@
     if (!(n > 0)) return stMsg(app, 'arr', 'bad', 'Укажите количество.');
     f.busy = 'arr'; f.msg.arr = null;
     renderStock(app);
+    const g = app.gen;
     let res;
     try {
       res = await app.client.rpc('form_add_arrival', { entry: {
         sku: row.sku || '', name: row.name || '', qty: n, day: a.day || '', supplier: a.supplier || '', comment: a.comment || '' } });
     } catch (e) { res = { error: e }; }
+    if (g !== app.gen) return;                 // пока писалось, вышли: экран не рисуем
     f.busy = null;
     if (res.error) return stMsg(app, 'arr', 'bad', formError(res.error));
     const d = res.data || {};
@@ -1162,12 +1228,14 @@
     }
     f.busy = 'wo'; f.msg.wo = null;
     renderStock(app);
+    const g = app.gen;
     let res;
     try {
       res = await app.client.rpc('form_add_writeoffs', { entry: {
         items: sel.map(x => ({ sku: x.row.sku || '', name: x.row.name || '', qty: x.qty })),
         day: w.day || '', reason: w.reason, taken_by: String(w.who).trim(), comment: w.comment || '' } });
     } catch (e) { res = { error: e }; }
+    if (g !== app.gen) return;
     f.busy = null;
     if (res.error) return stMsg(app, 'wo', 'bad', formError(res.error));
     const d = res.data || {}, late = d.before_count || [];
@@ -1183,9 +1251,11 @@
     const f = app.stForm;
     if (f.busy) return;
     f.busy = 'del'; f.msg.del = null;
+    const g = app.gen;
     let res;
     try { res = await app.client.rpc('form_delete_entry', { kind, entry_id: id }); }
     catch (e) { res = { error: e }; }
+    if (g !== app.gen) return;
     f.busy = null; f.confirmDel = null;
     if (res.error) { f.msg.del = { kind, tone: 'bad', text: formError(res.error) }; return renderStock(app); }
     f.msg.del = { kind, tone: 'ok', text: 'Удалено: ' + id + '. Остаток вернётся через минуту–две.' };
@@ -1245,8 +1315,11 @@
   }
 
   async function loadStockScreen(app) {
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю склад…</div>'));
-    app.st = await loadStock(app.client);
+    const st = await loadStock(app.client);
+    if (g !== app.gen) return;
+    app.st = st;
     if (app.route === 'stock') renderStock(app);
   }
 
@@ -1276,11 +1349,15 @@
 
   function b2bFreshHtml(app) {
     const st = app.b2b.status || {}, bits = [], notes = [];
+    // Журнал загрузок (sync_log) торгпреду не виден — не его раздел, и
+    // mirror_synced_at у него пуст. Тогда время зеркала — то, что взял
+    // последний перенос (src_synced_at): застыли листы — застынет и оно.
+    const mirrorAt = st.mirror_synced_at || st.src_synced_at || null;
     if (st.imported_at) bits.push('Перенос из таблицы ' + when(st.imported_at));
-    if (st.mirror_synced_at) bits.push('зеркало ' + when(st.mirror_synced_at));
+    if (mirrorAt) bits.push('зеркало ' + when(mirrorAt));
     bits.push('загружено ' + when(app.b2b.loadedAt));
     const txt = bits.join(' · ');
-    const synced = st.mirror_synced_at ? new Date(st.mirror_synced_at) : null;
+    const synced = mirrorAt ? new Date(mirrorAt) : null;
     const imported = st.imported_at ? new Date(st.imported_at) : null;
     if (!imported) notes.push('Перенос из таблицы ещё ни разу не работал — Supabase → SQL Editor: select b2b_import(true);');
     if (synced && !isNaN(synced) && app.b2b.loadedAt - synced > MIRROR_STALE_H * 3600000) {
@@ -1359,8 +1436,11 @@
   }
 
   async function loadB2bScreen(app) {
+    const g = app.gen;
     show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю B2B…</div>'));
-    app.b2b = await loadB2b(app.client);
+    const b2b = await loadB2b(app.client);
+    if (g !== app.gen) return;
+    app.b2b = b2b;
     app.b2bModel = null;
     if (app.route === 'b2b') renderB2b(app);
   }
@@ -1420,7 +1500,12 @@
     return ROUTES.some(r => r.key === h) ? h : 'overview';
   }
 
+  // Единственный сторож экранов на странице: закрытый вошедшему экран (из
+  // адреса, вкладки, «назад» в браузере) — первый открытый, и адрес туда же.
   function openRoute(app) {
+    const open = routesFor(app);
+    if (!open.length) return showNoSections(app);
+    if (!open.some(r => r.key === app.route)) { app.route = open[0].key; setHash(app.route); }
     if (app.route === 'clients') return app.data ? renderScreen(app) : loadAndRender(app);
     if (app.route === 'kaspi') return app.kp ? renderKaspi(app) : loadKaspiScreen(app);
     if (app.route === 'ozon') return app.oz ? renderOzon(app) : loadOzonScreen(app);
@@ -1430,13 +1515,26 @@
     return app.ov ? renderOverview(app) : loadOverviewScreen(app);
   }
 
+  // Допуск и разделы — двумя вызовами сразу, ожидание как у одного. Решает
+  // is_app_user, как и до разделов; app_me только говорит, какие вкладки
+  // показать. Её нет в базе (PGRST202: страница выложена раньше sql/12) или
+  // она ответила пусто — все вкладки: права всё равно держит база.
   async function afterLogin(app) {
+    const g = app.gen;
     show(app, page('<div class="card loading" role="status">Проверяю доступ…</div>'));
-    let res;
-    try { res = await app.client.rpc('is_app_user'); }
-    catch (e) { res = { error: e }; }
+    const call = fn => Promise.resolve().then(() => app.client.rpc(fn)).then(r => r || {}, e => ({ error: e }));
+    const [res, me] = await Promise.all([call('is_app_user'), call('app_me')]);
+    if (g !== app.gen) return;                 // пока проверяли, вышли или вошёл другой
     if (res.error) return showFatal(app, humanError(res.error, 'Проверка доступа'));
     if (res.data !== true) return showDenied(app);
+    const noFn = e => String((e && e.code) || '') === 'PGRST202' ||
+                      /could not find the function/i.test(String((e && e.message) || ''));
+    if (me.error && !noFn(me.error)) return showFatal(app, humanError(me.error, 'Проверка разделов'));
+    const d = !me.error && me.data && typeof me.data === 'object' ? me.data : null;
+    if (d && d.allowed === false) return showDenied(app);
+    app.me = d && d.allowed === true
+      ? { allowed: true, full: d.full === true, sections: Array.isArray(d.sections) ? d.sections : [], can_write: d.can_write === true }
+      : FULL_ME;
     return openRoute(app);
   }
 
@@ -1553,7 +1651,7 @@
         const r = el.getAttribute('data-route');
         if (r === app.route) return;
         app.route = r;
-        try { if (root.history && root.history.replaceState) root.history.replaceState(null, '', '#' + r); } catch (e) { /* неважно */ }
+        setHash(r);
         return openRoute(app);
       }
       if (action && action.indexOf('ov-') === 0) {
@@ -1735,9 +1833,9 @@
     const prefs = loadOvPrefs();
     const preset = ['today', '7d', '30d', 'month', 'all'].indexOf(prefs.preset) >= 0 ? prefs.preset : 'month';
     const app = {
-      opts, root: rootEl, client: null, session: null, data: null, errors: {},
+      opts, root: rootEl, client: null, session: null, me: null, gen: 0, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
-      route: routeFromHash(), ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
+      route: 'overview', ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
       an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 }, stForm: null,
       b2b: null, b2bModel: null,
       b2bUi: { type: 'all', noWholesale: false, showClosed: false, card: null, scroll: 0, overdueOpen: false,
@@ -1748,6 +1846,7 @@
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
             retMode: 'any', retEntry: 'all' }
     };
+    app.route = routeFromHash();   // разделы ещё не известны; закрытый экран поправит openRoute
 
     if (!makeClient) {
       show(app, messageHtml('Не загрузилась библиотека Supabase',
@@ -1776,7 +1875,7 @@
       // Назад/вперёд в браузере переключают экран так же, как вкладки.
       root.addEventListener('hashchange', () => {
         const r = routeFromHash();
-        if (r !== app.route && app.session) { app.route = r; openRoute(app); }
+        if (r !== app.route && app.session && app.me) { app.route = r; openRoute(app); }
       });
       let t = null;
       root.addEventListener('resize', () => {
@@ -1786,8 +1885,13 @@
     }
     if (app.client.auth.onAuthStateChange) {
       app.client.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_OUT' && app.session) showLogin(app);
-        else if (session && app.session) app.session = session;
+        if (event === 'SIGNED_OUT' && app.session) return showLogin(app);
+        if (!session || !app.session) return;
+        // В другой вкладке вошли ДРУГИМ человеком — сессия общая на весь сайт.
+        // Его права другие: память — вон, допуск и разделы — заново.
+        const was = app.session.user && app.session.user.email, now = session.user && session.user.email;
+        app.session = session;
+        if (was !== now) { resetScreens(app); afterLogin(app); }
       });
     }
 
