@@ -14,6 +14,7 @@
  *   v_client_entry      вход через мини-пак против обычного
  *   v_client_retention  удержание когорт по месяцам (sql/27)
  *   v_client_retention_entry  то же по первой покупке: мини-пак / обычная пачка
+ *   v_client_month_mix  кто покупал в месяце: новые, быстрый повтор, вернулись из … (sql/29)
  *
  * Всё строковое, что пришло из базы (имена, города), экранируется через esc():
  * имя клиента — это ввод человека, а не наш текст.
@@ -50,6 +51,11 @@
   function monthName(v) {
     const m = /^(\d{4})-(\d{2})/.exec(v || '');
     return m ? MONTHS[Number(m[2]) - 1] + ' ' + m[1] : esc(v);
+  }
+  // 'YYYY-MM' из '2026-10', '2026-10-01' и т. п.; всё прочее — null.
+  function monthKey(v) {
+    const m = /^(\d{4})-(\d{2})/.exec(v === null || v === undefined ? '' : String(v));
+    return m && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? m[1] + '-' + m[2] : null;
   }
 
   function empty(text) { return '<p class="empty">' + esc(text) + '</p>'; }
@@ -187,10 +193,22 @@
   }
 
   // ── Новые и повторные по месяцам ─────────────────────────────────────────
-  function renderMonthly(rows) {
+  // opts.months — месяцы, у которых есть разбор (снимок sql/29): они
+  // кликаются; opts.selected — какой разобран сейчас. Без opts таблица та же,
+  // что до разбора (06.10.2026).
+  function renderMonthly(rows, opts) {
     if (!rows.length) return empty('Нет данных.');
+    const o = opts || {};
+    const can = new Set(o.months || []);
+    const label = r => {
+      const key = monthKey(r.month);
+      if (!key || !can.has(key)) return monthName(r.month);
+      return '<button type="button" class="month-link" data-action="month-mix" data-month="' + key + '" aria-pressed="' +
+        (key === o.selected) + '" title="Кто покупал в этом месяце">' + monthName(r.month) + '</button>';
+    };
     const body = rows.map(r =>
-      '<tr><th scope="row">' + monthName(r.month) + '</th>' +
+      '<tr' + (monthKey(r.month) && monthKey(r.month) === o.selected && can.has(o.selected) ? ' class="on"' : '') + '>' +
+        '<th scope="row">' + label(r) + '</th>' +
         '<td class="num">' + int(r.buyers) + '</td>' +
         '<td class="num">' + int(r.new_buyers) + '</td>' +
         '<td class="num">' + int(num(r.buyers) - num(r.new_buyers)) + '</td>' +
@@ -200,6 +218,99 @@
       '<thead><tr><th scope="col">Месяц</th><th scope="col">Покупателей</th><th scope="col">Новых</th>' +
       '<th scope="col">Вернувшихся</th><th scope="col">Выручка</th><th scope="col">Доля выручки от вернувшихся</th>' +
       '</tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  // ── Кто покупал в месяце (sql/29, v_client_month_mix) ────────────────────
+  // Клик по месяцу таблицы выше — разбор его покупателей (просьба владельца
+  // 06.10.2026: «нажал на октябрь — увидел: новых 15, быстрый повтор 20, с
+  // сентября 30, с августа 50»). Группы не пересекаются, их сумма — все
+  // покупатели месяца:
+  //   new    новый клиент, в этом месяце купил один раз (или несколько раз
+  //          в один день — это одна покупка)
+  //   quick  новый клиент, купил ещё раз в этом же месяце позже — быстрый повтор
+  //   back   пришёл раньше, вернулся; строка на каждый прошлый месяц, ноль — тоже
+  // «Новых» в таблице выше = new + quick: старый дашборд делил так же («только
+  // новые» + «быстрый повтор»), отсюда его июнь 240 + 50 против когорты 290.
+  const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля',
+                      'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  const MIX_GROUPS = ['new', 'quick', 'back'];
+
+  // «из сентября»; год — только если он не тот, что у разбираемого месяца.
+  function fromMonth(cohort, ref) {
+    const key = monthKey(cohort);
+    if (!key) return '—';
+    return 'из ' + MONTHS_GEN[Number(key.slice(5, 7)) - 1] + (ref && ref.slice(0, 4) !== key.slice(0, 4) ? ' ' + key.slice(0, 4) : '');
+  }
+
+  // Строки снимка (месяц × группа × когорта) → месяцы по порядку, у каждого
+  // new, quick, back (свежие когорты сверху: из сентября, из августа…) и итоги.
+  function monthMix(rows) {
+    const by = new Map();
+    (rows || []).forEach(r => {
+      const month = monthKey(r.month), cohort = monthKey(r.cohort);
+      if (!month || !cohort || MIX_GROUPS.indexOf(r.grp) < 0) return;
+      if (!by.has(month)) by.set(month, { month, complete: true, new: null, quick: null, back: [] });
+      const m = by.get(month);
+      if (r.complete === false) m.complete = false;
+      const g = { cohort, buyers: num(r.buyers), mini: num(r.buyers_mini), packs: num(r.packs),
+                  revenue: num(r.revenue), cohortClients: num(r.cohort_clients) };
+      if (r.grp === 'back') m.back.push(g); else m[r.grp] = g;
+    });
+    const zero = month => ({ cohort: month, buyers: 0, mini: 0, packs: 0, revenue: 0, cohortClients: 0 });
+    const sum = list => ['buyers', 'mini', 'packs', 'revenue'].reduce((o, col) => {
+      o[col] = list.reduce((s, g) => s + g[col], 0); return o;
+    }, {});
+    return Array.from(by.values())
+      .sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0))
+      .map(m => {
+        m.new = m.new || zero(m.month);
+        m.quick = m.quick || zero(m.month);
+        m.back.sort((a, b) => (a.cohort < b.cohort ? 1 : a.cohort > b.cohort ? -1 : 0));
+        m.backTotal = sum(m.back);
+        m.newTotal = sum([m.new, m.quick]);
+        m.total = sum([m.new, m.quick].concat(m.back));
+        return m;
+      });
+  }
+
+  // month — 'YYYY-MM'; нет такого — последний месяц. opts.monthly — строка
+  // таблицы выше за этот месяц: разошлась с разбором — так и сказано.
+  function renderMonthMix(rows, month, opts) {
+    const list = monthMix(rows);
+    if (!list.length) return empty('Нет данных.');
+    const m = list.find(x => x.month === month) || list[list.length - 1];
+    const o = opts || {};
+    const cell = v => '<td class="num' + (v ? '' : ' muted') + '">' + int(v) + '</td>';
+    const line = (label, sub, g, cls) =>
+      '<tr' + (cls ? ' class="' + cls + '"' : '') + '><th scope="row">' + label +
+        (sub ? '<div class="where">' + sub + '</div>' : '') + '</th>' +
+        cell(g.buyers) + cell(g.mini) + cell(g.packs) +
+        '<td class="num' + (g.revenue ? '' : ' muted') + '">' + money(g.revenue) + '</td></tr>';
+    const newAll = m.newTotal.buyers;
+    const back = m.back.map(g => line(fromMonth(g.cohort, m.month),
+      g.cohortClients ? pctInt(share(g.buyers, g.cohortClients)) + ' от ' + int(g.cohortClients) + ' новых' : '', g, 'mix-from')).join('');
+    const body =
+      line('Новые', 'купили один раз', m.new) +
+      line('Быстрый повтор', 'новые, купили ещё раз в этом же месяце' +
+           (newAll ? ' · ' + pctInt(share(m.quick.buyers, newAll)) + ' новых' : ''), m.quick) +
+      (m.back.length ? line('Вернулись', 'пришли в прошлые месяцы', m.backTotal, 'mix-sub') + back : '') +
+      line('Всего покупателей', '', m.total, 'mix-total');
+    const mon = o.monthly;
+    const off = mon && (num(mon.buyers) !== m.total.buyers || num(mon.new_buyers) !== newAll);
+    return '<h3 class="mix-title">' + esc(monthName(m.month).replace(/^./, c => c.toUpperCase())) +
+        (m.complete ? '' : ' <span class="muted">· месяц идёт</span>') + ' — кто покупал</h3>' +
+      '<div class="table-scroll"><table class="grid sticky-first mix-grid">' +
+      '<thead><tr><th scope="col">Кто</th><th scope="col">Клиентов</th><th scope="col">С мини-пака</th>' +
+      '<th scope="col">Пачек</th><th scope="col">Выручка</th></tr></thead><tbody>' + body + '</tbody></table></div>' +
+      (off ? '<p class="note warn" role="status">Не сходится с таблицей выше: там ' + int(mon.buyers) + ' покупателей и ' +
+             int(mon.new_buyers) + ' новых, здесь ' + int(m.total.buyers) + ' и ' + int(newAll) +
+             '. Проверка — в sql/29_client_months.sql, раздел «Проверка руками».</p>' : '') +
+      '<p class="note">Новые и быстрый повтор вместе — это «Новых» в таблице выше. Быстрый повтор — новый клиент ' +
+      'купил ещё раз в этом же месяце, позже первого дня (два заказа в один день — одна покупка). «Вернулись из …» — ' +
+      'пришли в том месяце и купили в этом; доля — от новых того месяца. «С мини-пака» — сколько из них начинали ' +
+      'с мини-пака: в первый день купили только мини-паки. Пачек — больших упаковок, купленных в этом месяце. ' +
+      'Месяц — календарный, по дню выдачи' + (m.complete ? '.' : '; он ещё идёт — числа вырастут, а «новые» могут ' +
+      'стать быстрым повтором.') + '</p>';
   }
 
   // ── Удержание когорт по месяцам (sql/27) ─────────────────────────────────
@@ -394,6 +505,7 @@
     esc, int, money, pct, times, days, date, monthName, isNum,
     computeKpis, renderKpis, renderCohorts, renderRepeat, riskRows, renderRisk,
     renderMonthly, renderEntry, SORTS, filterBase, renderBaseTable, renderNotes,
-    sectionError, empty, RET_MODES, RET_ENTRIES, RET_HEAT_MAX, retentionGrid, renderRetention
+    sectionError, empty, RET_MODES, RET_ENTRIES, RET_HEAT_MAX, retentionGrid, renderRetention,
+    monthKey, fromMonth, monthMix, renderMonthMix
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -58,6 +58,8 @@
     { key: 'retentionEntry', table: 'snap_client_retention_entry', order: ['entry', 'cohort', 'k'],
       what: 'Удержание по первой покупке' },
     { key: 'monthly', table: 'snap_new_vs_returning', order: 'month',  what: 'Новые и вернувшиеся' },
+    // Кто покупал в месяце (sql/29): месяц × группа × когорта, десятки строк.
+    { key: 'monthMix', table: 'snap_client_month_mix', order: ['month', 'grp', 'cohort'], what: 'Кто покупал в месяце' },
     { key: 'entry',   table: 'snap_client_entry',     order: 'entry',  what: 'Вход через мини-пак' }
   ];
   // «Обзор» (sql/16_overview.sql): вся история «день × канал» одной таблицей,
@@ -184,6 +186,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_client_retention|v_client_retention/.test(msg))
       return pre + 'снимка удержания в базе нет — выполните sql/27_client_retention.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_client_month_mix|v_client_month_mix/.test(msg))
+      return pre + 'снимка разбора месяца в базе нет — выполните sql/29_client_months.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /b2b_/.test(msg))
       return pre + 'данных B2B в базе нет — выполните sql/00_tables.sql, 01_functions.sql и 28_b2b.sql, затем sql/12_auth.sql.';
@@ -497,6 +502,23 @@
         entryBar + render()));
   }
 
+  // Новые и вернувшиеся по месяцам + разбор месяца по клику (sql/29): кто в
+  // нём покупал — новые, быстрый повтор, вернулись из … Всё из загруженных
+  // строк, в базу клик не ходит. Нет снимка разбора (29 не прогнан) — таблица
+  // как раньше, месяцы не кликаются, под ней сказано, какой файл прогнать.
+  function monthlySection(app) {
+    const d = app.data, e = app.errors;
+    const mixOk = !e.monthMix && (d.monthMix || []).length > 0;
+    const months = mixOk ? C.monthMix(d.monthMix).map(m => m.month) : [];
+    const sel = months.indexOf(app.ui.mixMonth) >= 0 ? app.ui.mixMonth : months[months.length - 1];
+    const row = (d.monthly || []).find(r => C.monthKey(r.month) === sel) || null;
+    const panel = mixOk
+      ? '<div class="mix" id="mixBody">' + C.renderMonthMix(d.monthMix, sel, { monthly: row }) + '</div>'
+      : (e.monthMix ? '<p class="note">Разбор месяца недоступен. ' + C.esc(e.monthMix) + '</p>' : '');
+    return section('monthly', 'Новые и вернувшиеся по месяцам', mixOk ? 'Нажмите на месяц — кто в нём покупал' : '',
+      or(e, 'monthly', () => C.renderMonthly(d.monthly, { months, selected: sel })) + panel);
+  }
+
   function riskBodyHtml(app) {
     return C.renderRisk(app.data.risk, app.ui.riskLevel, app.ui.riskAll ? Infinity : RISK_STEP);
   }
@@ -545,8 +567,7 @@
       '</div>' +
       section('risk', 'Риск оттока', 'Давно не заказывал по меркам этого клиента · самые ценные сверху',
               or(e, 'risk', () => riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>')) +
-      section('monthly', 'Новые и вернувшиеся по месяцам', '',
-              or(e, 'monthly', () => C.renderMonthly(d.monthly))) +
+      monthlySection(app) +
       section('base', 'База клиентов', 'Клиент = имя + фамилия + город · только выданные заказы Kaspi',
               or(e, 'base', () => baseToolbar(app) + '<div id="baseBody">' + baseBodyHtml(app) + '</div>')) +
       section('notes', 'Как читать эти числа', '', C.renderNotes()));
@@ -1698,6 +1719,20 @@
         if (box) box.outerHTML = retentionSection(app);
         return;
       }
+      if (action === 'month-mix') {
+        // Разбор другого месяца — из памяти; фокус остаётся на нажатом месяце.
+        if (app.route !== 'clients' || !app.data) return;
+        const key = C.monthKey(el.getAttribute('data-month'));
+        if (!key) return;
+        app.ui.mixMonth = key;
+        const box = rootEl.querySelector('#monthly');
+        if (box) box.outerHTML = monthlySection(app);
+        const again = rootEl.querySelector('[data-action="month-mix"][data-month="' + key + '"]');
+        if (again && again.focus) again.focus();
+        const panel = rootEl.querySelector('#mixBody');
+        if (panel && typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       if (action === 'risk-all') {
         app.ui.riskAll = true;
         const body = rootEl.querySelector('#riskBody');
@@ -1844,7 +1879,7 @@
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
-            retMode: 'any', retEntry: 'all' }
+            retMode: 'any', retEntry: 'all', mixMonth: null }
     };
     app.route = routeFromHash();   // разделы ещё не известны; закрытый экран поправит openRoute
 
