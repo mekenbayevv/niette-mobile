@@ -17,6 +17,8 @@
  *   v_client_month_mix  кто покупал в месяце: новые, быстрый повтор, вернулись из … (sql/29)
  *   v_client_ltv_curve  LTV типичного нового клиента по месяцам жизни: все / пачка или
  *                       мини-пак / размер первой покупки (sql/29)
+ *   v_client_summary    главное о клиентах: за первые 30 … 180 дней, как часто покупают,
+ *                       сколько остаются, окупаемость, мини-пак → пачка (sql/30)
  *
  * Всё строковое, что пришло из базы (имена, города), экранируется через esc():
  * имя клиента — это ввод человека, а не наш текст.
@@ -593,12 +595,277 @@
     '</ul>';
   }
 
+  // ── Главное о клиентах (sql/30, v_client_summary) ────────────────────────
+  // Просьба владельца 07.10.2026: сколько новых и повторных в месяце, сколько
+  // пачек и выручки приносит новый клиент, как часто он покупает, сколько
+  // остаётся, через сколько пачек и месяцев окупается. Повод — КП для
+  // педиатров, поэтому отдельно путь «мини-пак → пачка»: ближайший аналог
+  // подарка от врача. Окна — ДНИ от первой покупки клиента (30 … 180), а не
+  // календарные месяцы, как в LTV ниже: «за первые 90 дней» понятно и врачу,
+  // а +0 календарного месяца — в среднем полмесяца (шапка sql/30).
+  const SUM_GROUPS = { all: 'Все новые', regular: 'Начали с пачки', mini: 'Начали с мини-пака' };
+  const SUM_H = [30, 60, 90, 120, 150, 180];
+  const SUM_MIN_N = 30;   // меньше — число шумное: серым, но показываем
+  const SUM_BUCKETS = ['1–7 дней', '8–14 дней', '15–30 дней', '31–60 дней', '61+ дней'];
+
+  // Слово после числа: 1 клиент, 2 клиента, 5 клиентов; 11–14 — как 5.
+  function ru(n, one, few, many) {
+    const a = Math.abs(Math.round(num(n))) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b === 1) return one;
+    return b > 1 && b < 5 ? few : many;
+  }
+  const byClients = n => 'по ' + int(n) + ' ' + ru(n, 'клиенту', 'клиентам', 'клиентам');
+
+  // Строки снимка (группа × когорта × показатель × окно) → поиск по ключу.
+  // cohort — 'YYYY-MM' или пусто (все когорты).
+  function summaryIndex(rows) {
+    const m = new Map();
+    const key = (grp, cohort, metric, h) => grp + '|' + (cohort || '') + '|' + metric + '|' + (isNum(h) ? Number(h) : '');
+    (rows || []).forEach(r => {
+      if (!SUM_GROUPS[r.grp] || !r.metric) return;
+      m.set(key(r.grp, monthKey(r.cohort), r.metric, r.h), { value: isNum(r.value) ? Number(r.value) : null, n: num(r.n) });
+    });
+    const cohorts = metric => Array.from(new Set((rows || [])
+      .filter(r => r.grp === 'all' && r.metric === metric && monthKey(r.cohort) && isNum(r.value))
+      .map(r => monthKey(r.cohort)))).sort();
+    return { size: m.size, get: (grp, metric, h, cohort) => m.get(key(grp, cohort, metric, h)) || null, cohorts };
+  }
+
+  // Окупаемость: день, к которому накопленная прибыль нового клиента группы
+  // догоняет CAC, — между точками цепочки по прямой; пачки к этому дню — так
+  // же. Не догнала за последнее известное окно — сколько набрано.
+  function paybackOf(S, grp, cac) {
+    if (!isNum(cac) || Number(cac) <= 0) return null;
+    const c = Number(cac);
+    let prev = null;
+    for (const h of SUM_H) {
+      const p = S.get(grp, 'profit', h), u = S.get(grp, 'packs', h);
+      if (!p) break;
+      if (p.value === null) return { unknown: true, h };
+      const packs = u && u.value !== null ? u.value : null;
+      if (p.value >= c) {
+        if (!prev) return { first: true, day: h, packs, n: p.n };
+        const t = (c - prev.profit) / (p.value - prev.profit);
+        return { day: Math.round(prev.h + t * (h - prev.h)), n: p.n,
+                 packs: packs !== null && prev.packs !== null ? prev.packs + t * (packs - prev.packs) : null };
+      }
+      prev = { h, profit: p.value, packs, n: p.n };
+    }
+    return prev ? { day: null, lastH: prev.h, share: prev.profit / c, packs: prev.packs, n: prev.n } : null;
+  }
+
+  function paybackCellHtml(r) {
+    if (!r) return '<td class="num muted">—</td>';
+    if (r.unknown) return '<td class="num muted" title="Прибыль неизвестна: есть заказ без себестоимости">?</td>';
+    const weak = r.n < SUM_MIN_N ? ' muted' : '';
+    const n = ' · шаг ' + byClients(r.n) + (r.n < SUM_MIN_N ? ' — мало, число шумное' : '');
+    if (r.day === null) {
+      return '<td class="num bad' + weak + '" title="' + esc('За ' + r.lastH + ' дней прибыль набрала ' + pctInt(r.share) + ' CAC' + n) + '">' +
+        'не за ' + r.lastH + NBSP + 'дн.<div class="where">набрано ' + pctInt(r.share) + '</div></td>';
+    }
+    const when = r.first ? 'в первые 30' + NBSP + 'дн.' : '≈' + NBSP + int(r.day) + NBSP + 'дн.';
+    const mon = r.first ? '' : ' (' + nf1.format(r.day / 30) + NBSP + 'мес.)';
+    return '<td class="num good' + weak + '" title="' + esc('Окупается ' + (r.first ? 'в первые 30 дней' : 'примерно на ' + r.day + '-й день') + n) + '">' +
+      when + mon + '<div class="where">' + (isNum(r.packs) ? nf2.format(r.packs) + NBSP + 'пачки к этому дню' : '') + '</div></td>';
+  }
+
+  // Таблица окупаемости: строки — варианты CAC, столбцы — группы. cac — свой
+  // CAC из поля (строка или число), пустое — строки нет. Отдельной функцией:
+  // поле CAC перерисовывает только её, и фокус с курсором не прыгают.
+  function renderSummaryPayback(rows, cac) {
+    const S = summaryIndex(rows);
+    if (!S.size) return empty('Сводки пока нет.');
+    const opts = [];
+    const last = S.cohorts('cac_blended').slice(-1)[0];
+    if (last) {
+      const all = S.get('all', 'cac_blended', null, last), meta = S.get('all', 'cac_meta', null, last);
+      if (all) opts.push({ label: 'CAC ' + monthName(last) + ', вся реклама', value: all.value });
+      if (meta) opts.push({ label: 'CAC ' + monthName(last) + ', только Meta', value: meta.value });
+    }
+    const avg = S.get('all', 'cac_blended');
+    if (avg && opts.length) opts.push({ label: 'Средний CAC всех когорт, вся реклама', value: avg.value });
+    const own = String(cac === null || cac === undefined ? '' : cac).replace(/[\s\u00a0₸]/g, '').replace(',', '.');
+    if (own !== '' && isNum(own) && Number(own) > 0) opts.push({ label: 'Свой CAC', value: Number(own), own: true });
+    if (!opts.length) return empty('Расходов на рекламу в базе нет — введите свой CAC выше.');
+    const groups = Object.keys(SUM_GROUPS);
+    const body = opts.map(o =>
+      '<tr' + (o.own ? ' class="sum-own"' : '') + '><th scope="row">' + esc(o.label) + '<div class="where">' + money(o.value) + '</div></th>' +
+        groups.map(g => paybackCellHtml(paybackOf(S, g, o.value))).join('') + '</tr>').join('');
+    return '<div class="table-scroll"><table class="grid sticky-first sum-pay">' +
+      '<thead><tr><th scope="col">Если клиент стоит</th>' + groups.map(g => '<th scope="col">' + esc(SUM_GROUPS[g]) + '</th>').join('') +
+      '</tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  // Месяц: кто покупал (из разбора месяца, sql/29) и как новые этого месяца
+  // купили за первые 30 дней против обычного (sql/30, когорта).
+  function sumMonthHtml(S, mixList, month, grp) {
+    const m = (mixList || []).find(x => x.month === month);
+    if (!m) return '';
+    const newAll = m.newTotal.buyers, back = m.backTotal.buyers, total = m.total.buyers;
+    const coh = S.get(grp, 'packs', 30, month), cohRev = S.get(grp, 'revenue', 30, month);
+    const cohN = S.get(grp, 'clients', null, month);
+    const usual = S.get(grp, 'packs', 30), usualRev = S.get(grp, 'revenue', 30);
+    let q;
+    if (coh && coh.value !== null) {
+      const diff = usual && usual.value ? coh.value / usual.value - 1 : null;
+      q = card('Новые за первые 30 дней', nf2.format(coh.value) + NBSP + 'пачки',
+        'выручка ' + money(cohRev && cohRev.value) + ' на клиента' +
+        (usual ? ' · обычно ' + nf2.format(usual.value) + ' и ' + money(usualRev && usualRev.value) : '') +
+        (isNum(diff) ? ' (' + (diff >= 0 ? '+' : '−') + pctInt(Math.abs(diff)) + ')' : '') +
+        (cohN && coh.n < cohN.value ? ' · по ' + int(coh.n) + ' из ' + int(cohN.value) + ': у остальных 30 дней ещё не прошло' : ''),
+        isNum(diff) && diff <= -0.1 ? 'warn' : '');
+    } else {
+      q = card('Новые за первые 30 дней', '—', 'у новых этого месяца 30 дней ещё не прошло');
+    }
+    return '<h3 class="sum-title">' + esc(monthName(m.month).replace(/^./, c => c.toUpperCase())) +
+        (m.complete ? '' : ' <span class="muted">· месяц идёт</span>') + '</h3>' +
+      '<div class="kpi-grid sum-kpis">' +
+        card('Покупателей', int(total), m.complete ? 'за месяц' : 'пока, месяц идёт') +
+        card('Новых', int(newAll), (m.quick.buyers ? int(m.quick.buyers) + ' из них купили ещё раз в этом месяце' : 'второй раз в этом месяце никто') +
+             ' · с мини-пака ' + pctInt(share(m.newTotal.mini, newAll))) +
+        card('Повторных', int(back), 'вернулись из прошлых месяцев · ' + pctInt(share(back, total)) + ' покупателей') +
+        q +
+      '</div>';
+  }
+
+  function sumTableHtml(S, grp) {
+    const hs = SUM_H.filter(h => S.get(grp, 'purchases', h));
+    if (!hs.length) return empty('Пока нет клиентов, с первой покупки которых прошло 30 дней.');
+    const defs = [['packs', 'Больших пачек', v => nf2.format(v)], ['purchases', 'Покупок', v => nf2.format(v)],
+                  ['revenue', 'Выручка', v => money(v)], ['profit', 'Прибыль', v => money(v)]];
+    const what = { packs: 'больших пачек', purchases: 'покупок', revenue: 'выручки', profit: 'прибыли' };
+    const cell = (metric, fmt, h) => {
+      const x = S.get(grp, metric, h);
+      if (!x) return '<td class="num na"></td>';
+      const weak = x.n < SUM_MIN_N;
+      const title = SUM_GROUPS[grp] + ', первые ' + h + ' дней: ' + (x.value === null ? 'неизвестно' : fmt(x.value)) + ' ' + what[metric] +
+        ' на клиента · шаг ' + byClients(x.n) + (weak ? ' — мало, число шумное' : '');
+      return '<td class="num' + (weak ? ' muted' : '') + '" title="' + esc(title) + '">' + (x.value === null ? '?' : fmt(x.value)) + '</td>';
+    };
+    return '<div class="table-scroll"><table class="grid sticky-first sum-table">' +
+      '<thead><tr><th scope="col">Первые</th>' + hs.map(h => '<th scope="col">' + h + NBSP + 'дн.</th>').join('') + '</tr></thead><tbody>' +
+      defs.map(([metric, label, fmt]) => '<tr><th scope="row">' + esc(label) + '</th>' + hs.map(h => cell(metric, fmt, h)).join('') + '</tr>').join('') +
+      '</tbody></table></div>';
+  }
+
+  function sumFreqHtml(S, grp) {
+    const med = S.get(grp, 'to2_median');
+    if (!med) return empty('Вторых покупок пока нет.');
+    const bs = [1, 2, 3, 4, 5].map(b => S.get(grp, 'to2_bucket', b));
+    const max = Math.max(1, ...bs.map(b => (b ? b.value : 0)));
+    const bars = bs.map((b, i) =>
+      '<div class="bar-row"><div class="bar-label">' + SUM_BUCKETS[i] + '</div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + (100 * (b ? b.value : 0) / max).toFixed(1) + '%"></div></div>' +
+        '<div class="bar-value">' + int(b ? b.value : 0) + ' · ' + pctInt(share(b ? b.value : 0, med.n)) + '</div></div>').join('');
+    const rep = [30, 60, 90, 180].map(h => [h, S.get(grp, 'repeat', h)]).filter(x => x[1]);
+    const gm = S.get(grp, 'gap_median'), g25 = S.get(grp, 'gap_p25'), g75 = S.get(grp, 'gap_p75'), gc = S.get(grp, 'gap_clients');
+    return '<p class="sum-line"><b>Вторая покупка</b> — через ' + days(med.value) + ' (медиана ' + byClients(med.n) + ')</p>' +
+      '<div class="bars">' + bars + '</div>' +
+      (rep.length ? '<p class="sum-line">Делают вторую покупку: ' + rep.map(([h, x]) =>
+        '<span class="sum-pill' + (x.n < SUM_MIN_N ? ' muted' : '') + '" title="' + esc(byClients(x.n) + ', с первой покупки которых прошло ' + h + ' дней') + '">за ' +
+        h + NBSP + 'дн. — <b>' + pctInt(x.value) + '</b></span>').join(' ') + '</p>' : '') +
+      (gm && gm.value !== null ? '<p class="sum-line"><b>У постоянных</b> (купили 3 раза и больше) между покупками — ' + days(gm.value) +
+        (g25 && g75 ? ', у половины интервалов — от ' + int(g25.value) + ' до ' + days(g75.value) : '') +
+        (gm.value > 0 ? ': примерно ' + nf1.format(30 / gm.value) + ' покупки в месяц' : '') +
+        ' <span class="muted">(' + int(gm.n) + ' ' + ru(gm.n, 'интервал', 'интервала', 'интервалов') + ' у ' + int(gc && gc.value) + ' ' +
+        ru(gc && gc.value, 'клиента', 'клиентов', 'клиентов') + ')</span></p>' : '');
+  }
+
+  function sumStayHtml(S, grp) {
+    const pts = SUM_H.filter(h => h >= 60).map(h => [h, S.get(grp, 'active', h)]).filter(x => x[1]);
+    if (!pts.length) return empty('Пока нет клиентов, с первой покупки которых прошло 60 дней.');
+    const rowsHtml = [[30, { value: 1, n: null }]].concat(pts).map(([h, x]) =>
+      '<div class="bar-row' + (x.n !== null && x.n < SUM_MIN_N ? ' weak' : '') + '"' +
+        (x.n !== null ? ' title="' + esc(byClients(x.n) + ', с первой покупки которых прошло ' + h + ' дней') + '"' : '') + '>' +
+        '<div class="bar-label">' + (h / 30) + '-й месяц</div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + (100 * x.value).toFixed(1) + '%"></div></div>' +
+        '<div class="bar-value">' + pctInt(x.value) + '</div></div>').join('');
+    const months = 1 + pts.reduce((s, [, x]) => s + x.value, 0);
+    return '<div class="bars">' + rowsHtml + '</div>' +
+      '<p class="sum-line">В среднем новый клиент покупает в <b>' + nf1.format(months) + '</b> из первых ' + (1 + pts.length) + ' месяцев</p>';
+  }
+
+  function sumMiniHtml(S) {
+    const conv = [30, 60, 90, 180].map(h => [h, S.get('mini', 'conv_pack', h)]).filter(x => x[1]);
+    if (!conv.length) return empty('Клиентов, начавших с мини-пака, пока нет.');
+    const med = S.get('mini', 'to_pack_median');
+    const cell = (g, m, h, fmt) => {
+      const x = S.get(g, m, h);
+      return x ? '<td class="num' + (x.n < SUM_MIN_N ? ' muted' : '') + '" title="' + esc(byClients(x.n) + ', с первой пачки которых прошло ' + h + ' дней') + '">' +
+        fmt(x.value) + '</td>' : '<td class="num muted">—</td>';
+    };
+    const nOf = (g, h) => { const x = S.get(g, 'after_pack_packs', h); return x ? int(x.n) : '—'; };
+    const line = (g, label) => '<tr><th scope="row">' + label + '<div class="where">клиентов: ' + nOf(g, 30) + ' и ' + nOf(g, 90) + '</div></th>' +
+      cell(g, 'after_pack_purchases', 30, v => nf2.format(v)) + cell(g, 'after_pack_packs', 30, v => nf2.format(v)) +
+      cell(g, 'after_pack_purchases', 90, v => nf2.format(v)) + cell(g, 'after_pack_packs', 90, v => nf2.format(v)) + '</tr>';
+    return '<p class="sum-line">Купили большую пачку: ' + conv.map(([h, x]) =>
+        '<span class="sum-pill' + (x.n < SUM_MIN_N ? ' muted' : '') + '" title="' + esc(byClients(x.n) + ', с первой покупки которых прошло ' + h + ' дней') + '">за ' +
+        h + NBSP + 'дн. — <b>' + pctInt(x.value) + '</b></span>').join(' ') + '</p>' +
+      (med ? '<p class="sum-line">До первой пачки — ' + days(med.value) + ' (медиана по ' + int(med.n) + ' ' + ru(med.n, 'купившему', 'купившим', 'купившим') + ')</p>' : '') +
+      '<div class="table-scroll"><table class="grid sticky-first sum-after"><thead><tr><th scope="col">После первой пачки</th>' +
+        '<th scope="col">Покупок за 30' + NBSP + 'дн.</th><th scope="col">Пачек за 30' + NBSP + 'дн.</th>' +
+        '<th scope="col">Покупок за 90' + NBSP + 'дн.</th><th scope="col">Пачек за 90' + NBSP + 'дн.</th></tr></thead><tbody>' +
+        line('mini', 'Начали с мини-пака') + line('regular', 'Начали с пачки') +
+      '</tbody></table></div>' +
+      '<p class="note">Это люди, которые сами заплатили за мини-пак на Kaspi. Подарок от врача — другой случай: человек не платил ' +
+      '(может брать хуже), зато ему посоветовал врач (может брать лучше). Настоящую конверсию подарка покажет только пилот. ' +
+      'Строки «после первой пачки» отвечают на второй вопрос КП: если мама всё-таки купила пачку, сколько она покупает дальше.</p>';
+  }
+
+  // opts: grp — группа; month — 'YYYY-MM' для блока месяца; mix — месяцы из
+  // monthMix() (разбор месяца, sql/29; нет — блока месяца нет); months —
+  // какие месяцы показывать кнопками; cac — свой CAC из поля.
+  function renderSummary(rows, opts) {
+    const S = summaryIndex(rows);
+    if (!S.size) return empty('Сводки пока нет.');
+    const o = opts || {};
+    const grp = SUM_GROUPS[o.grp] ? o.grp : 'all';
+    const mix = o.mix || [];
+    const seg = (action, attr, val, on, label) => '<button type="button" data-action="' + action + '" ' + attr + '="' + val + '"' +
+      ' aria-pressed="' + on + '" class="seg' + (on ? ' on' : '') + '">' + esc(label) + '</button>';
+    const monthBar = mix.length
+      ? '<div class="toolbar" role="group" aria-label="Месяц"><span class="toolbar-label">Месяц:</span>' +
+        mix.map(m => seg('sum-month', 'data-month', m.month, m.month === o.month,
+                         MONTHS[Number(m.month.slice(5, 7)) - 1].slice(0, 3) + (m.complete ? '' : '*'))).join('') + '</div>'
+      : '';
+    const grpBar = '<div class="toolbar" role="group" aria-label="Кто"><span class="toolbar-label">Новые клиенты:</span>' +
+      Object.keys(SUM_GROUPS).map(g => seg('sum-grp', 'data-grp', g, g === grp, SUM_GROUPS[g])).join('') + '</div>';
+    const base = S.get(grp, 'clients');
+    const block = (title, sub, inner, cls) => '<div class="sum-block' + (cls ? ' ' + cls : '') + '"><h3 class="sum-title">' + esc(title) +
+      (sub ? ' <span class="muted">' + sub + '</span>' : '') + '</h3>' + inner + '</div>';
+    const cacVal = o.cac === null || o.cac === undefined ? '' : String(o.cac);
+    return monthBar + (mix.length ? sumMonthHtml(S, mix, o.month, grp) : '') + grpBar +
+      '<div class="sum-grid">' +
+        block('Новый клиент в среднем', '· ' + esc(SUM_GROUPS[grp].toLowerCase()) + (base ? ', ' + int(base.value) + ' ' + ru(base.value, 'человек', 'человека', 'человек') : ''),
+              sumTableHtml(S, grp) +
+              '<p class="note">Сколько в среднем принёс ОДИН новый клиент за первые 30 … 180 дней с первой покупки — в том числе тот, ' +
+              'кто больше не вернулся. Каждое окно — по клиентам, с первой покупки которых прошло столько дней; длинные окна — ' +
+              'цепочкой: прирост за каждые следующие 30 дней берётся у тех, кто до них дожил. Серым — шаг меньше чем по ' + SUM_MIN_N +
+              ' клиентам. Покупка — день: два заказа в один день — одна покупка. Прибыль — верхняя оценка: бонусы Kaspi ' +
+              '(около 6 % выручки) не вычтены.</p>', 'sum-wide') +
+        block('Как часто покупают', '', sumFreqHtml(S, grp)) +
+        block('Сколько остаются', '· доля новых, кто покупал в этом месяце жизни', sumStayHtml(S, grp) +
+              '<p class="note">Месяц жизни — 30 дней от первой покупки клиента; доля — от тех, кто его уже прожил. Полную ' +
+              'продолжительность пока не измерить: самым старым клиентам около полугода, и часть из них ещё покупает.</p>') +
+        block('Окупаемость', '· через сколько дней и пачек прибыль догоняет цену клиента',
+              '<div class="toolbar sum-cac"><label for="sumCac" class="toolbar-label">Свой CAC, ₸:</label>' +
+              '<input id="sumCac" type="text" inputmode="numeric" autocomplete="off" placeholder="например, 3000" value="' + esc(cacVal) + '"></div>' +
+              '<div id="sumPayback">' + renderSummaryPayback(rows, o.cac) + '</div>' +
+              '<p class="note">У групп своего CAC нет — откуда пришёл клиент, Kaspi не говорит. Ячейка отвечает «если бы клиент этой ' +
+              'группы стоил столько». «Свой CAC» — для своего сценария, например клиента от педиатра: мини-пак и выплаты врачу на ' +
+              'одну купившую маму. Зелёным — окупился за известные 180 дней, красным — нет. Прибыль — без бонусов Kaspi.</p>', 'sum-wide') +
+        block('Мини-пак → большая пачка', '· ближайший аналог подарка от педиатра', sumMiniHtml(S), 'sum-wide') +
+      '</div>';
+  }
+
   root.NietteClients = {
     esc, int, money, pct, times, days, date, monthName, isNum,
     computeKpis, renderKpis, renderCohorts, renderRepeat, riskRows, renderRisk,
     renderMonthly, renderEntry, SORTS, filterBase, renderBaseTable, renderNotes,
     sectionError, empty, RET_MODES, RET_ENTRIES, RET_HEAT_MAX, retentionGrid, renderRetention,
     monthKey, fromMonth, monthMix, renderMonthMix,
-    LTV_METRICS, LTV_DIMS, LTV_GROUPS, LTV_MIN_N, ltvCurves, renderLtvCurve
+    LTV_METRICS, LTV_DIMS, LTV_GROUPS, LTV_MIN_N, ltvCurves, renderLtvCurve,
+    SUM_GROUPS, SUM_H, SUM_MIN_N, summaryIndex, paybackOf, renderSummary, renderSummaryPayback
   };
 })(typeof window !== 'undefined' ? window : globalThis);

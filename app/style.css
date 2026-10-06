@@ -455,6 +455,31 @@ button.small { min-height: 28px; padding: 4px 10px; font-size: 12px; }
 .ltv-grid td.na { background: none; }
 .ltv-grid tbody th { min-width: 150px; white-space: normal; }
 
+/* Главное о клиентах (sql/30, renderSummary в clients.js): месяц — четыре
+   карточки, ниже блоки по два в ряд на компьютере и по одному на телефоне;
+   таблицы (окна, окупаемость, мини-пак) — во всю ширину. Шумное — серым. */
+.kpi-grid.sum-kpis { margin-bottom: 12px; }
+@media (min-width: 900px) { .kpi-grid.sum-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.sum-kpis .kpi-sub { white-space: normal; }
+.sum-grid { display: grid; grid-template-columns: 1fr; gap: 20px 24px; margin-top: 4px; }
+@media (min-width: 900px) { .sum-grid { grid-template-columns: 1fr 1fr; } .sum-wide { grid-column: 1 / -1; } }
+.sum-block { min-width: 0; }
+.sum-title { font-size: 14px; margin: 0 0 8px; }
+.sum-title .muted { font-weight: 500; font-size: 12px; }
+.sum-line { margin: 8px 0; font-size: 13px; color: var(--text-2); }
+.sum-line b { color: var(--text); font-variant-numeric: tabular-nums; }
+.sum-pill { display: inline-block; white-space: nowrap; margin: 2px 6px 2px 0; }
+.sum-pill.muted, .sum-pill.muted b { color: var(--text-muted); }
+.bar-row.weak .bar-fill { opacity: .45; }
+.bar-row.weak .bar-value { color: var(--text-muted); }
+.sum-cac { align-items: center; }
+.sum-cac input { width: 140px; flex: 0 1 140px; min-width: 0; }
+.sum-table tbody th, .sum-pay tbody th, .sum-after tbody th { white-space: normal; min-width: 120px; }
+.sum-pay td { white-space: normal; min-width: 110px; }
+.sum-after td { min-width: 72px; }
+.sum-pay tr.sum-own th, .sum-pay tr.sum-own td { background: var(--surface-2); }
+.sum-table td.na { background: none; }
+
 /* ══════════════ «B2B» (sql/28, b2b.js) ══════════════
    Синий — «ждём деньги» (дни календаря поступлений), фиолетовый — товар под
    реализацию: он в «Остатке», но требовать его нельзя. Смысл везде несёт

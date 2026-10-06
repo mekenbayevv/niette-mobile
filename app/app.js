@@ -48,6 +48,9 @@
   // Порядок = порядок разделов на экране. select перечислен там, где таблица
   // шире, чем нужно экрану: меньше байтов через мобильную сеть.
   const SOURCES = [
+    // Главное о клиентах (sql/30): группа × когорта × показатель × окно — сотни
+    // строк. Листается: на пятом десятке когорт перевалит за лимит строк проекта.
+    { key: 'summary', table: 'snap_client_summary', paged: true, order: ['grp', 'metric', 'h', 'cohort'], what: 'Главное о клиентах' },
     { key: 'base',    table: 'snap_client_base',      paged: true, order: 'client_key', what: 'База клиентов' },
     { key: 'risk',    table: 'snap_client_risk',      paged: true, order: 'client_key', what: 'Риск оттока',
       select: 'client_key,name,city,orders,revenue,last_at,days_since_last,expected_gap,overdue_x,risk' },
@@ -194,6 +197,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_client_ltv_curve|v_client_ltv_curve/.test(msg))
       return pre + 'снимка LTV по месяцам в базе нет — выполните sql/29_client_months.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_client_summary|v_client_summary/.test(msg))
+      return pre + 'снимка «Главное о клиентах» в базе нет — выполните sql/30_client_summary.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /b2b_/.test(msg))
       return pre + 'данных B2B в базе нет — выполните sql/00_tables.sql, 01_functions.sql и 28_b2b.sql, затем sql/12_auth.sql.';
@@ -525,6 +531,20 @@
         C.renderLtvCurve(d.ltvCurve, { dim, metric })));
   }
 
+  // Главное о клиентах (sql/30) — первый блок экрана. Месяц (новые и
+  // повторные) — из разбора месяца (sql/29); по умолчанию последний закрытый:
+  // у идущего числа ещё растут. Группа и месяц переключаются из памяти, в базу
+  // не ходят; поле CAC перерисовывает только таблицу окупаемости.
+  function summarySection(app) {
+    const d = app.data, e = app.errors;
+    const mix = !e.monthMix && (d.monthMix || []).length ? C.monthMix(d.monthMix) : [];
+    const months = mix.map(m => m.month);
+    const closed = mix.filter(m => m.complete).map(m => m.month);
+    const sel = months.indexOf(app.ui.sumMonth) >= 0 ? app.ui.sumMonth : (closed[closed.length - 1] || months[months.length - 1]);
+    return section('summary', 'Главное о клиентах', 'Только Kaspi · новые клиенты считаются по дням от их первой покупки',
+      or(e, 'summary', () => C.renderSummary(d.summary, { grp: app.ui.sumGrp, month: sel, mix, cac: app.ui.sumCac })));
+  }
+
   // Новые и вернувшиеся по месяцам + разбор месяца по клику (sql/29): кто в
   // нём покупал — новые, быстрый повтор, вернулись из … Всё из загруженных
   // строк, в базу клик не ходит. Нет снимка разбора (29 не прогнан) — таблица
@@ -580,6 +600,7 @@
       '<div class="fresh muted">' + C.esc(fresh.charAt(0).toUpperCase() + fresh.slice(1)) + '</div>' +
       (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '') +
       (e.base ? C.sectionError(e.base) : C.renderKpis(k)) +
+      summarySection(app) +
       section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
               or(e, 'ltv', () => C.renderCohorts(d.ltv))) +
       ltvSection(app) +
@@ -1750,6 +1771,26 @@
         if (box) box.outerHTML = ltvSection(app);
         return;
       }
+      if (action === 'sum-grp' || action === 'sum-month') {
+        // Главное о клиентах: другая группа или месяц — из памяти; фокус
+        // остаётся на нажатой кнопке.
+        if (app.route !== 'clients' || !app.data) return;
+        let sel;
+        if (action === 'sum-grp') {
+          app.ui.sumGrp = C.SUM_GROUPS[el.getAttribute('data-grp')] ? el.getAttribute('data-grp') : 'all';
+          sel = '[data-action="sum-grp"][data-grp="' + app.ui.sumGrp + '"]';
+        } else {
+          const key = C.monthKey(el.getAttribute('data-month'));
+          if (!key) return;
+          app.ui.sumMonth = key;
+          sel = '[data-action="sum-month"][data-month="' + key + '"]';
+        }
+        const box = rootEl.querySelector('#summary');
+        if (box) box.outerHTML = summarySection(app);
+        const again = rootEl.querySelector(sel);
+        if (again && again.focus) again.focus();
+        return;
+      }
       if (action === 'month-mix') {
         // Разбор другого месяца — из памяти; фокус остаётся на нажатом месяце.
         if (app.route !== 'clients' || !app.data) return;
@@ -1787,6 +1828,15 @@
       app.b2bUi.p.query = ev.target.value;
       const body = rootEl.querySelector('#b2bPartnersBody');
       if (body) body.innerHTML = b2bPartnersBody(app, b2bModel(app));
+    });
+
+    // Свой CAC в «Главном»: перерисовывается только таблица окупаемости —
+    // поле остаётся тем же элементом, курсор не прыгает.
+    rootEl.addEventListener('input', ev => {
+      if (!app.data || !ev.target || ev.target.id !== 'sumCac') return;
+      app.ui.sumCac = ev.target.value;
+      const body = rootEl.querySelector('#sumPayback');
+      if (body) body.innerHTML = C.renderSummaryPayback(app.data.summary, app.ui.sumCac);
     });
 
     // Поиск и сортировка перерисовывают только таблицу: поле поиска остаётся
@@ -1910,7 +1960,8 @@
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
-            retMode: 'any', retEntry: 'all', mixMonth: null, ltvMetric: 'profit', ltvDim: 'all' }
+            retMode: 'any', retEntry: 'all', mixMonth: null, ltvMetric: 'profit', ltvDim: 'all',
+            sumGrp: 'all', sumMonth: null, sumCac: '' }
     };
     app.route = routeFromHash();   // разделы ещё не известны; закрытый экран поправит openRoute
 
