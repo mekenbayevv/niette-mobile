@@ -15,6 +15,8 @@
  *   v_client_retention  удержание когорт по месяцам (sql/27)
  *   v_client_retention_entry  то же по первой покупке: мини-пак / обычная пачка
  *   v_client_month_mix  кто покупал в месяце: новые, быстрый повтор, вернулись из … (sql/29)
+ *   v_client_ltv_curve  LTV типичного нового клиента по месяцам жизни: все / пачка или
+ *                       мини-пак / размер первой покупки (sql/29)
  *
  * Всё строковое, что пришло из базы (имена, города), экранируется через esc():
  * имя клиента — это ввод человека, а не наш текст.
@@ -313,6 +315,96 @@
       'стать быстрым повтором.') + '</p>';
   }
 
+  // ── LTV по месяцам жизни (sql/29, v_client_ltv_curve) ────────────────────
+  // Сколько в среднем приносит ОДИН новый клиент к концу месяца +0, +1, … —
+  // прибыль, выручка или большие пачки, накопленно. Кривая на группу, по
+  // цепочке когорт (шапка 29): идущий месяц и месяц запуска не входят.
+  // Разрезы: все; пачка / мини-пак (с чего начал); размер первой покупки —
+  // это возраст ребёнка, то есть сколько ещё семье нужны подгузники.
+  // Просьба владельца 06.10.2026: «LTV по месяцам и упаковкам».
+  const LTV_METRICS = { profit: 'Прибыль', revenue: 'Выручка', packs: 'Пачки' };
+  const LTV_DIMS = { all: 'Все', entry: 'Пачка или мини-пак', size: 'Размер первой покупки' };
+  const LTV_GROUPS = { all: 'Все новые', regular: 'Начали с пачки', mini: 'Начали с мини-пака',
+                       S: 'S', M: 'M', L: 'L', XL: 'XL', XXL: 'XXL', several: 'Несколько размеров', other: 'Без размера' };
+  const LTV_ORDER = ['all', 'regular', 'mini', 'S', 'M', 'L', 'XL', 'XXL', 'several', 'other'];
+  const LTV_MIN_N = 30;   // меньше — шаг шумный: показываем серым, но показываем
+
+  // Строки снимка (разрез × группа × k) → группы с точками кривой.
+  function ltvCurves(rows) {
+    const by = new Map();
+    (rows || []).forEach(r => {
+      if (!LTV_DIMS[r.dim] || !LTV_GROUPS[r.grp] || !isNum(r.k)) return;
+      const key = r.dim + '|' + r.grp;
+      if (!by.has(key)) by.set(key, { dim: r.dim, grp: r.grp, clients: num(r.clients), miniShare: isNum(r.mini_share) ? Number(r.mini_share) : null,
+                                      newShare: isNum(r.new_share) ? Number(r.new_share) : null,
+                                      cacMeta: isNum(r.cac_meta) ? Number(r.cac_meta) : null,
+                                      cacAll: isNum(r.cac_blended) ? Number(r.cac_blended) : null, points: [] });
+      const c = by.get(key);
+      c.points[Number(r.k)] = { k: Number(r.k), n: num(r.n), profit: isNum(r.profit) ? Number(r.profit) : null,
+                                revenue: isNum(r.revenue) ? Number(r.revenue) : null, packs: isNum(r.packs) ? Number(r.packs) : null };
+    });
+    return by;
+  }
+
+  function renderLtvCurve(rows, opts) {
+    const o = opts || {};
+    const dim = LTV_DIMS[o.dim] ? o.dim : 'all';
+    const metric = LTV_METRICS[o.metric] ? o.metric : 'profit';
+    const by = ltvCurves(rows);
+    const all = by.get('all|all');
+    const list = (dim === 'all' ? [all] : [all].concat(LTV_ORDER.filter(g => g !== 'all').map(g => by.get(dim + '|' + g))))
+      .filter(Boolean);
+    if (!list.length) return empty('Кривой пока нет: нужен хотя бы один закрытый месяц после месяца запуска.');
+    const maxK = list.reduce((m, c) => Math.max(m, c.points.length - 1), 0);
+    const fmt = v => (metric === 'packs' ? (isNum(v) ? nf2.format(Number(v)) : '?') : (isNum(v) ? money(v) : '?'));
+    const what = { profit: 'прибыли', revenue: 'выручки', packs: 'больших пачек' }[metric];
+    const cac = all && all.cacMeta;
+    const cell = (c, p) => {
+      if (!p) return '<td class="num na"></td>';
+      const v = p[metric];
+      const weak = p.n < LTV_MIN_N;
+      const paid = metric === 'profit' && c.grp === 'all' && isNum(cac) && isNum(v) && v >= cac;
+      return '<td class="num' + (weak ? ' muted' : '') + (paid ? ' good' : '') + '" title="' +
+        esc(LTV_GROUPS[c.grp] + ', к концу +' + p.k + ' мес.: ' + (metric === 'packs' ? fmt(v) + ' пачки' : fmt(v)) +
+            ' ' + what + ' на клиента · шаг по ' + int(p.n) + ' клиентам' + (weak ? ' — мало, число шумное' : '')) + '">' +
+        fmt(v) + '</td>';
+    };
+    const extra = dim !== 'all';
+    // Размер группы — подписью под названием, а не столбцами: на телефоне
+    // сразу за названием идёт сама кривая, ради которой блок.
+    const meta = c => 'клиентов ' + int(c.clients) +
+      (extra && c.grp !== 'all' ? ' · ' + pctInt(c.newShare) + ' новых' : '') +
+      (dim === 'size' ? ' · с мини-пака ' + pctInt(c.miniShare) : '');
+    const head = '<tr><th scope="col">Группа</th>' +
+      Array.from({ length: maxK + 1 }, (_, k) => '<th scope="col">+' + k + NBSP + 'мес.</th>').join('') + '</tr>';
+    const body = list.map(c =>
+      '<tr' + (extra && c.grp === 'all' ? ' class="ltv-ref"' : '') + '><th scope="row">' + esc(LTV_GROUPS[c.grp]) +
+        '<div class="where">' + meta(c) + '</div></th>' +
+        Array.from({ length: maxK + 1 }, (_, k) => cell(c, c.points[k])).join('') +
+      '</tr>').join('');
+    let cacNote = '';
+    if (metric === 'profit' && all && isNum(cac)) {
+      const hit = all.points.find(p => p && isNum(p.profit) && p.profit >= cac);
+      cacNote = '<p class="note">CAC Meta в среднем по когортам кривой — ' + money(cac) +
+        (isNum(all.cacAll) ? ' (вместе с рекламой Kaspi — ' + money(all.cacAll) + ')' : '') + '. ' +
+        (hit ? 'Прибыль «Все новые» догоняет его к концу +' + hit.k + NBSP + 'мес. (зелёным).'
+             : 'Прибыль «Все новые» не догоняет его за известные месяцы.') +
+        ' У групп своего CAC нет: откуда пришёл клиент, неизвестно.</p>';
+    }
+    return '<div class="table-scroll"><table class="grid sticky-first ltv-grid">' +
+      '<thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' + cacNote +
+      '<p class="note">Сколько ' + what + ' в среднем принёс ОДИН новый клиент к концу месяца после первой покупки — ' +
+      'в том числе те, кто больше не вернулся. +0 — остаток месяца первой покупки, в среднем полмесяца. ' +
+      'Кривая по цепочке: каждый следующий месяц прибавляет средний прирост у когорт, где он уже закрыт; ' +
+      'идущий месяц и месяц запуска (март) не входят. Серым — шаг меньше чем по ' + LTV_MIN_N + ' клиентам, число шумное; ' +
+      'наведите на ячейку — по скольким.' +
+      (dim === 'size' ? ' Размер — по первой покупке, пачки и мини-паки вместе; «несколько размеров» — в первый день купили ' +
+        'разные; «без размера» — в первый день не было подгузников с размером в названии (салфетки, плед, набор, пробник). ' +
+        'Размер — это возраст ребёнка: чем меньше размер, тем дольше семье нужны подгузники.' : '') +
+      (dim === 'entry' ? ' Пачка или мини-пак — с чего клиент начал: в первый день только мини-паки — «мини-пак».' : '') +
+      (metric === 'profit' ? ' Прибыль — верхняя оценка, пока не разобраны бонусы Kaspi (около 6 % выручки).' : '') + '</p>';
+  }
+
   // ── Удержание когорт по месяцам (sql/27) ─────────────────────────────────
   // Строка — новые клиенты месяца, столбец — календарный месяц после первого.
   // Доля — от новых этого месяца. Два счёта на одних строках, переключатель
@@ -506,6 +598,7 @@
     computeKpis, renderKpis, renderCohorts, renderRepeat, riskRows, renderRisk,
     renderMonthly, renderEntry, SORTS, filterBase, renderBaseTable, renderNotes,
     sectionError, empty, RET_MODES, RET_ENTRIES, RET_HEAT_MAX, retentionGrid, renderRetention,
-    monthKey, fromMonth, monthMix, renderMonthMix
+    monthKey, fromMonth, monthMix, renderMonthMix,
+    LTV_METRICS, LTV_DIMS, LTV_GROUPS, LTV_MIN_N, ltvCurves, renderLtvCurve
   };
 })(typeof window !== 'undefined' ? window : globalThis);

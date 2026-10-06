@@ -449,6 +449,12 @@ button.small { min-height: 28px; padding: 4px 10px; font-size: 12px; }
 .mix-grid tr.mix-total th, .mix-grid tr.mix-total td { font-weight: 700; border-top: 2px solid var(--border-strong); }
 .note.warn { color: var(--amber); }
 
+/* LTV по месяцам жизни (sql/29, renderLtvCurve в clients.js): строка «Все новые»
+   в разрезах — опорная, отделена чертой; шумные шаги — серым (класс muted). */
+.ltv-grid tr.ltv-ref th, .ltv-grid tr.ltv-ref td { border-bottom: 2px solid var(--border-strong); }
+.ltv-grid td.na { background: none; }
+.ltv-grid tbody th { min-width: 150px; white-space: normal; }
+
 /* ══════════════ «B2B» (sql/28, b2b.js) ══════════════
    Синий — «ждём деньги» (дни календаря поступлений), фиолетовый — товар под
    реализацию: он в «Остатке», но требовать его нельзя. Смысл везде несёт

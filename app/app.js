@@ -53,6 +53,8 @@
       select: 'client_key,name,city,orders,revenue,last_at,days_since_last,expected_gap,overdue_x,risk' },
     { key: 'repeat',  table: 'snap_client_repeat',    order: 'sort',   what: 'Время до второго заказа' },
     { key: 'ltv',     table: 'snap_client_ltv',       order: 'cohort', what: 'Когорты' },
+    // LTV по месяцам жизни (sql/29): разрез × группа × месяц, десятки строк.
+    { key: 'ltvCurve', table: 'snap_client_ltv_curve', order: ['dim', 'grp', 'k'], what: 'LTV по месяцам жизни' },
     // Удержание (sql/27): строка — когорта × месяц после первого, десятки строк.
     { key: 'retention', table: 'snap_client_retention', order: ['cohort', 'k'], what: 'Удержание по месяцам' },
     { key: 'retentionEntry', table: 'snap_client_retention_entry', order: ['entry', 'cohort', 'k'],
@@ -189,6 +191,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_client_month_mix|v_client_month_mix/.test(msg))
       return pre + 'снимка разбора месяца в базе нет — выполните sql/29_client_months.sql, затем sql/12_auth.sql.';
+    if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
+        /snap_client_ltv_curve|v_client_ltv_curve/.test(msg))
+      return pre + 'снимка LTV по месяцам в базе нет — выполните sql/29_client_months.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /b2b_/.test(msg))
       return pre + 'данных B2B в базе нет — выполните sql/00_tables.sql, 01_functions.sql и 28_b2b.sql, затем sql/12_auth.sql.';
@@ -502,6 +507,24 @@
         entryBar + render()));
   }
 
+  // LTV по месяцам жизни (sql/29): что считать (прибыль / выручка / пачки) и
+  // разрез (все / пачка или мини-пак / размер первой покупки) — из загруженных
+  // строк, переключение в базу не ходит.
+  function ltvSection(app) {
+    const d = app.data, e = app.errors;
+    const seg = (action, attr, val, on, label) => '<button type="button" data-action="' + action + '" ' + attr + '="' + val + '"' +
+      ' aria-pressed="' + on + '" class="seg' + (on ? ' on' : '') + '">' + C.esc(label) + '</button>';
+    const metric = C.LTV_METRICS[app.ui.ltvMetric] ? app.ui.ltvMetric : 'profit';
+    const dim = C.LTV_DIMS[app.ui.ltvDim] ? app.ui.ltvDim : 'all';
+    return section('ltv', 'LTV по месяцам жизни', 'Сколько в среднем приносит один новый клиент к концу каждого месяца',
+      or(e, 'ltvCurve', () =>
+        '<div class="toolbar" role="group" aria-label="Что считать"><span class="toolbar-label">Считать:</span>' +
+          Object.keys(C.LTV_METRICS).map(k => seg('ltv-metric', 'data-metric', k, metric === k, C.LTV_METRICS[k])).join('') + '</div>' +
+        '<div class="toolbar" role="group" aria-label="Разрез"><span class="toolbar-label">Разрез:</span>' +
+          Object.keys(C.LTV_DIMS).map(k => seg('ltv-dim', 'data-dim', k, dim === k, C.LTV_DIMS[k])).join('') + '</div>' +
+        C.renderLtvCurve(d.ltvCurve, { dim, metric })));
+  }
+
   // Новые и вернувшиеся по месяцам + разбор месяца по клику (sql/29): кто в
   // нём покупал — новые, быстрый повтор, вернулись из … Всё из загруженных
   // строк, в базу клик не ходит. Нет снимка разбора (29 не прогнан) — таблица
@@ -559,6 +582,7 @@
       (e.base ? C.sectionError(e.base) : C.renderKpis(k)) +
       section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
               or(e, 'ltv', () => C.renderCohorts(d.ltv))) +
+      ltvSection(app) +
       retentionSection(app) +
       '<div class="two">' +
         section('repeat', 'Время до второго заказа', '', or(e, 'repeat', () => C.renderRepeat(d.repeat))) +
@@ -1719,6 +1743,13 @@
         if (box) box.outerHTML = retentionSection(app);
         return;
       }
+      if (action === 'ltv-metric' || action === 'ltv-dim') {
+        if (action === 'ltv-metric') app.ui.ltvMetric = C.LTV_METRICS[el.getAttribute('data-metric')] ? el.getAttribute('data-metric') : 'profit';
+        else app.ui.ltvDim = C.LTV_DIMS[el.getAttribute('data-dim')] ? el.getAttribute('data-dim') : 'all';
+        const box = rootEl.querySelector('#ltv');
+        if (box) box.outerHTML = ltvSection(app);
+        return;
+      }
       if (action === 'month-mix') {
         // Разбор другого месяца — из памяти; фокус остаётся на нажатом месяце.
         if (app.route !== 'clients' || !app.data) return;
@@ -1879,7 +1910,7 @@
       ovUi: { preset, grouping: ['day', 'week', 'decade', 'month'].indexOf(prefs.grouping) >= 0 ? prefs.grouping : DEFAULT_GROUPING[preset],
               from: '', to: '', hidden: {} },
       ui: { riskLevel: 'высокий', riskAll: false, baseQuery: '', baseSort: 'revenue', baseLimit: BASE_STEP,
-            retMode: 'any', retEntry: 'all', mixMonth: null }
+            retMode: 'any', retEntry: 'all', mixMonth: null, ltvMetric: 'profit', ltvDim: 'all' }
     };
     app.route = routeFromHash();   // разделы ещё не известны; закрытый экран поправит openRoute
 
