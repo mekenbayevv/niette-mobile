@@ -35,6 +35,7 @@
  */
 (function (root) {
   'use strict';
+  const s0 = v => String(v === null || v === undefined ? '' : v);
 
   const C = root.NietteClients;
   const PAGE = 1000;
@@ -113,18 +114,20 @@
   // «B2B» (sql/28_b2b.sql): таблицы мини-CRM целиком — их сотни строк, не
   // тысячи, а карточка партнёра открывается мгновенно из памяти. Таблицы, а
   // не снимки: после переключения записанное должно быть видно сразу.
-  // alive — без мягко удалённых строк (deleted_at, появятся с записью).
+  // alive — без мягко удалённых строк (deleted_at: запись, sql/31).
   const B2B_SRC = [
-    { key: 'clients',   table: 'b2b_clients',    paged: true, order: ['sheet_row', 'id'], what: 'Партнёры' },
+    { key: 'clients',   table: 'b2b_clients',    paged: true, order: ['sheet_row', 'id'], what: 'Партнёры', alive: true },
     { key: 'shipments', table: 'b2b_shipments',  paged: true, order: ['sheet_row', 'id'], what: 'Поставки', alive: true },
     { key: 'payments',  table: 'b2b_payments',   paged: true, order: ['sheet_row', 'id'], what: 'Оплаты', alive: true },
     { key: 'visits',    table: 'b2b_visits',     paged: true, order: ['sheet_row', 'id'], what: 'Визиты', alive: true,
-      select: 'id,day,client_id,result,next_day,rep,comment,files' },
+      select: 'id,day,client_id,result,potential,next_day,contact,phone,rep,comment,files' },
     { key: 'items',     table: 'b2b_ship_items', paged: true, order: ['sheet_row', 'id'], what: 'Позиции поставок', alive: true },
     { key: 'payItems',  table: 'b2b_pay_items',  paged: true, order: ['sheet_row', 'id'], what: 'Позиции оплат', alive: true },
     { key: 'branches',  table: 'b2b_branches',   paged: true, order: ['sheet_row', 'id'], what: 'Филиалы', alive: true },
     { key: 'docs',      table: 'b2b_docs',       paged: true, order: ['sheet_row', 'id'], what: 'Документы', alive: true },
-    { key: 'rounds',    table: 'b2b_rounds',     paged: true, order: ['sheet_row', 'id'], what: 'Обходы', alive: true }
+    { key: 'rounds',    table: 'b2b_rounds',     paged: true, order: ['sheet_row', 'id'], what: 'Обходы', alive: true },
+    // Товары для форм — «Номенклатура» (как выбирает торгпред); нет её — список мобильного.
+    { key: 'nomen',     table: 'b2b_nomen',      paged: false, order: ['sheet_row', 'app_name'], what: 'Номенклатура' }
   ];
   const B2B_CORE = ['clients', 'shipments', 'payments'];   // без них экрану показать нечего
   const B2B_STATUS = { table: 'v_b2b_status', what: 'Перенос B2B' };
@@ -632,7 +635,11 @@
     app.ov = null; app.ovView = null; app.kp = null; app.kpView = null; app.oz = null; app.ozView = null;
     app.an = null; app.anView = null; app.st = null; app.stForm = null; app.b2b = null; app.b2bModel = null;
     if (app.b2bUi) app.b2bUi.card = null;
+    // Формы B2B — тоже: недописанная оплата одного человека не должна
+    // достаться следующему, вошедшему на том же телефоне.
+    app.b2bForm = null; app.b2bAct = { confirm: null }; app.b2bBulk = newBulk(); app.b2bSigned = {}; app.b2bNotice = null;
   }
+  function newBulk() { return { sel: {}, status: 'Реализация', msg: null, busy: false }; }
 
   function showLogin(app, errorText, email) {
     app.session = null;
@@ -1433,10 +1440,15 @@
     if (st.mode !== 'live' && synced && imported && synced - imported > 15 * 60000) {
       notes.push('Перенос отстаёт от зеркала: листы приехали, а таблицы не обновились. Проверка: sql/diag_b2b.sql.');
     }
+    const p = b2bPerm(app);
+    const ro = p.write ? root.NietteB2bForms.renderTraining(p)
+      : st.mode === 'live' ? '<p class="note b2b-ro">Только чтение: вносить могут те, кому владелец включил право записи.</p>'
+      : '<p class="note b2b-ro">Только чтение: поставки, оплаты и визиты пока вносятся в старом табе B2B ' +
+        'и в мобильном торгпреда — сюда они приходят с зеркалом таблицы, днём обычно через 15–30 минут.</p>';
     return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      notes.map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('') +
-      (st.mode === 'live' ? '' : '<p class="note b2b-ro">Только чтение: поставки, оплаты и визиты пока вносятся в старом табе B2B ' +
-        'и в мобильном торгпреда — сюда они приходят с зеркалом таблицы, днём обычно через 15–30 минут.</p>');
+      notes.map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('') + ro +
+      (app.b2bNotice ? '<div class="st-msg ' + (app.b2bNotice.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' +
+        C.esc(app.b2bNotice.text) + '</div>' : '');
   }
 
   function b2bOvInner(app, m, per, k) {
@@ -1444,9 +1456,14 @@
     const urg = B.renderUrgent(B.urgent(m, ui), m.today);
     return B.renderKpis(k, per, ui) +
       (urg ? section('b2bUrgent', 'Горит сегодня', 'требует внимания прямо сейчас', urg) : '') +
-      section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
-              B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), ui.overdueOpen)) +
+      b2bOverdueHtml(app, m) +
       b2bForecastHtml(app, m);
+  }
+  function b2bOverdueHtml(app, m) {
+    const B = root.NietteB2b, ui = app.b2bUi, p = b2bPerm(app);
+    return section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
+      B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), ui.overdueOpen,
+                      p.write ? { perm: p, bulk: app.b2bBulk } : undefined));
   }
   function b2bForecastHtml(app, m) {
     const B = root.NietteB2b;
@@ -1472,13 +1489,18 @@
       const cm = B.cardModel(m, app.b2bUi.card);
       const partial = Object.keys(b.errors).map(k => b.errors[k]);
       if (cm) {
-        return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today));
+        const p = b2bPerm(app);
+        const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned,
+                      top: p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '' };
+        return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
       }
-      app.b2bUi.card = null;                     // партнёра больше нет (обновили) — к списку
+      app.b2bUi.card = null;                     // партнёра больше нет (обновили, удалили) — к списку
+      if (app.b2bForm && app.b2bForm.cid && !m.byId[app.b2bForm.cid]) app.b2bForm = null;
     }
-    const per = b2bPer(app), k = B.kpis(m, app.b2bUi, per);
+    const per = b2bPer(app), k = B.kpis(m, app.b2bUi, per), p = b2bPerm(app);
     return headerHtml(app) + page(
       b2bFreshHtml(app) +
+      (p.write ? root.NietteB2bForms.renderActions(p, false) + b2bFormPanel(app, m, null) : '') +
       root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)) +
       B.renderFilters(app.b2bUi, k) +
       '<div id="b2bOv">' + b2bOvInner(app, m, per, k) + '</div>' +
@@ -1486,7 +1508,10 @@
       section('b2bNotes', 'Как читать эти числа', '', B.renderNotes()));
   }
 
-  function renderB2b(app) { show(app, b2bHtml(app)); }
+  function renderB2b(app) {
+    show(app, b2bHtml(app));
+    if (app.b2bUi.card) b2bSign(app);
+  }
 
   // Период поменялся — пересчитать всё, что от него зависит, не трогая поля дат.
   function rerenderB2b(app, keep) {
@@ -1509,6 +1534,431 @@
     app.b2b = b2b;
     app.b2bModel = null;
     if (app.route === 'b2b') renderB2b(app);
+  }
+
+  // ── Формы «B2B» (sql/31_b2b_write.sql) ───────────────────────────────────
+  // Разметка и тела запросов — в b2b_forms.js. Здесь — сеть, файлы и события.
+  // Права держит база (b2b_w_guard); страница по app_me и режиму только не
+  // показывает кнопок, которые всё равно получили бы отказ.
+  function b2bPerm(app) {
+    const F = root.NietteB2bForms;
+    return F ? F.perm(app.me, app.b2b && app.b2b.status) : { write: false, full: false, canPay: false, training: false, live: false };
+  }
+  function b2bToday(app) { return root.NietteOverview.todayIso(app.now()); }
+
+  function b2bFormPanel(app, m, cm) {
+    const form = app.b2bForm;
+    if (!form) return '';
+    // Форма из карточки — про этого партнёра; со списка — свой выбор партнёра.
+    if (!!cm !== !!form.inCard || (cm && form.cid !== s0(cm.c.id))) return '';
+    return '<div id="b2bFormPanel">' + root.NietteB2bForms.renderForm(form, m, {
+      today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm }) + '</div>';
+  }
+  // Ответ базы может прийти, когда человек уже на другой вкладке: состояние
+  // формы обновлено, а экран не наш — его не трогаем (вернётся — увидит).
+  function b2bRedraw(app) {
+    if (app.route === 'b2b' && app.b2b) renderB2b(app);
+  }
+  function b2bRenderPanel(app) {
+    if (app.route !== 'b2b' || !app.b2b) return;
+    const box = app.root.querySelector('#b2bFormPanel');
+    if (!box) return renderB2b(app);
+    const m = b2bModel(app), cm = app.b2bUi.card ? root.NietteB2b.cardModel(m, app.b2bUi.card) : null;
+    box.outerHTML = b2bFormPanel(app, m, cm) || '<div id="b2bFormPanel"></div>';
+  }
+  // Ошибки — текстом базы (sql/31 пишет их по-русски и для человека); поверх —
+  // только то, что база сказать не может.
+  function b2bFormError(err) {
+    const msg = String((err && (err.message || err.error_description)) || err || '');
+    const code = String((err && err.code) || '');
+    if (code === 'PGRST202' || /could not find the function/i.test(msg))
+      return 'Функций записи B2B нет в базе — выполните sql/31_b2b_write.sql, затем sql/12_auth.sql.';
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg))
+      return 'Нет связи с базой. Прежде чем вносить снова, нажмите «Обновить» и проверьте карточку — запись могла дойти.';
+    if (code === '57014' || /statement timeout|canceling statement/i.test(msg))
+      return 'База не успела ответить. Обновите экран и проверьте карточку, прежде чем вносить снова.';
+    if (/jwt expired|invalid jwt/i.test(msg) || /^PGRST30/.test(code)) return 'Сессия истекла — войдите заново. Ничего не записано.';
+    return msg || 'Не записано: неизвестная ошибка.';
+  }
+
+  function b2bFindRec(app, kind, id) {
+    const d = app.b2b.data, list = { shipment: d.shipments, payment: d.payments, visit: d.visits, branch: d.branches }[kind] || [];
+    return list.find(r => s0(r.id) === s0(id)) || null;
+  }
+
+  function b2bOpenForm(app, kind, el) {
+    const F = root.NietteB2bForms, ui = app.b2bUi, m = b2bModel(app), today = b2bToday(app);
+    const cid = ui.card || '';
+    let form;
+    if (kind === 'row') {
+      const rk = el.getAttribute('data-rowkind'), rec = b2bFindRec(app, rk, el.getAttribute('data-id'));
+      if (!rec) return;
+      form = F.newForm('row', { cid, rec, rowKind: rk }, today);
+    } else if (kind === 'edit') {
+      form = F.newForm('edit', { cid, rec: m.byId[cid] }, today);
+    } else {
+      form = F.newForm(kind, { cid }, today);
+    }
+    form.inCard = !!ui.card;
+    app.b2bForm = form;
+    app.b2bAct.confirm = null;
+    app.b2bNotice = null;
+    renderB2b(app);
+    if (kind === 'payment' && form.cid) b2bLoadUnpaid(app, form);
+    const first = app.root.querySelector('#b2bForm input:not([type="checkbox"]):not([type="file"]), #b2bForm select');
+    if (first && first.focus) first.focus();
+  }
+
+  // «За что можно платить» — витрина базы, та же, по которой её проверяет
+  // form_b2b_add_payment: расчёт один на двоих.
+  async function b2bLoadUnpaid(app, form) {
+    const cid = form.cid, g = app.gen;
+    form.unpaid = null; form.unpaidErr = null; form.qty = {};
+    b2bRenderPanel(app);
+    let res;
+    try { res = await app.client.from('v_b2b_unpaid_items').select('*').eq('client_id', cid); }
+    catch (e) { res = { error: e }; }
+    if (g !== app.gen || app.b2bForm !== form || form.cid !== cid) return;
+    if (res.error) form.unpaidErr = /does not exist|PGRST205|42P01/.test(String(res.error.message || res.error.code || ''))
+      ? 'Нет витрины v_b2b_unpaid_items — выполните sql/31_b2b_write.sql, затем sql/12_auth.sql.' : humanError(res.error, 'За что платить');
+    form.unpaid = res.error ? [] : (res.data || []);
+    b2bRenderPanel(app);
+  }
+
+  async function b2bReload(app) {
+    const g = app.gen;
+    const b = await loadB2b(app.client);
+    if (g !== app.gen) return;
+    app.b2b = b;
+    app.b2bModel = null;
+    if (app.route === 'b2b') renderB2b(app);
+  }
+
+  // ── Файлы: сжатие и загрузка в хранилище (корзина b2b) ───────────────────
+  function b2bUuid() {
+    if (root.crypto && root.crypto.randomUUID) return root.crypto.randomUUID();
+    const h = '0123456789abcdef';
+    return 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => h[Math.floor(Math.random() * 16)]);
+  }
+  // Фото — до 1600 пикселей по длинной стороне, JPEG: снимок телефона в
+  // 3–5 МБ становится ~300 КБ. Не разобрал браузер (HEIC в Chrome) или сжатое
+  // не меньше исходного — уходит как есть.
+  async function b2bPrepareFile(file) {
+    const F = root.NietteB2bForms;
+    const ext = F.extOf(file.name, file.type);
+    if (!ext) throw new Error('«' + file.name + '» — не фото и не документ (можно jpg, png, webp, heic, pdf, doc, docx).');
+    if (/^(jpe?g|png|webp|heic|heif)$/.test(ext) && root.createImageBitmap && root.document) {
+      try {
+        const bmp = await root.createImageBitmap(file);
+        const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+        const cv = root.document.createElement('canvas');
+        cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+        cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+        const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.82));
+        if (blob && blob.size > 0 && blob.size < file.size) return { blob, ext: 'jpg', type: 'image/jpeg', name: file.name };
+      } catch (e) { /* как есть */ }
+    }
+    if (file.size > F.MAX_FILE_MB * 1024 * 1024) throw new Error('«' + file.name + '» больше ' + F.MAX_FILE_MB + ' МБ.');
+    return { blob: file, ext, type: file.type || F.MIME[ext], name: file.name };
+  }
+  // Сначала проверить и сжать ВСЕ файлы, потом грузить: отказ третьего не
+  // оставит в хранилище первые два. Загруженное помнит форма (form.upl: файл →
+  // имя в хранилище): повтор после отказа сети или базы берёт уже загруженное,
+  // а не грузит второй раз — иначе в корзине копятся сироты.
+  const b2bFileSig = f => f.name + ':' + f.size + ':' + (f.lastModified || 0);
+  async function b2bUpload(app, form, kind, files, g) {
+    const F = root.NietteB2bForms;
+    if (files.length > F.MAX_FILES) throw new Error('Больше ' + F.MAX_FILES + ' файлов к одной записи.');
+    if (!app.client.storage) throw new Error('Хранилище файлов недоступно — запишите без файлов.');
+    const done = form.upl || (form.upl = {});
+    const todo = [];
+    for (const f of files) if (!done[b2bFileSig(f)]) todo.push({ sig: b2bFileSig(f), x: await b2bPrepareFile(f) });
+    for (const t of todo) {
+      if (done[t.sig]) continue;                 // один и тот же файл выбран дважды
+      if (g !== app.gen) throw new Error('Вышли — загрузка остановлена.');
+      const x = t.x, path = F.storagePath(kind, b2bToday(app), b2bUuid(), x.ext);
+      let res;
+      try { res = await app.client.storage.from('b2b').upload(path, x.blob, { contentType: x.type, upsert: false }); }
+      catch (e) { res = { error: e }; }
+      if (res && res.error) {
+        throw new Error('«' + x.name + '» не загрузился: ' + (res.error.message || res.error) + '. Запись не сделана — попробуйте ещё раз или без файла.');
+      }
+      done[t.sig] = path;
+    }
+    return files.map(f => done[b2bFileSig(f)]).filter((p, i, a) => a.indexOf(p) === i);
+  }
+  // Временные ссылки на файлы карточки: хранилище закрыто, ссылка живёт час.
+  async function b2bSign(app) {
+    const B = root.NietteB2b, m = b2bModel(app), cm = B.cardModel(m, app.b2bUi.card);
+    if (!cm || !app.client || !app.client.storage) return;
+    const now = Date.now(), have = app.b2bSignedAt || (app.b2bSignedAt = {});
+    const need = B.storageFiles(cm).filter(p => !app.b2bSigned[p] || now - (have[p] || 0) > 50 * 60000);
+    if (!need.length) return;
+    const g = app.gen, card = app.b2bUi.card;
+    let res;
+    try { res = await app.client.storage.from('b2b').createSignedUrls(need, 3600); }
+    catch (e) { res = { error: e }; }
+    if (g !== app.gen || res.error || !Array.isArray(res.data)) return;
+    res.data.forEach(x => { if (x && x.signedUrl && x.path) { app.b2bSigned[x.path] = x.signedUrl; have[x.path] = now; } });
+    if (app.route !== 'b2b' || app.b2bUi.card !== card) return;
+    const box = app.root.querySelector('#b2bGallery');
+    const cm2 = box ? B.cardModel(b2bModel(app), card) : null;
+    if (cm2) box.outerHTML = B.renderGallerySection(cm2, app.b2bSigned);
+  }
+
+  // ── Сохранить ─────────────────────────────────────────────────────────────
+  const RPC_ADD = { client: 'form_b2b_add_client', visit: 'form_b2b_add_visit', shipment: 'form_b2b_add_shipment',
+                    payment: 'form_b2b_add_payment', round: 'form_b2b_add_round', branch: 'form_b2b_add_branch' };
+  async function b2bCall(app, fn, args) {
+    try { const r = await app.client.rpc(fn, args); return r || { error: 'пустой ответ' }; }
+    catch (e) { return { error: e }; }
+  }
+  function b2bFormMsg(app, form, tone, text) {
+    form.msg = { tone, text };
+    form.busy = false;
+    b2bRenderPanel(app);
+  }
+  async function b2bSave(app) {
+    const F = root.NietteB2bForms, form = app.b2bForm;
+    if (!form || form.busy) return;
+    const kind = form.kind;
+    const needCid = kind !== 'client' && !(kind === 'visit' && form.newClient);
+    if (needCid && !form.cid) return b2bFormMsg(app, form, 'bad', 'Выберите партнёра.');
+    if (kind === 'visit' && form.newClient && !String(form.nc.name || '').trim()) return b2bFormMsg(app, form, 'bad', 'Укажите название новой точки.');
+    if (kind === 'payment') {
+      const t = F.paymentTotals(form);
+      if (t.over.length) return b2bFormMsg(app, form, 'bad', 'По позиции введено больше, чем осталось.');
+      if (!t.lines) return b2bFormMsg(app, form, 'bad', 'Укажите, за какие позиции оплата, — или разнесите сумму по старым.');
+    }
+    if (kind === 'row') {
+      const p = F.rowProblem(form);
+      if (p) return b2bFormMsg(app, form, 'bad', p);
+    }
+    form.busy = true; form.msg = null;
+    b2bRenderPanel(app);
+    // Каждый ответ сети — после паузы: за это время могли выйти, а на этом
+    // телефоне войти другим. Тогда дальше не идём — ни второй запрос, ни экран:
+    // иначе запись ушла бы от чужого имени.
+    const g = app.gen, gone = () => g !== app.gen;
+    let files = [], res;
+    if ((kind === 'visit' || kind === 'shipment') && (form.files || []).length) {
+      try { files = await b2bUpload(app, form, kind, form.files, g); }
+      catch (e) { if (!gone()) b2bFormMsg(app, form, 'bad', e.message); return; }
+      if (gone()) return;
+    }
+    if (RPC_ADD[kind]) {
+      const d = kind === 'client' ? F.clientPayload(form) : kind === 'visit' ? F.visitPayload(form, files)
+              : kind === 'shipment' ? F.shipmentPayload(form, files) : kind === 'payment' ? F.paymentPayload(form)
+              : kind === 'round' ? F.roundPayload(form) : F.branchPayload(form);
+      res = await b2bCall(app, RPC_ADD[kind], { d });
+    } else if (kind === 'edit') {
+      const ch = F.clientChanges(form);
+      if (!Object.keys(ch.patch).length && ch.counterparty === null && !ch.contract) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
+      res = { data: { ok: true } };
+      if (Object.keys(ch.patch).length) res = await b2bCall(app, 'form_b2b_update', { p_kind: 'client', p_id: form.cid, p_patch: ch.patch });
+      if (gone()) return;
+      if (!res.error && ch.counterparty !== null) res = await b2bCall(app, 'form_b2b_set_counterparty', { p_client_id: form.cid, p_value: ch.counterparty });
+      if (gone()) return;
+      if (!res.error && ch.contract) res = await b2bCall(app, 'form_b2b_set_contract', { p_client_id: form.cid, p_num: ch.contract.num, p_day: ch.contract.day });
+    } else if (kind === 'row') {
+      const patch = F.rowPatch(form);
+      if (!Object.keys(patch).length) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
+      res = await b2bCall(app, 'form_b2b_update', { p_kind: form.rowKind, p_id: form.id, p_patch: patch });
+    } else if (kind === 'delclient') {
+      res = await b2bCall(app, 'form_b2b_delete_client', { p_client_id: form.cid, p_confirm: form.f.confirm });
+    }
+    if (gone()) return;                        // пока писалось, вышли: экран не рисуем
+    // Пока писалось, форму закрыли или открыли другую: ответ — плашкой над
+    // экраном, а открытую форму с тем, что в ней набрано, не трогаем.
+    const still = app.b2bForm === form;
+    form.busy = false;
+    if (res.error) {
+      const text = b2bFormError(res.error);
+      if (!still) {
+        app.b2bNotice = { tone: 'bad', text: 'Не записано («' + F.formTitle(form) + '»): ' + text };
+        return b2bRedraw(app);
+      }
+      if (/уже есть/.test(text) && (kind === 'client' || (kind === 'visit' && form.newClient))) {
+        const nm = kind === 'client' ? form.f.name : form.nc.name, ct = kind === 'client' ? form.f.city : form.nc.city;
+        form.dupAsk = true; form.dupFor = F.dupKey(nm, ct); form.f.allow_duplicate = false;
+      }
+      return b2bFormMsg(app, form, 'bad', text + (files.length ? ' Файлы уже загружены — при повторе второй раз не грузятся.' : ''));
+    }
+    const text = F.savedText(kind, res.data, { files: files.length });
+    if (!still) {
+      app.b2bNotice = { tone: 'ok', text };
+      if (kind === 'delclient' && app.b2bUi.card === form.cid) app.b2bUi.card = null;
+    } else if (kind === 'delclient') {
+      app.b2bForm = null; app.b2bUi.card = null; app.b2bNotice = { tone: 'ok', text };
+    } else if (kind === 'edit' || kind === 'row') {
+      app.b2bForm = null; app.b2bNotice = { tone: 'ok', text: 'Сохранено' + (res.data && res.data.training ? ' — тренировка.' : '.') };
+    } else {
+      // Новая форма того же вида и про того же партнёра — следующую запись не
+      // надо начинать с выбора партнёра; сообщение — в ней же.
+      const next = F.newForm(kind, { cid: kind === 'client' ? '' : form.cid }, b2bToday(app));
+      next.inCard = form.inCard;
+      next.msg = { tone: 'ok', text };
+      app.b2bForm = next;
+    }
+    await b2bReload(app);
+    // Список «за что платить» — заново только у свежей формы; в чужой открытой
+    // не стираем набранное: лишнее отвергнет база своим текстом.
+    if (still && app.b2bForm && app.b2bForm.kind === 'payment' && app.b2bForm.cid) b2bLoadUnpaid(app, app.b2bForm);
+  }
+
+  async function b2bDelete(app, kind, id) {
+    if (app.b2bAct.busy) return;               // второе нажатие, пока идёт первое
+    const g = app.gen;
+    app.b2bAct.confirm = null; app.b2bAct.busy = true;
+    const res = await b2bCall(app, 'form_b2b_delete', { p_kind: kind, p_id: id });
+    app.b2bAct.busy = false;
+    if (g !== app.gen) return;
+    app.b2bNotice = res.error ? { tone: 'bad', text: b2bFormError(res.error) }
+      : { tone: 'ok', text: 'Удалено: ' + id + (res.data && res.data.items ? ' и ' + res.data.items + ' ' + (kind === 'payment' ? 'её позиций' : 'позиций') : '') +
+          (res.data && res.data.training ? '. Тренировка.' : '.') };
+    if (res.error) return b2bRedraw(app);
+    return b2bReload(app);
+  }
+
+  // Отмеченные — только среди видимых строк: что скрыл фильтр, того не
+  // меняем. Кнопка считает видимые — запрос шлёт ровно их же.
+  function b2bBulkIds(app) {
+    const B = root.NietteB2b, m = b2bModel(app), sel = app.b2bBulk.sel;
+    return B.overdueShipments(m).filter(r => B.ovInScope(m, app.b2bUi, r.cid) && sel[r.id]).map(r => r.id);
+  }
+  async function b2bBulkSave(app) {
+    const bulk = app.b2bBulk, ids = b2bBulkIds(app);
+    if (!ids.length || bulk.busy) return;
+    bulk.busy = true; bulk.msg = null;
+    swapSection(app, 'b2bOverdue', b2bOverdueHtml(app, b2bModel(app)));
+    const g = app.gen;
+    const res = await b2bCall(app, 'form_b2b_bulk_status', { p_ids: ids, p_status: bulk.status });
+    if (g !== app.gen) return;
+    bulk.busy = false;
+    if (res.error) {
+      bulk.msg = { tone: 'bad', text: b2bFormError(res.error) };
+      return swapSection(app, 'b2bOverdue', b2bOverdueHtml(app, b2bModel(app)));
+    }
+    const d = res.data || {};
+    bulk.sel = {};
+    bulk.msg = { tone: 'ok', text: '«' + d.status + '»: изменено ' + (d.changed_count || 0) +
+      (d.already && d.already.length ? ', уже было ' + d.already.length : '') + (d.missing && d.missing.length ? ', не найдено ' + d.missing.join(', ') : '') +
+      (d.training ? '. Тренировка.' : '.') };
+    return b2bReload(app);
+  }
+
+  async function b2bTrainReset(app) {
+    if (app.b2bAct.busy) return;
+    const g = app.gen;
+    app.b2bAct.busy = true;
+    const res = await b2bCall(app, 'form_b2b_training_reset', {});
+    app.b2bAct.busy = false;
+    if (g !== app.gen) return;
+    app.b2bNotice = res.error ? { tone: 'bad', text: b2bFormError(res.error) }
+                              : { tone: 'ok', text: 'Тренировка стёрта: таблицы снова — копия листов.' };
+    app.b2bForm = null;
+    if (res.error) return b2bRedraw(app);
+    return b2bReload(app);
+  }
+
+  function b2bFormAction(app, action, el) {
+    const F = root.NietteB2bForms, form = app.b2bForm;
+    if (action === 'b2b-f-open') return b2bOpenForm(app, el.getAttribute('data-kind'), el);
+    if (action === 'b2b-f-close') { app.b2bForm = null; return renderB2b(app); }
+    if (action === 'b2b-f-save') return b2bSave(app);
+    if (action === 'b2b-del') { app.b2bAct.confirm = el.getAttribute('data-kind') + ':' + el.getAttribute('data-id'); app.b2bNotice = null; return renderB2b(app); }
+    if (action === 'b2b-del-no') { app.b2bAct.confirm = null; return renderB2b(app); }
+    if (action === 'b2b-del-yes') return b2bDelete(app, el.getAttribute('data-kind'), el.getAttribute('data-id'));
+    if (action === 'b2b-bulk-save') return b2bBulkSave(app);
+    if (action === 'b2b-train-reset') return b2bTrainReset(app);
+    if (!form) return;
+    if (action === 'b2b-f-item-add') { form.items.push(F.emptyItem()); return b2bRenderPanel(app); }
+    if (action === 'b2b-f-item-del') { form.items.splice(Number(el.getAttribute('data-i')), 1); return b2bRenderPanel(app); }
+    if (action === 'b2b-f-fifo') {
+      const a = F.fifo(form.unpaid || [], form.f.received);
+      form.qty = {};
+      Object.keys(a.qty).forEach(k => { form.qty[k] = String(a.qty[k]); });
+      form.f.advance = a.advance > 0 ? String(a.advance) : '';
+      form.msg = null;
+      return b2bRenderPanel(app);
+    }
+  }
+
+  // Поле формы поменялось — в состояние; перерисовка — только зависимого.
+  const BF = { bfName: 'name', bfType: 'type', bfStage: 'stage', bfCity: 'city', bfPriority: 'priority', bfAddress: 'address',
+    bfContact: 'contact', bfPhone: 'phone', bfCounterparty: 'counterparty', bfComment: 'comment', bfDay: 'day', bfResult: 'result',
+    bfPotential: 'potential', bfNextDay: 'next_day', bfBranch: 'branch_id', bfShipDay: 'ship_day', bfDueDay: 'due_day',
+    bfMonthDay: 'month_day', bfWeekday: 'weekday', bfStatus: 'status', bfInvoice: 'invoice_no', bfAdvance: 'advance',
+    bfMethod: 'method', bfReceipt: 'receipt_no', bfReceiver: 'receiver', bfRep: 'rep', bfContractNo: 'contract_no',
+    bfContractDate: 'contract_date', bfConfirm: 'confirm', bfReceived: 'received', bfPayDay: 'pay_day' };
+  const BF_NC = { bfNcName: 'name', bfNcType: 'type', bfNcCity: 'city', bfNcAddress: 'address' };
+  function b2bFormInput(app, t, evType) {
+    if (!t || app.route !== 'b2b' || !app.b2b) return;
+    const F = root.NietteB2bForms, rootEl = app.root;
+    if (t.id === 'bfBulkStatus') { app.b2bBulk.status = t.value; return; }
+    const bulkId = t.getAttribute ? t.getAttribute('data-bulk-id') : null;
+    if (bulkId !== null) {
+      app.b2bBulk.sel[bulkId] = !!t.checked;
+      if (evType === 'change') {
+        const btn = rootEl.querySelector('[data-action="b2b-bulk-save"]');
+        const nSel = b2bBulkIds(app).length;
+        if (btn) { btn.disabled = !nSel; btn.textContent = nSel ? 'Сменить у ' + nSel + ' ' + (nSel % 10 === 1 && nSel % 100 !== 11 ? 'поставки' : 'поставок') : 'Сменить у отмеченных'; }
+      }
+      return;
+    }
+    const form = app.b2bForm;
+    if (!form) return;
+    if (t.id === 'bfClient') {
+      if (evType !== 'change') return;
+      form.cid = t.value; form.f.branch_id = ''; form.msg = null;
+      if (form.kind === 'payment') return b2bLoadUnpaid(app, form);
+      if (form.kind === 'shipment') return b2bRenderPanel(app);
+      return;
+    }
+    if (t.id === 'bfNewClient') { form.newClient = !!t.checked; return b2bRenderPanel(app); }
+    if (t.id === 'bfAllowDup') { form.f.allow_duplicate = !!t.checked; return; }
+    if (t.id === 'bfFiles') { form.files = Array.from(t.files || []); const s = rootEl.querySelector('.b2b-files-picked');
+      if (s) s.textContent = form.files.map(f => f.name).join(', ') || 'не выбраны'; return; }
+    if (BF_NC[t.id]) { form.nc[BF_NC[t.id]] = t.value; return; }
+    if (BF[t.id] && form.f && BF[t.id] in form.f) {
+      form.f[BF[t.id]] = t.value;
+      if (t.id === 'bfPayType' && evType === 'change') return b2bRenderPanel(app);
+      if (t.id === 'bfAdvance') return b2bPaySum(app);
+      return;
+    }
+    if (t.id === 'bfPayType') { form.f.pay_type = t.value; if (evType === 'change') b2bRenderPanel(app); return; }
+    const ii = t.getAttribute ? t.getAttribute('data-bf-item') : null;
+    if (ii !== null && form.items && form.items[Number(ii)]) {
+      const it = form.items[Number(ii)], col = t.getAttribute('data-bf-col');
+      it[col] = t.value;
+      if (col === 'product' && evType === 'change') {
+        if (String(it.price || '').trim() === '') it.price = String(F.priceOf(it.product));
+        return b2bRenderPanel(app);
+      }
+      const row = t.closest ? t.closest('tr') : null, cell = row ? row.querySelector('.b2b-f-sum') : null;
+      const q = Number(String(it.qty).replace(',', '.')), pr = Number(String(it.price).replace(',', '.'));
+      if (cell) cell.textContent = q > 0 && pr >= 0 ? C.money(Math.round(q * pr)) : '—';
+      const tot = rootEl.querySelector('#bfTotal');
+      if (tot) tot.textContent = C.money(Math.round(F.shipmentTotal(form.items)));
+      return;
+    }
+    const pid = t.getAttribute ? t.getAttribute('data-bf-pay') : null;
+    if (pid !== null) {
+      form.qty[pid] = t.value;
+      const row = t.closest ? t.closest('tr') : null;
+      const u = (form.unpaid || []).find(x => s0(x.id) === pid);
+      if (row && u) row.classList.toggle('over', Number(t.value) > Number(u.left_qty) + 1e-6);
+      return b2bPaySum(app);
+    }
+  }
+  function b2bPaySum(app) {
+    const F = root.NietteB2bForms, form = app.b2bForm, rootEl = app.root;
+    if (!form || form.kind !== 'payment') return;
+    const t = F.paymentTotals(form);
+    const sum = rootEl.querySelector('#bfPaySum');
+    if (sum) sum.innerHTML = F.paySumText(t);
+    const btn = rootEl.querySelector('#b2bForm [data-action="b2b-f-save"]');
+    if (btn && !form.busy) btn.textContent = t.total > 0 ? 'Записать оплату ' + C.money(Math.round(t.total)) : 'Записать оплату';
   }
 
   // ── Экраны с периодом ─────────────────────────────────────────────────────
@@ -1663,6 +2113,7 @@
       if (action.indexOf('b2b-') === 0) {
         if (app.route !== 'b2b' || !app.b2b) return;
         const ui = app.b2bUi, m = b2bModel(app);
+        if (/^b2b-(f-|del|bulk-save|train-reset)/.test(action)) return b2bFormAction(app, action, el);
         if (action === 'b2b-card') {
           ui.scroll = root.scrollY || 0;
           ui.card = el.getAttribute('data-id');
@@ -1707,9 +2158,7 @@
         }
         if (action === 'b2b-overdue') {
           ui.overdueOpen = true;
-          const B = root.NietteB2b;
-          return swapSection(app, 'b2bOverdue', section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
-            B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), true)));
+          return swapSection(app, 'b2bOverdue', b2bOverdueHtml(app, m));
         }
         return;
       }
@@ -1821,6 +2270,11 @@
     // Формы «Склада»: поле → состояние, без перерисовки экрана.
     rootEl.addEventListener('input', ev => stFormInput(app, ev.target));
     rootEl.addEventListener('change', ev => stFormInput(app, ev.target));
+
+    // Формы «B2B»: поле → состояние формы; перерисовывается только то, что от
+    // поля зависит (сумма, список позиций), курсор остаётся на месте.
+    rootEl.addEventListener('input', ev => b2bFormInput(app, ev.target, 'input'));
+    rootEl.addEventListener('change', ev => b2bFormInput(app, ev.target, 'change'));
 
     // Поиск партнёров «B2B» — та же схема: перерисовывается только таблица.
     rootEl.addEventListener('input', ev => {
@@ -1953,7 +2407,7 @@
       riskByKey: {}, synced: null, loadedAt: null,
       route: 'overview', ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
       an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 }, stForm: null,
-      b2b: null, b2bModel: null,
+      b2b: null, b2bModel: null, b2bForm: null, b2bAct: { confirm: null }, b2bBulk: newBulk(), b2bSigned: {}, b2bNotice: null,
       b2bUi: { type: 'all', noWholesale: false, showClosed: false, card: null, scroll: 0, overdueOpen: false,
                fc: { month: '', day: '' }, p: { type: 'all', result: 'all', query: '', sort: null, dir: 'desc' } },
       now: opts.now || (() => new Date()),

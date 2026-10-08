@@ -578,3 +578,40 @@ button.b2b-day.has:hover { background: var(--b2b-due-tint); filter: brightness(.
 .b2b-branches { list-style: none; margin: 0; padding: 0; }
 .b2b-branches li { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .b2b-branches li:last-child { border-bottom: none; }
+
+
+/* ── B2B: формы записи (b2b_forms.js, sql/31) ─────────────────────────────── */
+.b2b-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.b2b-actions button { min-height: 34px; }
+.b2b-card-act { margin: 0 0 12px; }
+.b2b-f { margin: 0 0 16px; background: var(--surface); }
+.b2b-f-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.b2b-f-head .st-subhead { margin: 0; }
+.b2b-f-train { color: var(--amber); }
+.b2b-f-label { font-size: 12px; color: var(--text-3); display: block; margin-bottom: 4px; }
+.b2b-f-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.b2b-f-check input { width: 18px; height: 18px; min-height: 0; padding: 0; flex: none; }
+.b2b-f-items input, .b2b-f-items select { width: 100%; min-width: 64px; min-height: 32px; padding: 4px 8px; }
+.b2b-f-items td:first-child select { min-width: 150px; }
+.b2b-f-items tr.over input { border-color: var(--red); color: var(--red); }
+.b2b-f-total { font-size: 13px; color: var(--text-2); margin-left: auto; }
+.b2b-f-total b { color: var(--text); font-variant-numeric: tabular-nums; }
+.b2b-f-fifo { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.b2b-f-fifo input { flex: 1; min-width: 160px; }
+.b2b-f-note { font-size: 12px; }
+.b2b-files-picked { font-size: 12px; overflow-wrap: anywhere; }
+.b2b-row-act { white-space: nowrap; text-align: right; }
+.b2b-train { margin: 0 0 12px; }
+.b2b-train button { margin-left: 8px; }
+.b2b-bulk { margin: 0 0 8px; }
+.b2b-bulk label { font-size: 12px; color: var(--text-3); }
+.b2b-bulk select { width: auto; min-width: 140px; }
+button.danger-text { color: var(--red); border-color: var(--red); }
+.b2b-thumb-wait .b2b-thumb-box { background: var(--surface-2); }
+.b2b-thumb-doc { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--surface); font-size: 13px; font-weight: 700; color: var(--text-2); }
+@media (max-width: 560px) {
+  .b2b-f .st-fields { grid-template-columns: 1fr; }
+  .b2b-f-total { margin-left: 0; width: 100%; }
+  .b2b-actions button { flex: 1 1 calc(50% - 8px); }
+}

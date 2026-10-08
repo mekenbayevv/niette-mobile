@@ -771,17 +771,31 @@
     return '<div class="b2b-urgent' + (od && ct ? ' two-col' : '') + '">' + od + ct + '</div>';
   }
 
-  function renderOverdue(rows, open) {
+  // act — { perm, bulk: { sel: {id: true}, status, msg } }: с правом записи
+  // статус меняется пачкой здесь же (form_b2b_bulk_status), как в старом табе.
+  function renderOverdue(rows, open, act) {
     if (!rows.length) return '<p class="empty">Просроченных поставок нет.</p>';
+    const can = !!(act && act.perm && act.perm.write), bulk = (act && act.bulk) || { sel: {}, status: 'Реализация', msg: null };
     const total = rows.reduce((a, r) => a + r.amount, 0);
     const head = '<p class="note">' + pl(rows.length, 'поставка', 'поставки', 'поставок') + ' затихших партнёров на ' + tg(total) +
-      '. Если товар на самом деле под реализацию — статус меняется в старом табе пачкой (до дня переключения).</p>';
+      (can ? '. Если товар на самом деле под реализацию — отметьте поставки и смените статус пачкой.</p>'
+           : '. Если товар на самом деле под реализацию — статус меняется в старом табе пачкой (до дня переключения).</p>');
     if (!open) return head + '<button type="button" class="ghost" data-action="b2b-overdue">Показать список</button>';
     const src = { monthly: 'по графику', weekly: 'по графику', default: '~ месяц от поставки' };
-    return head + '<div class="table-scroll tall"><table class="grid"><thead><tr><th scope="col">Поставка</th>' +
+    const nSel = rows.filter(r => bulk.sel[r.id]).length;
+    const bar = can ? '<div class="st-form-actions b2b-bulk"><label for="bfBulkStatus">Статус для отмеченных</label>' +
+      '<select id="bfBulkStatus">' + ['Реализация', 'Отгружено', 'Частично', 'Оплачено', 'Возврат'].map(x =>
+        '<option' + (bulk.status === x ? ' selected' : '') + '>' + esc(x) + '</option>').join('') + '</select>' +
+      '<button type="button" data-action="b2b-bulk-save"' + (nSel && !bulk.busy ? '' : ' disabled') + '>' +
+      (bulk.busy ? 'Меняю…' : 'Сменить у ' + (nSel ? pl(nSel, 'поставки', 'поставок', 'поставок') : 'отмеченных')) + '</button></div>' +
+      (bulk.msg ? '<div class="st-msg ' + (bulk.msg.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' + esc(bulk.msg.text) + '</div>' : '') : '';
+    return head + bar + '<div class="table-scroll tall"><table class="grid"><thead><tr>' +
+      (can ? '<th scope="col"><span class="sr-only">Отметить</span></th>' : '') + '<th scope="col">Поставка</th>' +
       '<th scope="col" class="txt">Партнёр</th><th scope="col" class="txt">Отгрузка</th><th scope="col" class="txt">Срок оплаты</th>' +
       '<th scope="col">Сумма</th><th scope="col">Тишина</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><th scope="row" class="muted">' + esc(r.id) + '</th><td class="wrap">' + partnerLink(r.cid, r.client) + '</td>' +
+      rows.map(r => '<tr>' + (can ? '<td><input type="checkbox" data-bulk-id="' + esc(r.id) + '"' + (bulk.sel[r.id] ? ' checked' : '') +
+          ' aria-label="Отметить ' + esc(r.id) + '"></td>' : '') +
+        '<th scope="row" class="muted">' + esc(r.id) + '</th><td class="wrap">' + partnerLink(r.cid, r.client) + '</td>' +
         '<td>' + dmy(r.ship) + '</td><td>' + dmy(r.due) + (src[r.src] ? ' <span class="muted">' + esc(src[r.src]) + '</span>' : '') + '</td>' +
         '<td class="num">' + tg(r.amount) + '</td><td class="num bad">' + r.days + NBSP + 'дн</td></tr>').join('') +
       '</tbody></table></div>';
@@ -895,7 +909,11 @@
     return paid > 0 ? '<span class="badge warn">Частично</span>' : '<span class="badge">Ждём оплату</span>';
   }
 
-  function renderCard(cm, today) {
+  // act — только у тех, кому можно писать (b2b_forms.js, app.js):
+  //   { perm, confirm: 'kind:id' — второе нажатие «Удалить», top: HTML кнопок и формы,
+  //     signed: { имя в хранилище → временная ссылка } }
+  // Без act карточка — та же, что на этапе 1: только чтение.
+  function renderCard(cm, today, act) {
     const c = cm.c, f = cm.fin, pct = Math.round(f.payRate * 100);
     const contract = c.contract_no ? '№' + esc(c.contract_no) + (c.contract_date ? ' от ' + dmy(c.contract_date) : '') : '';
     const head = '<div class="b2b-card-top"><button type="button" class="ghost" data-action="b2b-back">← Все партнёры</button></div>' +
@@ -916,16 +934,26 @@
           cm.age ? esc(cm.age.maxDays + ' дн тишины') : (cm.expectAssumed ? 'срок не указан — месяц от поставки' : ''), cm.age ? 'bad' : '') +
       kpi('Лояльность', f.loyalty + NBSP + '%', 'оплаты и визиты') +
     '</div>';
-    return head + kp +
+    const a = act || null;
+    return head + (a && a.top ? '<div class="b2b-card-act">' + a.top + '</div>' : '') + kp +
       sectionCard('b2bProducts', 'Товары у партнёра', productsSub(cm), renderProducts(cm)) +
-      sectionCard('b2bShips', 'Поставки', pl(cm.ships.length, 'поставка', 'поставки', 'поставок'), renderShips(cm)) +
-      sectionCard('b2bPays', 'Оплаты', pl(cm.pays.length, 'оплата', 'оплаты', 'оплат'), renderPays(cm)) +
+      sectionCard('b2bShips', 'Поставки', pl(cm.ships.length, 'поставка', 'поставки', 'поставок'), renderShips(cm, a)) +
+      sectionCard('b2bPays', 'Оплаты', pl(cm.pays.length, 'оплата', 'оплаты', 'оплат'), renderPays(cm, a)) +
       sectionCard('b2bDocs', 'Счета и накладные', 'PDF — в Google Drive, по ссылкам старой системы', renderDocs(cm.docs)) +
-      sectionCard('b2bVisits', 'Визиты', 'новые сверху', renderVisits(cm.visits)) +
-      (cm.rounds.length ? sectionCard('b2bRounds', 'Обходы', '', renderRounds(cm.rounds)) : '') +
-      sectionCard('b2bBranches', 'Филиалы', '', renderBranches(cm.branches)) +
-      sectionCard('b2bGallery', 'Фото и документы', 'из визитов и поставок', renderGallery(cm.gallery));
+      sectionCard('b2bVisits', 'Визиты', 'новые сверху', renderVisits(cm.visits, a)) +
+      (cm.rounds.length ? sectionCard('b2bRounds', 'Обходы', '', renderRounds(cm.rounds, a)) : '') +
+      sectionCard('b2bBranches', 'Филиалы', '', renderBranches(cm.branches, a)) +
+      renderGallerySection(cm, a && a.signed);
   }
+  function renderGallerySection(cm, signed) {
+    return sectionCard('b2bGallery', 'Фото и документы', 'из визитов и поставок', renderGallery(cm.gallery, signed));
+  }
+  // Кнопки строки — b2b_forms.js; без права записи — ничего, ни колонки.
+  function actCell(a, kind, id) {
+    const F = root.NietteB2bForms;
+    return a && a.perm && a.perm.write && F ? F.rowActions(a.perm, kind, s0(id), a.confirm) : '';
+  }
+  const actHead = a => (a && a.perm && a.perm.write ? '<th scope="col"><span class="sr-only">Действия</span></th>' : '');
   function sectionCard(id, title, sub, inner) {
     return '<section class="card" id="' + id + '" aria-labelledby="' + id + 'Title"><div class="card-head"><h2 id="' + id + 'Title">' +
       esc(title) + '</h2>' + (sub ? '<div class="card-sub">' + esc(sub) + '</div>' : '') + '</div>' + inner + '</section>';
@@ -962,12 +990,12 @@
       '<th scope="col">Оплачено</th><th scope="col">Осталось у партнёра</th><th scope="col" class="txt">Статус</th></tr></thead><tbody>' + body +
       '</tbody></table></div>' : '') + notes.map(t => '<p class="note">' + esc(t) + '</p>').join('');
   }
-  function renderShips(cm) {
+  function renderShips(cm, act) {
     if (!cm.ships.length) return '<p class="empty">Поставок нет.</p>';
     const rows = cm.ships.slice().sort((a, b) => s0(b.ship_day).localeCompare(s0(a.ship_day)));
     return '<div class="table-scroll"><table class="grid"><thead><tr><th scope="col">Поставка</th><th scope="col" class="txt">Дата</th>' +
       '<th scope="col">Сумма</th><th scope="col">Оплачено</th><th scope="col">Долг</th><th scope="col" class="txt">Статус</th>' +
-      '<th scope="col" class="txt">Срок</th><th scope="col" class="txt">Товары</th></tr></thead><tbody>' +
+      '<th scope="col" class="txt">Срок</th><th scope="col" class="txt">Товары</th>' + actHead(act) + '</tr></thead><tbody>' +
       rows.map(s => {
         const a = cm.alloc.byId[s0(s.id)] || { paid: 0, sum: n(s.amount), consign: false };
         // Возврат — товар вернулся к нам: долга по этой строке нет. Разнесение
@@ -979,21 +1007,24 @@
           '<td>' + dmy(s.ship_day) + '</td><td class="num">' + tg(s.amount) + '</td><td class="num">' + tg(a.paid) + '</td>' +
           '<td class="num ' + (ret ? 'muted' : debt > 0 ? (a.consign ? '' : 'bad') : 'good') + '">' + (ret ? '—' : tg(debt)) + '</td>' +
           '<td>' + (ret ? '<span class="badge info">Возврат</span>' : shipBadge(a)) + '</td>' +
-          '<td>' + (!ret && due.day ? (due.assumed ? '~' : '') + dmy(due.day) : '—') + '</td><td class="wrap">' + (items || '<span class="muted">—</span>') + '</td></tr>';
+          '<td>' + (!ret && due.day ? (due.assumed ? '~' : '') + dmy(due.day) : '—') + '</td><td class="wrap">' + (items || '<span class="muted">—</span>') + '</td>' +
+          actCell(act, 'shipment', s.id) + '</tr>';
       }).join('') + '</tbody></table></div>';
   }
-  function renderPays(cm) {
+  function renderPays(cm, act) {
     if (!cm.pays.length) return '<p class="empty">Оплат нет.</p>';
     const rows = cm.pays.slice().sort((a, b) => s0(b.pay_day).localeCompare(s0(a.pay_day)));
     return '<div class="table-scroll"><table class="grid"><thead><tr><th scope="col">Дата</th><th scope="col">Сумма</th>' +
-      '<th scope="col" class="txt">За что</th><th scope="col" class="txt">Способ</th><th scope="col" class="txt">№</th><th scope="col" class="txt">Принял</th></tr></thead><tbody>' +
+      '<th scope="col" class="txt">За что</th><th scope="col" class="txt">Способ</th><th scope="col" class="txt">№</th><th scope="col" class="txt">Принял</th>' +
+      actHead(act) + '</tr></thead><tbody>' +
       rows.map(p => {
         const what = (p._items || []).length
           ? (p._items || []).map(i => esc(i.product || i.ship_item_id || '') + (n(i.qty) ? ' × ' + nf3.format(n(i.qty)) : '') +
               (s0(i.source) === 'оценка' ? ' <span class="muted">(оценка)</span>' : '')).join('<br>')
           : (p.shipment_id ? 'поставка ' + esc(p.shipment_id) : '<span class="muted">без разбивки</span>');
         return '<tr><th scope="row">' + dmy(p.pay_day) + '</th><td class="num good">' + tg(p.amount) + '</td><td class="wrap">' + what + '</td>' +
-          '<td>' + esc(p.method || '—') + '</td><td class="muted">' + esc(p.receipt_no || '—') + '</td><td>' + esc(p.receiver || '—') + '</td></tr>';
+          '<td>' + esc(p.method || '—') + '</td><td class="muted">' + esc(p.receipt_no || '—') + '</td><td>' + esc(p.receiver || '—') + '</td>' +
+          actCell(act, 'payment', p.id) + '</tr>';
       }).join('') + '</tbody></table></div>';
   }
   function renderDocs(docs) {
@@ -1007,31 +1038,59 @@
         '<td>' + (/^https:\/\//.test(s0(d.pdf_url)) ? '<a href="' + esc(d.pdf_url) + '" target="_blank" rel="noopener">открыть</a>' : '<span class="muted">—</span>') + '</td></tr>').join('') +
       '</tbody></table></div>';
   }
-  function renderVisits(visits) {
+  function renderVisits(visits, act) {
     if (!visits.length) return '<p class="empty">Визитов нет.</p>';
     const top = visits.slice(0, 10);
     return '<div class="table-scroll"><table class="grid"><thead><tr><th scope="col">Дата</th><th scope="col" class="txt">Результат</th>' +
-      '<th scope="col" class="txt">Комментарий</th><th scope="col" class="txt">Торгпред</th><th scope="col" class="txt">След. контакт</th></tr></thead><tbody>' +
+      '<th scope="col" class="txt">Комментарий</th><th scope="col" class="txt">Торгпред</th><th scope="col" class="txt">След. контакт</th>' +
+      actHead(act) + '</tr></thead><tbody>' +
       top.map(v => '<tr><th scope="row">' + dmy(v.day) + '</th><td>' + esc(v.result || '—') + '</td><td class="wrap">' + esc(v.comment || '—') + '</td>' +
-        '<td>' + esc(v.rep || '—') + '</td><td>' + (v.next_day ? dmy(v.next_day) : '—') + '</td></tr>').join('') +
+        '<td>' + esc(v.rep || '—') + '</td><td>' + (v.next_day ? dmy(v.next_day) : '—') + '</td>' + actCell(act, 'visit', v.id) + '</tr>').join('') +
       '</tbody></table></div>' + (visits.length > 10 ? '<p class="note">Показаны 10 последних из ' + visits.length + '.</p>' : '');
   }
-  function renderRounds(rounds) {
+  function renderRounds(rounds, act) {
     return '<div class="table-scroll"><table class="grid"><thead><tr><th scope="col">Дата</th><th scope="col">Продажи</th>' +
-      '<th scope="col" class="txt">Позиции</th><th scope="col" class="txt">Торгпред</th></tr></thead><tbody>' +
+      '<th scope="col" class="txt">Позиции</th><th scope="col" class="txt">Торгпред</th>' + actHead(act) + '</tr></thead><tbody>' +
       rounds.map(r => '<tr><th scope="row">' + dmy(r.day) + '</th><td class="num">' + tg(r.amount) + '</td><td class="wrap">' +
-        esc(r.items_text || '—').replace(/\n/g, '<br>') + '</td><td>' + esc(r.rep || '—') + '</td></tr>').join('') + '</tbody></table></div>';
+        esc(r.items_text || '—').replace(/\n/g, '<br>') + '</td><td>' + esc(r.rep || '—') + '</td>' + actCell(act, 'round', r.id) + '</tr>').join('') +
+      '</tbody></table></div>';
   }
-  function renderBranches(list) {
+  function renderBranches(list, act) {
     if (!list.length) return '<p class="empty">Филиалов нет.</p>';
+    if (act && act.perm && act.perm.write) {
+      // С правом записи — таблицей: у каждой строки «Изменить» и «Удалить».
+      return '<div class="table-scroll"><table class="grid"><thead><tr><th scope="col">Филиал</th><th scope="col" class="txt">Адрес</th>' +
+        '<th scope="col" class="txt">Контакт</th>' + actHead(act) + '</tr></thead><tbody>' + list.map(b => '<tr><th scope="row">' +
+        esc(b.name || b.address || '—') + '</th><td class="wrap">' + esc([b.address, b.city].filter(Boolean).join(', ') || '—') + '</td>' +
+        '<td>' + esc([b.contact, b.phone].filter(Boolean).join(' · ') || '—') + '</td>' + actCell(act, 'branch', b.id) + '</tr>').join('') +
+        '</tbody></table></div>';
+    }
     return '<ul class="b2b-branches">' + list.map(b => '<li><b>' + esc(b.name || b.address || '—') + '</b> <span class="muted">' +
       esc([b.address, b.city].filter(Boolean).join(', ')) + '</span>' + (b.contact || b.phone ? '<div class="where">' +
       esc([b.contact, b.phone].filter(Boolean).join(' · ')) + '</div>' : '') + '</li>').join('') + '</ul>';
   }
-  function renderGallery(g) {
+  // Файлы — два вида: старые ссылки Drive (как есть) и имена в хранилище
+  // Supabase (корзина b2b, закрытая, sql/31): у них ссылка временная, её
+  // страница получает заранее (signed) — без неё плитка ждёт.
+  const isStorageFile = u => !!s0(u) && !/^https?:\/\//i.test(s0(u));
+  const isImageName = u => /\.(jpe?g|png|webp)$/i.test(s0(u));
+  function storageFiles(cm) {
+    return (cm && cm.gallery ? cm.gallery : []).map(f => s0(f.url)).filter(isStorageFile).filter((u, i, a) => a.indexOf(u) === i);
+  }
+  function renderGallery(g, signed) {
     if (!g.length) return '<p class="empty">Файлов нет: торгпред прикрепляет фото при визите или поставке.</p>';
     return '<div class="b2b-gallery">' + g.map(f => {
-      const th = driveThumb(f.url), label = f.kind + (f.day ? ' · ' + dmy(f.day) : '');
+      const label = f.kind + (f.day ? ' · ' + dmy(f.day) : '');
+      if (isStorageFile(f.url)) {
+        const href = signed && signed[f.url];
+        if (!href) return '<span class="b2b-thumb b2b-thumb-wait" title="' + esc(label) + '"><span class="b2b-thumb-box"></span>' +
+          '<span class="b2b-thumb-label">' + esc(label) + ' · открываю…</span></span>';
+        return '<a class="b2b-thumb" href="' + esc(href) + '" target="_blank" rel="noopener" title="' + esc(label) + '">' +
+          '<span class="b2b-thumb-box">' + (isImageName(f.url) ? '<img src="' + esc(href) + '" alt="" loading="lazy" onerror="this.remove()">'
+                                                               : '<span class="b2b-thumb-doc">' + esc(s0(f.url).split('.').pop().toUpperCase()) + '</span>') +
+          '</span><span class="b2b-thumb-label">' + esc(label) + '</span></a>';
+      }
+      const th = driveThumb(f.url);
       return '<a class="b2b-thumb" href="' + esc(f.url) + '" target="_blank" rel="noopener" title="' + esc(label) + '">' +
         '<span class="b2b-thumb-box">' + (th ? '<img src="' + esc(th) + '" alt="" loading="lazy" onerror="this.remove()">' : '') + '</span>' +
         '<span class="b2b-thumb-label">' + esc(label) + '</span></a>';
@@ -1040,7 +1099,7 @@
 
   function renderNotes() {
     return '<ul class="notes">' +
-      '<li><b>Только чтение.</b> Поставки, оплаты и визиты пока вносятся в старом табе и мобильном торгпреда. Сюда они приходят с зеркалом таблицы: оно обновляется вместе с новыми заказами Kaspi — днём обычно через 15–30 минут, ночью реже. Время зеркала — в строке над экраном.</li>' +
+      '<li><b>Откуда данные.</b> До дня переключения поставки, оплаты и визиты вносятся в старом табе и мобильном торгпреда, сюда приходят с зеркалом таблицы: оно обновляется вместе с новыми заказами Kaspi — днём обычно через 15–30 минут, ночью реже. Время зеркала — в строке над экраном. Формы на этом экране до переключения — тренировка для полного доступа: внесённое сотрёт следующий перенос из листов.</li>' +
       '<li><b>Поставлено</b> — по дню поставки, реализация входит, возврат вычитается. <b>Оплачено</b> — по дню оплаты. Строки без даты не попадают ни в один период.</li>' +
       '<li><b>Остаток</b> — долг на сегодня: всё поставленное минус всё оплаченное, без товара под реализацию. <b>Счета затихли</b> — долг есть, а месяц нет ни поставок, ни оплат.</li>' +
       '<li><b>Ждём оплату</b> — ближайший срок неоплаченной поставки; «~» — срок не указан, взят месяц от поставки.</li>' +
@@ -1056,8 +1115,8 @@
     addMonth, addDays, dayDiff, dueDate, nextBySchedule, prevPeriod, periodLabel,
     debtors, agingMap, nextContactMap, lastTouchMap, lastPayDateMap, visitMaps, moneyMaps, prepare,
     ovClients, ovInScope, kpis, urgent, forecast, overdueShipments, partnerRows, partnerCells,
-    parseItemsText, allocate, cardProducts, cardModel, driveThumb,
+    parseItemsText, allocate, cardProducts, cardModel, driveThumb, storageFiles, isStorageFile,
     renderFilters, renderKpis, renderUrgent, renderOverdue, renderForecast, renderPartnerToolbar, renderPartners,
-    renderCard, renderNotes
+    renderCard, renderGallerySection, renderNotes
   };
 })(typeof window !== 'undefined' ? window : globalThis);
