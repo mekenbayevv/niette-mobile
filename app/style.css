@@ -614,4 +614,24 @@ button.danger-text { color: var(--red); border-color: var(--red); }
   .b2b-f .st-fields { grid-template-columns: 1fr; }
   .b2b-f-total { margin-left: 0; width: 100%; }
   .b2b-actions button { flex: 1 1 calc(50% - 8px); }
+  /* Позиции поставки и обхода: таблица в 390 px не помещается (цена и сумма
+     уезжали за край) — на телефоне строка становится карточкой: товар во всю
+     ширину, ниже количество, единица и цена с подписями, затем сумма и «✕». */
+  .b2b-f-lines thead { display: none; }
+  .b2b-f-lines, .b2b-f-lines tbody { display: block; width: 100%; }
+  .b2b-f-lines tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; padding: 8px 10px;
+                    border-bottom: 1px solid var(--border); }
+  .b2b-f-lines tbody tr:last-child { border-bottom: none; }
+  .b2b-f-lines td { padding: 0; border: 0; min-width: 0; white-space: normal; }
+  .b2b-f-lines td:first-child { grid-column: 1 / -1; }
+  .b2b-f-lines input, .b2b-f-lines select, .b2b-f-lines td:first-child select { min-width: 0; }
+  .b2b-f-lines td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+  .b2b-f-lines td.b2b-f-sum { grid-column: 1 / 3; align-self: center; text-align: left; font-weight: 600; }
+  .b2b-f-lines td:last-child { justify-self: end; align-self: center; }
+  /* Оплата: «На сумму» на телефоне убрана — она же «осталось × цена» из
+     соседней колонки; без неё в ширину входит поле «Оплачено, шт». */
+  .b2b-f-pay tr > :nth-child(3) { display: none; }
+  .b2b-f-pay th, .b2b-f-pay td { padding: 8px; }
+  .b2b-f-pay th.who { white-space: normal; }
+  .b2b-f-pay input { min-width: 56px; }
 }

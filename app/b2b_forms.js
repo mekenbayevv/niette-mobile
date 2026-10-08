@@ -287,16 +287,16 @@
       '<td><select data-bf-item="' + i + '" data-bf-col="product" aria-label="Товар, строка ' + (i + 1) + '">' +
         '<option value="">— товар —</option>' + withCurrent(prods, it.product).map(p =>
         '<option' + (t0(it.product) === p ? ' selected' : '') + '>' + esc(p) + '</option>').join('') + '</select></td>' +
-      '<td><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="qty" value="' +
+      '<td data-label="Кол-во"><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="qty" value="' +
         esc(s0(it.qty)) + '" aria-label="Количество, строка ' + (i + 1) + '"></td>' +
-      (withUnit ? '<td><input type="text" data-bf-item="' + i + '" data-bf-col="unit" maxlength="10" value="' + esc(s0(it.unit || 'шт')) +
+      (withUnit ? '<td data-label="Ед."><input type="text" data-bf-item="' + i + '" data-bf-col="unit" maxlength="10" value="' + esc(s0(it.unit || 'шт')) +
         '" aria-label="Единица, строка ' + (i + 1) + '"></td>' : '') +
-      (withPrice ? '<td><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="price" value="' +
+      (withPrice ? '<td data-label="Цена, ₸"><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="price" value="' +
         esc(s0(it.price)) + '" aria-label="Цена, строка ' + (i + 1) + '"></td>' : '') +
       '<td class="num b2b-f-sum">' + (n(it.qty) > 0 && n(it.price) >= 0 ? tg(r2(n(it.qty) * n(it.price))) : '—') + '</td>' +
       '<td>' + (form.items.length > 1 ? '<button type="button" class="ghost small" data-action="b2b-f-item-del" data-i="' + i +
         '" aria-label="Убрать строку ' + (i + 1) + '">✕</button>' : '') + '</td></tr>').join('');
-    return '<div class="st-field wide"><span class="b2b-f-label">Позиции</span><div class="table-scroll"><table class="grid b2b-f-items"><thead><tr>' +
+    return '<div class="st-field wide"><span class="b2b-f-label">Позиции</span><div class="table-scroll"><table class="grid b2b-f-items b2b-f-lines"><thead><tr>' +
       '<th scope="col" class="txt">Товар</th><th scope="col">Кол-во</th>' + (withUnit ? '<th scope="col" class="txt">Ед.</th>' : '') +
       (withPrice ? '<th scope="col">Цена, ₸</th>' : '') + '<th scope="col">Сумма</th><th scope="col"></th></tr></thead><tbody>' + rows +
       '</tbody></table></div><div class="st-form-actions"><button type="button" class="ghost small" data-action="b2b-f-item-add">+ строка</button>' +
@@ -494,7 +494,7 @@
     return '<div class="st-field wide"><span class="b2b-f-label">За что оплата — ещё не оплачено на ' + esc(tg(totalLeft)) + '</span>' +
       '<div class="b2b-f-fifo"><input id="bfReceived" type="number" inputmode="decimal" min="0" step="any" placeholder="Сколько пришло, ₸" value="' +
         esc(s0(form.f.received)) + '" aria-label="Сколько пришло, тенге"><button type="button" class="ghost" data-action="b2b-f-fifo">Разнести по старым</button></div>' +
-      '<div class="table-scroll tall"><table class="grid b2b-f-items"><thead><tr><th scope="col" class="txt">Позиция</th><th scope="col">Осталось</th>' +
+      '<div class="table-scroll tall"><table class="grid b2b-f-items b2b-f-pay"><thead><tr><th scope="col" class="txt">Позиция</th><th scope="col">Осталось</th>' +
       '<th scope="col">На сумму</th><th scope="col">Оплачено, шт</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
       '<div class="b2b-f-total" id="bfPaySum">' + paySumText(t) + '</div></div>';
   }
