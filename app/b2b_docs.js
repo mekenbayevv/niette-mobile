@@ -236,10 +236,11 @@
       .filter((x, i) => docKind === 'invoice' ? x.debt > 0 : i < 30);
   }
   // Что отметить при открытии: счёт — самая свежая поставка с остатком;
-  // накладная — самая свежая без накладной.
-  function pickShip(list, docKind) {
+  // накладная — самая свежая без накладной, не раньше границы из реквизитов
+  // (from, sql/32): на старую поставку накладную отмечают руками, если нужна.
+  function pickShip(list, docKind, from) {
     const l = list || [];
-    const hit = docKind === 'invoice' ? l.find(x => x.debt > 0) : l.find(x => !x.waybill);
+    const hit = docKind === 'invoice' ? l.find(x => x.debt > 0) : l.find(x => !x.waybill && (!from || s0(x.day) >= from));
     return hit || null;
   }
 
@@ -253,9 +254,9 @@
   }
   // Строки поставок пришли — отметить поставку и заполнить строки (если
   // человек ещё ничего не правил руками).
-  function prefill(form, cm) {
+  function prefill(form, cm, from) {
     if (!form.ships.length) {
-      const p = pickShip(shipChoices(cm, form.docKind), form.docKind);
+      const p = pickShip(shipChoices(cm, form.docKind), form.docKind, from);
       if (p) form.ships = [p.id];
     }
     if (!form.dirty && form.ships.length) {
@@ -314,10 +315,13 @@
   const isTraining = (d, perm) => !!(perm && !perm.live && (d.sheet_row === null || d.sheet_row === undefined));
 
   // ── Раздел карточки «Счета и накладные» ──────────────────────────────────
-  // act: { perm, confirm }. Готовый PDF — панелью над карточкой (app.js).
-  function missingCount(cm) {
+  // act: { perm, confirm, waybillsFrom }. Готовый PDF — панелью над карточкой (app.js).
+  // from — граница накладных из реквизитов (sql/32): до неё накладных в
+  // дашборде не было, и задним числом их сам дашборд не предлагает.
+  function missingCount(cm, from) {
     const by = cm.docsByShip || {};
-    return (cm.ships || []).filter(s => t0(s.status) !== 'Возврат' && !(by[s0(s.id)] || []).some(d => d.kind === 'waybill')).length;
+    return (cm.ships || []).filter(s => t0(s.status) !== 'Возврат' && (!from || s0(s.ship_day) >= from) &&
+                                        !(by[s0(s.id)] || []).some(d => d.kind === 'waybill')).length;
   }
   function renderPdfPanel(pdf) {
     if (!pdf) return '';
@@ -336,7 +340,7 @@
     const alive = new Set((cm.ships || []).map(s => s0(s.id)));
     const shipAt = {};
     (cm.ships || []).forEach(s => { shipAt[s0(s.id)] = s; });
-    const miss = w ? missingCount(cm) : 0;
+    const miss = w ? missingCount(cm, a.waybillsFrom) : 0;
     const tools = w ? '<div class="b2b-actions b2b-doc-tools" role="toolbar" aria-label="Документы">' +
       '<button type="button" class="ghost small" data-action="b2b-f-open" data-kind="doc" data-doc="invoice">+ Счёт</button>' +
       '<button type="button" class="ghost small" data-action="b2b-f-open" data-kind="doc" data-doc="waybill">+ Накладная</button>' +
@@ -387,9 +391,9 @@
   // Под номером поставки в таблице «Поставки»: её документы и «+ накладная».
   function shipDocsHtml(cm, s, act) {
     const docs = (cm.docsByShip || {})[s0(s.id)] || [];
-    const w = !!(act && act.perm && act.perm.write);
+    const w = !!(act && act.perm && act.perm.write), from = (act && act.waybillsFrom) || '';
     const links = docs.map(d => docLink(d, (d.kind === 'invoice' ? 'счёт ' : '') + (d.number || d.id)));
-    if (w && t0(s.status) !== 'Возврат' && !docs.some(d => d.kind === 'waybill')) {
+    if (w && t0(s.status) !== 'Возврат' && (!from || s0(s.ship_day) >= from) && !docs.some(d => d.kind === 'waybill')) {
       links.push('<button type="button" class="ghost small b2b-doc-ship" data-action="b2b-doc-ship" data-id="' + esc(s.id) + '">+ накладная</button>');
     }
     return links.length ? '<div class="where b2b-ship-docs">' + links.join(' ') + '</div>' : '';
@@ -496,11 +500,16 @@
     ['waybill_released_by', 'З-2: отпуск разрешил (расшифровка)', 200], ['chief_accountant', 'З-2: главный бухгалтер', 200],
     ['invoice_notice', 'Текст «Внимание!» в шапке счёта', 1000]
   ];
+  // Даты и числа реквизитов — строкой формы; пусто — NULL в базе.
+  const dateOf = v => s0(v).slice(0, 10);
+  const priceOf = v => (v === null || v === undefined || s0(v) === '' ? '' : String(Number(v)));
   function newSettingsForm(rec, next) {
     const f = {};
     SETTINGS.forEach(([k]) => { f[k] = s0(rec && rec[k]); });
     f.invoice_next = rec && rec.invoice_next !== null && rec.invoice_next !== undefined ? String(rec.invoice_next) : '';
     f.auto_waybill = !(rec && rec.auto_waybill === false);
+    f.waybills_from = dateOf(rec && rec.waybills_from);
+    f.bundle_price = priceOf(rec && rec.bundle_price);
     return { kind: 'docset', cid: '', f, rec: rec || null, next: next || null, msg: null, busy: false };
   }
   function settingsChanges(form) {
@@ -509,6 +518,8 @@
     const was = rec.invoice_next === null || rec.invoice_next === undefined ? '' : String(rec.invoice_next);
     if (t0(f.invoice_next) !== was) patch.invoice_next = t0(f.invoice_next) === '' ? null : num(f.invoice_next);
     if (!!f.auto_waybill !== !(rec.auto_waybill === false)) patch.auto_waybill = !!f.auto_waybill;
+    if (t0(f.waybills_from) !== dateOf(rec.waybills_from)) patch.waybills_from = t0(f.waybills_from) === '' ? null : t0(f.waybills_from);
+    if (t0(f.bundle_price) !== priceOf(rec.bundle_price)) patch.bundle_price = t0(f.bundle_price) === '' ? null : num(f.bundle_price);
     return patch;
   }
   function renderSettingsForm(form) {
@@ -531,7 +542,11 @@
              '<div class="st-field"><span class="b2b-f-label">Следующие номера сейчас</span><span>' +
                (form.next ? 'счёт <b>' + esc(form.next.invoice_next) + '</b>, накладная <b>' + esc(form.next.waybill_next) + '</b>' : '—') + '</span></div>',
              '<div class="st-field wide"><label class="b2b-f-check"><input type="checkbox" data-bs="auto_waybill"' + (f.auto_waybill ? ' checked' : '') +
-               '> Выписывать накладную сама при каждой поставке</label></div></div>');
+               '> Выписывать накладную сама при каждой поставке</label></div>',
+             field('bsF_waybills_from', 'Накладные — на поставки с (раньше — только формой)', '<input id="bsF_waybills_from" type="date" data-bs="waybills_from" value="' +
+               esc(f.waybills_from) + '">'),
+             field('bsF_bundle_price', 'Салфетки-довесок в документах, ₸ за штуку (пусто — без строки)', '<input id="bsF_bundle_price" type="number" inputmode="decimal" min="0.01" step="any" data-bs="bundle_price" value="' +
+               esc(f.bundle_price) + '">') + '</div>');
     }
     H.push('<div class="st-form-actions"><button type="button" data-action="b2b-f-save"' + (form.busy || !form.rec ? ' disabled' : '') + '>' +
       esc(form.busy ? 'Сохраняю…' : 'Сохранить реквизиты') + '</button></div>' + msgHtml(form.msg) + '</div>');

@@ -134,7 +134,13 @@
       legacyNote: 'файла sql/32 в базе нет — список без PDF, новые счета и накладные не выписать. Выполните sql/32_b2b_docs.sql, затем sql/12_auth.sql.' },
     { key: 'rounds',    table: 'b2b_rounds',     paged: true, order: ['sheet_row', 'id'], what: 'Обходы', alive: true },
     // Товары для форм — «Номенклатура» (как выбирает торгпред); нет её — список мобильного.
-    { key: 'nomen',     table: 'b2b_nomen',      paged: false, order: ['sheet_row', 'app_name'], what: 'Номенклатура' }
+    { key: 'nomen',     table: 'b2b_nomen',      paged: false, order: ['sheet_row', 'app_name'], what: 'Номенклатура' },
+    // Довесок (салфетки в пачках по 1 ₸) и граница накладных — sql/32 от 10.10.2026.
+    // optional: нет их (страница новее базы) — форма без довеска, документы без
+    // границы, и это не авария экрана.
+    { key: 'bundles',   table: 'v_b2b_bundle_rules', paged: false, order: ['product', 'bundle'], what: 'Довески', optional: true },
+    { key: 'docset',    table: 'b2b_doc_settings', paged: false, order: ['id'], what: 'Реквизиты', optional: true,
+      select: 'waybills_from,bundle_price,auto_waybill' }
   ];
   const B2B_CORE = ['clients', 'shipments', 'payments'];   // без них экрану показать нечего
   const B2B_STATUS = { table: 'v_b2b_status', what: 'Перенос B2B' };
@@ -403,7 +409,8 @@
     const data = {}, errors = {};
     B2B_SRC.forEach((s, i) => {
       const r = res[i];
-      if (r.status !== 'fulfilled') { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
+      if (r.status !== 'fulfilled' && s.optional) data[s.key] = [];
+      else if (r.status !== 'fulfilled') { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
       else if (Array.isArray(r.value)) data[s.key] = r.value;
       else { data[s.key] = r.value.legacy; errors[s.key] = s.what + ': ' + s.legacyNote; }
     });
@@ -1508,7 +1515,7 @@
       const partial = Object.keys(b.errors).map(k => b.errors[k]);
       if (cm) {
         const p = b2bPerm(app);
-        const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned,
+        const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned, waybillsFrom: b2bWaybillsFrom(app),
                       top: (p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '') + b2bPdfPanel(app) };
         return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
       }
@@ -1574,7 +1581,24 @@
       today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm, contract: b2bContract(cm && cm.c) }) + '</div>';
     if (form.kind === 'docset') return '<div id="b2bFormPanel">' + D.renderSettingsForm(form) + '</div>';
     return '<div id="b2bFormPanel">' + root.NietteB2bForms.renderForm(form, m, {
-      today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm }) + '</div>';
+      today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm, bundle: b2bBundle(app) }) + '</div>';
+  }
+  // Граница накладных и довесок — из реквизитов (sql/32); нет строки — без них.
+  function b2bDocset(app) { return ((app.b2b && app.b2b.data.docset) || [])[0] || {}; }
+  function b2bWaybillsFrom(app) { return String(b2bDocset(app).waybills_from || '').slice(0, 10); }
+  function b2bBundle(app) {
+    const st = b2bDocset(app);
+    return { rules: (app.b2b && app.b2b.data.bundles) || [], price: st.bundle_price === undefined ? null : st.bundle_price };
+  }
+  // Число довеска и итог — на месте, без перерисовки: курсор остаётся в поле.
+  function b2bBundleInfo(app) {
+    const F = root.NietteB2bForms, form = app.b2bForm;
+    const el = app.root.querySelector('#bfBundleInfo');
+    if (!form || form.kind !== 'shipment' || !el) return;
+    const bv = F.bundleView(form, b2bBundle(app), b2bToday(app));
+    el.textContent = F.bundleInfo(bv, F.shipmentTotal(form.items));
+    const inp = app.root.querySelector('#bfBundle');
+    if (inp && bv) inp.placeholder = String(bv.autoQty).replace('.', ',');
   }
   // Договор — номер И дата (как b2b_w_doc_contract в sql/32): без него счёт не выписывается.
   function b2bContract(c) {
@@ -1677,7 +1701,7 @@
     form.lines = lines.error ? [] : (lines.data || []);
     form.next = next.error ? null : ((next.data || [])[0] || null);
     const m = b2bModel(app), cm = root.NietteB2b.cardModel(m, cid);
-    if (cm) root.NietteB2bDocs.prefill(form, cm);
+    if (cm) root.NietteB2bDocs.prefill(form, cm, b2bWaybillsFrom(app));
     b2bRenderPanel(app);
   }
   async function b2bLoadDocSettings(app, form) {
@@ -2126,7 +2150,7 @@
       if (action === 'b2b-doc-fill') {
         form.dirty = false;
         const cm = root.NietteB2b.cardModel(b2bModel(app), form.cid);
-        if (cm) D.prefill(form, cm);
+        if (cm) D.prefill(form, cm, b2bWaybillsFrom(app));
         return b2bRenderPanel(app);
       }
       return;
@@ -2149,7 +2173,7 @@
     bfPotential: 'potential', bfNextDay: 'next_day', bfBranch: 'branch_id', bfShipDay: 'ship_day', bfDueDay: 'due_day',
     bfMonthDay: 'month_day', bfWeekday: 'weekday', bfStatus: 'status', bfInvoice: 'invoice_no', bfAdvance: 'advance',
     bfMethod: 'method', bfReceipt: 'receipt_no', bfReceiver: 'receiver', bfRep: 'rep', bfContractNo: 'contract_no',
-    bfContractDate: 'contract_date', bfConfirm: 'confirm', bfReceived: 'received', bfPayDay: 'pay_day' };
+    bfContractDate: 'contract_date', bfConfirm: 'confirm', bfReceived: 'received', bfPayDay: 'pay_day', bfBundle: 'bundle_qty' };
   const BF_NC = { bfNcName: 'name', bfNcType: 'type', bfNcCity: 'city', bfNcAddress: 'address' };
   function b2bFormInput(app, t, evType) {
     if (!t || app.route !== 'b2b' || !app.b2b) return;
@@ -2186,6 +2210,7 @@
       form.f[BF[t.id]] = t.value;
       if (t.id === 'bfPayType' && evType === 'change') return b2bRenderPanel(app);
       if (t.id === 'bfAdvance') return b2bPaySum(app);
+      if (t.id === 'bfBundle' || t.id === 'bfShipDay') return b2bBundleInfo(app);
       return;
     }
     if (t.id === 'bfPayType') { form.f.pay_type = t.value; if (evType === 'change') b2bRenderPanel(app); return; }
@@ -2202,7 +2227,7 @@
       if (cell) cell.textContent = q > 0 && pr >= 0 ? C.money(Math.round(q * pr)) : '—';
       const tot = rootEl.querySelector('#bfTotal');
       if (tot) tot.textContent = C.money(Math.round(F.shipmentTotal(form.items)));
-      return;
+      return b2bBundleInfo(app);
     }
     const pid = t.getAttribute ? t.getAttribute('data-bf-pay') : null;
     if (pid !== null) {

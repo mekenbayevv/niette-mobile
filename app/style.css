@@ -672,3 +672,7 @@ button.danger-text { color: var(--red); border-color: var(--red); }
 }
 @media (max-width: 560px) { .b2b-doc-mob { display: block; } }
 .b2b-docs th[scope="row"] { white-space: normal; min-width: 180px; }
+
+/* Довесок в форме поставки (sql/32): число и пояснение в одну строку, на телефоне — с переносом. */
+.b2b-f-bundle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.b2b-f-bundle-row input { width: 7em; }

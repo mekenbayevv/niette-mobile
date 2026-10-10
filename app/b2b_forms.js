@@ -19,6 +19,9 @@
  *                 отказ проверять остатки — дело базы (v_b2b_unpaid_items).
  *
  * Сумму оплаты страница не называет: база считает её из позиций и аванса.
+ * Довесок (sql/32): салфетки, вложенные в каждую большую пачку, база сама
+ * пишет в поставку строкой по 1 ₸ — форма показывает это число заранее
+ * (bundleView) и даёт поправить, если в пачках их было не столько.
  * ДАТЫ — строки 'YYYY-MM-DD' по Алматы.
  */
 (function (root) {
@@ -92,7 +95,7 @@
     if (kind === 'visit') return Object.assign(base, { f: { day: today, result: '', potential: '', next_day: '', contact: '',
       phone: '', comment: '', allow_duplicate: false }, newClient: false, nc: { name: '', type: 'Аптека', city: '', address: '' }, files: [] });
     if (kind === 'shipment') return Object.assign(base, { f: { branch_id: '', ship_day: today, pay_type: 'once', due_day: '',
-      month_day: '15', weekday: '1', status: 'Отгружено', invoice_no: '', comment: '' }, items: [emptyItem()], files: [] });
+      month_day: '15', weekday: '1', status: 'Отгружено', invoice_no: '', comment: '', bundle_qty: '' }, items: [emptyItem()], files: [] });
     if (kind === 'payment') return Object.assign(base, { f: { day: today, received: '', advance: '', method: METHODS[0],
       receipt_no: '', receiver: '', comment: '' }, qty: {}, unpaid: null, unpaidFor: '' });
     if (kind === 'round') return Object.assign(base, { f: { day: today, comment: '' }, items: [emptyItem()] });
@@ -166,10 +169,13 @@
   }
   function shipmentPayload(form, files) {
     const f = form.f;
-    return { client_id: form.cid, branch_id: f.branch_id, ship_day: f.ship_day, pay_type: f.pay_type, pay_schedule: schedule(f),
-             due_day: f.pay_type === 'once' ? f.due_day : '',
-             status: f.pay_type === 'consignment' ? 'Реализация' : f.status,
-             items: itemsOut(form.items, true), invoice_no: t0(f.invoice_no), comment: t0(f.comment), files: files || [] };
+    const d = { client_id: form.cid, branch_id: f.branch_id, ship_day: f.ship_day, pay_type: f.pay_type, pay_schedule: schedule(f),
+                due_day: f.pay_type === 'once' ? f.due_day : '',
+                status: f.pay_type === 'consignment' ? 'Реализация' : f.status,
+                items: itemsOut(form.items, true), invoice_no: t0(f.invoice_no), comment: t0(f.comment), files: files || [] };
+    // Довесок: число — только если его поправили руками; иначе база считает сама.
+    if (t0(f.bundle_qty) !== '') d.bundle_qty = numOrBlank(f.bundle_qty);
+    return d;
   }
   function paymentPayload(form) {
     const f = form.f, items = [];
@@ -211,6 +217,61 @@
   }
   function shipmentTotal(items) {
     return r2((items || []).reduce((a, i) => { const q = n(i.qty), p = n(i.price); return a + (q > 0 && p >= 0 ? r2(q * p) : 0); }, 0));
+  }
+
+  // ── Довесок (sql/32, b2b_w_ship_bundle) ──────────────────────────────────
+  // Салфетки, вложенные в каждую большую пачку, в документах — строкой по
+  // цене из реквизитов (1 ₸): партнёру нужно провести их у себя. Строку пишет
+  // база по правилам «Довесков» — тем же, что у склада (v_b2b_bundle_rules);
+  // здесь то же число заранее. rules — строки этой витрины, day — дата поставки.
+  function bundleAuto(items, day, rules) {
+    const out = {};
+    (items || []).forEach(i => {
+      const q = n(i.qty), name = t0(i.product).toLowerCase();
+      if (!(q > 0) || !name) return;
+      (rules || []).forEach(r => {
+        if (t0(r.product).toLowerCase() !== name) return;
+        if (r.d_from && s0(day) < s0(r.d_from).slice(0, 10)) return;
+        if (r.d_to && s0(day) > s0(r.d_to).slice(0, 10)) return;
+        const k = t0(r.bundle);
+        out[k] = r3((out[k] || 0) + q * (Number(r.qty) || 0));
+      });
+    });
+    return Object.keys(out).filter(k => out[k] > 0).sort().map(k => ({ product: k, qty: out[k] }));
+  }
+  // bundle: { rules, price } (price — из реквизитов; пусто — довеска нет).
+  // Что покажет форма: по правилу (auto), поправлено ли, сколько уйдёт в
+  // строку и на какую сумму. null — довесок выключен или правил нет.
+  function bundleView(form, bundle, today) {
+    const b = bundle || {}, price = b.price === null || b.price === undefined || s0(b.price) === '' ? NaN : Number(b.price);
+    if (!(price > 0) || !(b.rules || []).length) return null;
+    const auto = bundleAuto(form.items, t0(form.f.ship_day) || s0(today), b.rules);
+    const one = auto.length <= 1, autoQty = auto.length === 1 ? auto[0].qty : 0;
+    const raw = one ? t0(form.f.bundle_qty) : '', over = raw === '' ? null : n(raw);
+    const qty = one ? (over !== null && over >= 0 ? over : autoQty) : auto.reduce((a, x) => a + x.qty, 0);
+    const name = auto.length ? auto[0].product : t0(b.rules[0].bundle);
+    return { price, auto, one, name, autoQty, override: raw, qty: r3(qty), sum: r2(r3(qty) * price),
+             bad: raw !== '' && !(over >= 0), lost: one && autoQty === 0 && over > 0 };
+  }
+  const priceText = p => (Number.isInteger(p) ? money(p) : nf3.format(p) + '\u00a0₸');
+  function bundleInfo(bv, itemsTotal) {
+    if (!bv) return '';
+    if (bv.lost) return 'в поставке нет пачек с довеском — база такую строку не примет; салфетки впишите обычной строкой';
+    if (bv.bad) return 'число штук — целое, от нуля';
+    if (!bv.auto.length && !bv.qty) return 'пачек с довеском в поставке нет — строки не будет';
+    const lines = bv.one ? 'по одной на пачку: ' + nf3.format(bv.autoQty) + (bv.override !== '' ? ', указано: ' + nf3.format(bv.qty) : '')
+                         : bv.auto.map(x => x.product + ' — ' + nf3.format(x.qty)).join('; ');
+    return lines + ' · строка ' + tg(bv.sum) + ' · итого с довеском ' + tg(r2((Number(itemsTotal) || 0) + bv.sum));
+  }
+  function bundleHtml(form, bv) {
+    if (!bv) return '';
+    const head = esc((bv.one ? bv.name : 'Довески') + ' в пачках — строкой по ' + priceText(bv.price) + ': партнёр проведёт их у себя');
+    const ctl = bv.one
+      ? '<input id="bfBundle" type="number" inputmode="numeric" min="0" step="1" autocomplete="off" placeholder="' + esc(nf3.format(bv.autoQty)) +
+        '" value="' + esc(bv.override) + '" aria-describedby="bfBundleInfo"> шт '
+      : '';
+    return '<div class="st-field wide b2b-f-bundle"><label' + (bv.one ? ' for="bfBundle"' : '') + '>' + head + '</label>' +
+      '<div class="b2b-f-bundle-row">' + ctl + '<span class="muted" id="bfBundleInfo">' + esc(bundleInfo(bv, shipmentTotal(form.items))) + '</span></div></div>';
   }
   // Строго по порядку: дошли до позиции, на которую не хватает целиком, — берём
   // целые штуки, сколько хватает, и останавливаемся; остаток — аванс.
@@ -378,6 +439,7 @@
       if (f.pay_type !== 'consignment') H.push(field('bfStatus', 'Статус', select('bfStatus', [['Отгружено', 'Отгружено'],
         ['Возврат', 'Возврат — товар вернулся']], f.status)));
       H.push(itemsTable(form, products(o.nomen), true, true),
+             bundleHtml(form, bundleView(form, o.bundle, today)),
              field('bfInvoice', '№ накладной', input('bfInvoice', f.invoice_no, 'type="text" maxlength="50"')),
              field('bfComment', 'Комментарий', input('bfComment', f.comment, 'type="text" maxlength="1000"'), true),
              filesField(form, 'image/*,application/pdf,.doc,.docx'));
@@ -551,8 +613,10 @@
     if (kind === 'client') return 'Добавлен партнёр ' + d.id + '.' + tr;
     if (kind === 'visit') return 'Записан визит ' + d.id + (d.new_client ? ' и новый партнёр ' + d.client_id : '') + '.' + tr;
     if (kind === 'shipment') {
-      const w = d.waybill || null;
+      const w = d.waybill || null, b = (Array.isArray(d.bundle) ? d.bundle : []).filter(x => Number(x.qty) > 0);
       return 'Оформлена поставка ' + d.id + ' на ' + tg(Number(d.amount) || 0) + ' · срок оплаты ' + dmy(d.due_day) + '.' +
+        (b.length ? ' В том числе довесок: ' + b.map(x => s0(x.product) + ' × ' + nf3.format(Number(x.qty)) + ' по ' +
+          priceText(Number(x.price))).join(', ') + '.' : '') +
         (extra && extra.files ? ' Файлов: ' + extra.files + '.' : '') +
         (w && w.number ? ' Накладная ' + w.number + (w.reused ? ' уже была.' : ' выписана.') : w && w.error ? ' ' + w.error + ' — выпишите её в карточке, у поставки.' : '') + tr;
     }
@@ -586,7 +650,7 @@
     TYPES, STAGES, PRIOS, RESULTS, METHODS, STATUSES, PAY_TYPES, WEEKDAYS, PRICES, ROW_FIELDS, MAX_FILES, MAX_FILE_MB, EXT_OK, MIME,
     perm, products, priceOf, newForm, emptyItem, formTitle, dupKey, rowProblem,
     clientPayload, visitPayload, shipmentPayload, paymentPayload, roundPayload, branchPayload, clientChanges, rowPatch, schedule,
-    sortUnpaid, shipmentTotal, fifo, paymentTotals, paySumText,
+    sortUnpaid, shipmentTotal, fifo, paymentTotals, paySumText, bundleAuto, bundleView, bundleInfo,
     renderForm, renderActions, renderTraining, rowActions, savedText, extOf, storagePath, isStorage
   };
 })(typeof window !== 'undefined' ? window : globalThis);
