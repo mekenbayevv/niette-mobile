@@ -267,8 +267,11 @@
   const choices = (list, cur) => (t0(cur) ? withCurrent(list, cur) : [['', '—']].concat(list));
   const dupBox = (f, label) => '<div class="st-field wide"><label class="b2b-f-check"><input id="bfAllowDup" type="checkbox"' +
     (f.allow_duplicate ? ' checked' : '') + '> ' + esc(label) + '</label></div>';
+  // m.doc — документ, выписанный вместе с записью (накладная к поставке, sql/32): кнопкой — в PDF.
   function msgHtml(m) {
-    return m ? '<div class="st-msg ' + (m.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' + esc(m.text) + '</div>' : '';
+    return m ? '<div class="st-msg ' + (m.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' + esc(m.text) +
+      (m.doc && m.doc.id ? ' <button type="button" class="ghost small" data-action="b2b-doc-pdf" data-id="' + esc(m.doc.id) + '">PDF накладной ' +
+        esc(m.doc.number || '') + '</button>' : '') + '</div>' : '';
   }
   function partnerSelect(id, clients, cid) {
     const list = (clients || []).slice().sort((a, b) => s0(a.name || a.id).localeCompare(s0(b.name || b.id), 'ru'));
@@ -515,7 +518,8 @@
           .concat([b('round', '+ Обход'), b('branch', '+ Филиал'), b('edit', 'Изменить партнёра')])
           .concat(p.canPay ? [b('delclient', 'Удалить партнёра…', 'ghost danger-text')] : [])
       : [b('visit', '+ Визит'), b('shipment', '+ Поставка')].concat(p.canPay ? [b('payment', '+ Оплата')] : [])
-          .concat([b('round', '+ Обход'), b('client', '+ Партнёр')]);
+          .concat([b('round', '+ Обход'), b('client', '+ Партнёр')])
+          .concat(p.canPay ? [b('docset', 'Реквизиты для счетов')] : []);
     return '<div class="b2b-actions" role="toolbar" aria-label="Внести">' + list.join('') + '</div>';
   }
 
@@ -546,8 +550,12 @@
     const d = res || {}, tr = d.training ? ' Тренировка — сотрётся при следующем переносе.' : '';
     if (kind === 'client') return 'Добавлен партнёр ' + d.id + '.' + tr;
     if (kind === 'visit') return 'Записан визит ' + d.id + (d.new_client ? ' и новый партнёр ' + d.client_id : '') + '.' + tr;
-    if (kind === 'shipment') return 'Оформлена поставка ' + d.id + ' на ' + tg(Number(d.amount) || 0) + ' · срок оплаты ' + dmy(d.due_day) + '.' +
-      (extra && extra.files ? ' Файлов: ' + extra.files + '.' : '') + tr;
+    if (kind === 'shipment') {
+      const w = d.waybill || null;
+      return 'Оформлена поставка ' + d.id + ' на ' + tg(Number(d.amount) || 0) + ' · срок оплаты ' + dmy(d.due_day) + '.' +
+        (extra && extra.files ? ' Файлов: ' + extra.files + '.' : '') +
+        (w && w.number ? ' Накладная ' + w.number + (w.reused ? ' уже была.' : ' выписана.') : w && w.error ? ' ' + w.error + ' — выпишите её в карточке, у поставки.' : '') + tr;
+    }
     if (kind === 'payment') return 'Записана оплата ' + d.id + ' на ' + tg(Number(d.amount) || 0) +
       (Number(d.advance) > 0 ? ' (из них аванс ' + tg(Number(d.advance)) + ')' : '') + '.' + tr;
     if (kind === 'round') return 'Записан обход ' + d.id + ' на ' + tg(Number(d.amount) || 0) + '.' + tr;

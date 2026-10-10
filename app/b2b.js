@@ -680,10 +680,13 @@
     visits.forEach(v => (v.files || []).forEach(u => gallery.push({ url: u, kind: 'Визит', day: v.day || '', id: s0(v.id) })));
     ships.forEach(s => (s.files || []).forEach(u => gallery.push({ url: u, kind: 'Поставка', day: s.ship_day || '', id: s0(s.id) })));
     const byDayDesc = key => (a, b) => s0(b[key]).localeCompare(s0(a[key])) || s0(b.id).localeCompare(s0(a.id));
+    // Документы по поставкам: накладная и счёт видны у самой поставки.
+    const docs = of(m.docs).sort(byDayDesc('day')), docsByShip = {};
+    docs.forEach(d => (d.shipment_ids || []).forEach(x => { (docsByShip[s0(x)] = docsByShip[s0(x)] || []).push(d); }));
     return {
-      c, ships, pays, alloc, products: cardProducts(alloc),
+      c, ships, pays, alloc, products: cardProducts(alloc), docsByShip,
       visits: visits.slice().sort(byDayDesc('day')), branches: of(m.branches),
-      docs: of(m.docs).sort(byDayDesc('day')), rounds: of(m.rounds).sort(byDayDesc('day')), gallery,
+      docs, rounds: of(m.rounds).sort(byDayDesc('day')), gallery,
       fin: { ship, paid, consign, rest: Math.max(0, ship - paid), debt: debt || Math.max(0, ship - consign - paid),
              payRate, loyalty: Math.min(100, Math.round(payRate * 70 + Math.min(visits.length, 10) * 3)) },
       age: m.ageMap[cid] || null, expect: M.expectPay[cid] || '', expectAssumed: !!(M.expectAssumed || {})[cid]
@@ -939,7 +942,9 @@
       sectionCard('b2bProducts', 'Товары у партнёра', productsSub(cm), renderProducts(cm)) +
       sectionCard('b2bShips', 'Поставки', pl(cm.ships.length, 'поставка', 'поставки', 'поставок'), renderShips(cm, a)) +
       sectionCard('b2bPays', 'Оплаты', pl(cm.pays.length, 'оплата', 'оплаты', 'оплат'), renderPays(cm, a)) +
-      sectionCard('b2bDocs', 'Счета и накладные', 'PDF — в Google Drive, по ссылкам старой системы', renderDocs(cm.docs)) +
+      (root.NietteB2bDocs
+        ? sectionCard('b2bDocs', 'Счета и накладные', 'новые — PDF здесь, выписанные старой системой — в Google Drive', root.NietteB2bDocs.renderDocs(cm, a))
+        : sectionCard('b2bDocs', 'Счета и накладные', 'PDF — в Google Drive, по ссылкам старой системы', renderDocs(cm.docs))) +
       sectionCard('b2bVisits', 'Визиты', 'новые сверху', renderVisits(cm.visits, a)) +
       (cm.rounds.length ? sectionCard('b2bRounds', 'Обходы', '', renderRounds(cm.rounds, a)) : '') +
       sectionCard('b2bBranches', 'Филиалы', '', renderBranches(cm.branches, a)) +
@@ -1003,7 +1008,8 @@
         const ret = s0(s.status).trim() === 'Возврат';
         const debt = ret ? 0 : Math.max(0, Math.round(a.sum - a.paid)), due = dueDate(s);
         const items = (s._items || []).map(i => esc(i.product) + (n(i.qty) ? ' × ' + nf3.format(n(i.qty)) : '')).join('<br>');
-        return '<tr><th scope="row">' + esc(s.id) + '<div class="where">' + esc(s.status || '') + (s.rep ? ' · ' + esc(s.rep) : '') + '</div></th>' +
+        const docs = root.NietteB2bDocs ? root.NietteB2bDocs.shipDocsHtml(cm, s, act) : '';
+        return '<tr><th scope="row">' + esc(s.id) + '<div class="where">' + esc(s.status || '') + (s.rep ? ' · ' + esc(s.rep) : '') + '</div>' + docs + '</th>' +
           '<td>' + dmy(s.ship_day) + '</td><td class="num">' + tg(s.amount) + '</td><td class="num">' + tg(a.paid) + '</td>' +
           '<td class="num ' + (ret ? 'muted' : debt > 0 ? (a.consign ? '' : 'bad') : 'good') + '">' + (ret ? '—' : tg(debt)) + '</td>' +
           '<td>' + (ret ? '<span class="badge info">Возврат</span>' : shipBadge(a)) + '</td>' +

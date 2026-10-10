@@ -115,6 +115,10 @@
   // тысячи, а карточка партнёра открывается мгновенно из памяти. Таблицы, а
   // не снимки: после переключения записанное должно быть видно сразу.
   // alive — без мягко удалённых строк (deleted_at: запись, sql/31).
+  // Колонки документа до sql/32. Страница, выложенная раньше файла, читает
+  // список ими (legacy): документы видны, а что прогнать — сказано (legacyNote).
+  const B2B_DOC_COLS = 'id,kind,kind_label,number,day,client_id,client_name,counterparty,amount,shipment_ids,items_text,pdf_url,paid,paid_day,' +
+                       'created_by,comment,sheet_row,created_at';
   const B2B_SRC = [
     { key: 'clients',   table: 'b2b_clients',    paged: true, order: ['sheet_row', 'id'], what: 'Партнёры', alive: true },
     { key: 'shipments', table: 'b2b_shipments',  paged: true, order: ['sheet_row', 'id'], what: 'Поставки', alive: true },
@@ -124,7 +128,10 @@
     { key: 'items',     table: 'b2b_ship_items', paged: true, order: ['sheet_row', 'id'], what: 'Позиции поставок', alive: true },
     { key: 'payItems',  table: 'b2b_pay_items',  paged: true, order: ['sheet_row', 'id'], what: 'Позиции оплат', alive: true },
     { key: 'branches',  table: 'b2b_branches',   paged: true, order: ['sheet_row', 'id'], what: 'Филиалы', alive: true },
-    { key: 'docs',      table: 'b2b_docs',       paged: true, order: ['sheet_row', 'id'], what: 'Документы', alive: true },
+    // Снимок документа (snapshot, sql/32) — не в списке: он нужен, только когда просят PDF.
+    { key: 'docs',      table: 'b2b_docs',       paged: true, order: ['sheet_row', 'id'], what: 'Документы', alive: true,
+      select: B2B_DOC_COLS + ',updated_at,has_snapshot', legacy: B2B_DOC_COLS,
+      legacyNote: 'файла sql/32 в базе нет — список без PDF, новые счета и накладные не выписать. Выполните sql/32_b2b_docs.sql, затем sql/12_auth.sql.' },
     { key: 'rounds',    table: 'b2b_rounds',     paged: true, order: ['sheet_row', 'id'], what: 'Обходы', alive: true },
     // Товары для форм — «Номенклатура» (как выбирает торгпред); нет её — список мобильного.
     { key: 'nomen',     table: 'b2b_nomen',      paged: false, order: ['sheet_row', 'app_name'], what: 'Номенклатура' }
@@ -203,6 +210,9 @@
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /snap_client_summary|v_client_summary/.test(msg))
       return pre + 'снимка «Главное о клиентах» в базе нет — выполните sql/30_client_summary.sql, затем sql/12_auth.sql.';
+    // Раньше ветки «данных B2B нет»: «column b2b_docs.… does not exist» — это не прогнанный 32, а не 28.
+    if ((code === '42703' || /column .* does not exist/i.test(msg)) && /b2b_doc/.test(msg))
+      return pre + 'новых колонок документов в базе нет — выполните sql/32_b2b_docs.sql, затем sql/12_auth.sql.';
     if ((code === 'PGRST205' || code === '42P01' || /does not exist|could not find the (table|relation)/i.test(msg)) &&
         /b2b_/.test(msg))
       return pre + 'данных B2B в базе нет — выполните sql/00_tables.sql, 01_functions.sql и 28_b2b.sql, затем sql/12_auth.sql.';
@@ -381,14 +391,21 @@
     };
   }
 
+  // Нет колонки (страница новее базы): Postgres отвечает 42703 «column … does not exist».
+  const noColumn = e => String((e && e.code) || '') === '42703' || /column .* does not exist/i.test(String((e && e.message) || ''));
+
   async function loadB2b(client) {
-    const res = await Promise.allSettled(B2B_SRC.map(s => (s.paged ? fetchAll : fetchSmall)(client, s))
-                                                .concat([fetchSmall(client, B2B_STATUS)]));
+    const get = s => (s.paged ? fetchAll : fetchSmall)(client, s);
+    const res = await Promise.allSettled(B2B_SRC.map(s => get(s).catch(e => {
+      if (!s.legacy || !noColumn(e)) throw e;
+      return get(Object.assign({}, s, { select: s.legacy })).then(rows => ({ legacy: rows }));
+    })).concat([fetchSmall(client, B2B_STATUS)]));
     const data = {}, errors = {};
     B2B_SRC.forEach((s, i) => {
       const r = res[i];
-      if (r.status === 'fulfilled') data[s.key] = r.value;
-      else { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
+      if (r.status !== 'fulfilled') { data[s.key] = []; errors[s.key] = humanError(r.reason, s.what); }
+      else if (Array.isArray(r.value)) data[s.key] = r.value;
+      else { data[s.key] = r.value.legacy; errors[s.key] = s.what + ': ' + s.legacyNote; }
     });
     const st = res[B2B_SRC.length];
     return { data, errors, status: st.status === 'fulfilled' ? (st.value[0] || {}) : {}, loadedAt: new Date() };
@@ -638,6 +655,7 @@
     // Формы B2B — тоже: недописанная оплата одного человека не должна
     // достаться следующему, вошедшему на том же телефоне.
     app.b2bForm = null; app.b2bAct = { confirm: null }; app.b2bBulk = newBulk(); app.b2bSigned = {}; app.b2bNotice = null;
+    b2bPdfDrop(app);
   }
   function newBulk() { return { sel: {}, status: 'Реализация', msg: null, busy: false }; }
 
@@ -1491,7 +1509,7 @@
       if (cm) {
         const p = b2bPerm(app);
         const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned,
-                      top: p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '' };
+                      top: (p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '') + b2bPdfPanel(app) };
         return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
       }
       app.b2bUi.card = null;                     // партнёра больше нет (обновили, удалили) — к списку
@@ -1500,7 +1518,7 @@
     const per = b2bPer(app), k = B.kpis(m, app.b2bUi, per), p = b2bPerm(app);
     return headerHtml(app) + page(
       b2bFreshHtml(app) +
-      (p.write ? root.NietteB2bForms.renderActions(p, false) + b2bFormPanel(app, m, null) : '') +
+      (p.write ? root.NietteB2bForms.renderActions(p, false) + b2bFormPanel(app, m, null) : '') + b2bPdfPanel(app) +
       root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)) +
       B.renderFilters(app.b2bUi, k) +
       '<div id="b2bOv">' + b2bOvInner(app, m, per, k) + '</div>' +
@@ -1551,8 +1569,19 @@
     if (!form) return '';
     // Форма из карточки — про этого партнёра; со списка — свой выбор партнёра.
     if (!!cm !== !!form.inCard || (cm && form.cid !== s0(cm.c.id))) return '';
+    const D = root.NietteB2bDocs;
+    if (form.kind === 'doc') return '<div id="b2bFormPanel">' + D.renderDocForm(form, m, {
+      today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm, contract: b2bContract(cm && cm.c) }) + '</div>';
+    if (form.kind === 'docset') return '<div id="b2bFormPanel">' + D.renderSettingsForm(form) + '</div>';
     return '<div id="b2bFormPanel">' + root.NietteB2bForms.renderForm(form, m, {
       today: b2bToday(app), perm: b2bPerm(app), nomen: app.b2b.data.nomen || [], cm }) + '</div>';
+  }
+  // Договор — номер И дата (как b2b_w_doc_contract в sql/32): без него счёт не выписывается.
+  function b2bContract(c) {
+    const no = String((c && c.contract_no) || '').replace(/^[№#\s]+/, '').trim(), day = c && c.contract_date;
+    if (!no || !/^\d{4}-\d{2}-\d{2}/.test(String(day || ''))) return null;
+    const d = String(day);
+    return { no, day: d, text: 'Договор №' + no + ' от ' + d.slice(8, 10) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4) };
   }
   // Ответ базы может прийти, когда человек уже на другой вкладке: состояние
   // формы обновлено, а экран не наш — его не трогаем (вернётся — увидит).
@@ -1596,6 +1625,11 @@
       form = F.newForm('row', { cid, rec, rowKind: rk }, today);
     } else if (kind === 'edit') {
       form = F.newForm('edit', { cid, rec: m.byId[cid] }, today);
+    } else if (kind === 'doc') {
+      if (!cid) return;
+      form = root.NietteB2bDocs.newDocForm(el.getAttribute('data-doc'), { cid }, today);
+    } else if (kind === 'docset') {
+      form = root.NietteB2bDocs.newSettingsForm(null, null);
     } else {
       form = F.newForm(kind, { cid }, today);
     }
@@ -1605,6 +1639,8 @@
     app.b2bNotice = null;
     renderB2b(app);
     if (kind === 'payment' && form.cid) b2bLoadUnpaid(app, form);
+    if (kind === 'doc') b2bLoadDocLines(app, form);
+    if (kind === 'docset') b2bLoadDocSettings(app, form);
     const first = app.root.querySelector('#b2bForm input:not([type="checkbox"]):not([type="file"]), #b2bForm select');
     if (first && first.focus) first.focus();
   }
@@ -1623,6 +1659,128 @@
       ? 'Нет витрины v_b2b_unpaid_items — выполните sql/31_b2b_write.sql, затем sql/12_auth.sql.' : humanError(res.error, 'За что платить');
     form.unpaid = res.error ? [] : (res.data || []);
     b2bRenderPanel(app);
+  }
+
+  // Строки поставок для документа и следующий номер — из базы (sql/32): те же
+  // строки возьмёт автонакладная и переформирование, расчёт один.
+  async function b2bLoadDocLines(app, form) {
+    const cid = form.cid, g = app.gen;
+    form.lines = null; form.linesErr = null;
+    const q = (t, f) => Promise.resolve().then(f).then(r => r || { error: 'пустой ответ' }, e => ({ error: e }));
+    const [lines, next] = await Promise.all([
+      q('lines', () => app.client.from('v_b2b_doc_lines').select('*').eq('client_id', cid)),
+      q('next', () => app.client.from('v_b2b_doc_next').select('*'))]);
+    if (g !== app.gen || app.b2bForm !== form || form.cid !== cid) return;
+    const miss = e => /does not exist|PGRST205|42P01|could not find/i.test(String((e && (e.message || e.code)) || e || ''));
+    if (lines.error) form.linesErr = miss(lines.error) ? 'Нет витрины строк документов — выполните sql/32_b2b_docs.sql, затем sql/12_auth.sql.'
+                                                       : humanError(lines.error, 'Строки поставок');
+    form.lines = lines.error ? [] : (lines.data || []);
+    form.next = next.error ? null : ((next.data || [])[0] || null);
+    const m = b2bModel(app), cm = root.NietteB2b.cardModel(m, cid);
+    if (cm) root.NietteB2bDocs.prefill(form, cm);
+    b2bRenderPanel(app);
+  }
+  async function b2bLoadDocSettings(app, form) {
+    const g = app.gen;
+    let rec, next;
+    try { [rec, next] = await Promise.all([app.client.from('b2b_doc_settings').select('*'), app.client.from('v_b2b_doc_next').select('*')]); }
+    catch (e) { rec = { error: e }; }
+    if (g !== app.gen || app.b2bForm !== form) return;
+    if (rec.error || !(rec.data || []).length) {
+      form.loadErr = rec.error ? humanError(rec.error, 'Реквизиты') : 'Строки реквизитов нет — выполните sql/32_b2b_docs.sql.';
+      return b2bRenderPanel(app);
+    }
+    const fresh = root.NietteB2bDocs.newSettingsForm(rec.data[0], next && !next.error ? (next.data || [])[0] : null);
+    fresh.inCard = form.inCard;
+    app.b2bForm = fresh;
+    b2bRenderPanel(app);
+  }
+
+  // ── PDF документа (pdfmake, web/app/vendor) ──────────────────────────────
+  // Библиотека (~1,8 МБ со шрифтами) грузится, только когда просят PDF.
+  function b2bScript(src) {
+    return new Promise((res, rej) => {
+      const d = root.document, el = d.createElement('script');
+      el.src = src; el.async = true;
+      el.onload = () => res();
+      el.onerror = () => rej(new Error('Не загрузилась библиотека PDF (' + src + ') — проверьте связь и обновите страницу.'));
+      d.head.appendChild(el);
+    });
+  }
+  function b2bPdfLib(app) {
+    if (root.pdfMake && root.pdfMake.__nietteFonts) return Promise.resolve(root.pdfMake);
+    if (!app.b2bPdfLib) {
+      app.b2bPdfLib = b2bScript('vendor/pdfmake-0.2.20.min.js').then(() => b2bScript('vendor/pdf-fonts-roboto.js')).then(() => {
+        if (!root.pdfMake || !root.pdfMake.__nietteFonts) throw new Error('Библиотека PDF загрузилась без шрифтов — обновите страницу.');
+        return root.pdfMake;
+      });
+      app.b2bPdfLib.catch(() => { app.b2bPdfLib = null; });
+    }
+    return app.b2bPdfLib;
+  }
+  function b2bPdfDrop(app) {
+    const p = app.b2bPdf;
+    if (p && p.url && root.URL && root.URL.revokeObjectURL) { try { root.URL.revokeObjectURL(p.url); } catch (e) { /* уже нет */ } }
+    app.b2bPdf = null;
+  }
+  // PDF показывается там, где его попросили: в карточке этого партнёра или
+  // над списком партнёров.
+  function b2bPdfPanel(app) {
+    const p = app.b2bPdf, card = app.b2bUi.card || '';
+    if (!p || (p.where === 'card' ? card !== p.cid : !!card)) return '';
+    return root.NietteB2bDocs.renderPdfPanel(p);
+  }
+  function b2bPdfShow(app) {
+    if (app.route !== 'b2b' || !app.b2b) return;
+    const box = app.root.querySelector('#b2bPdf');
+    const html = b2bPdfPanel(app);
+    if (box) box.outerHTML = html || '';
+    else renderB2b(app);
+    const el = app.root.querySelector('#b2bPdf');
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }
+  // snap — снимок, если он уже есть (ответ формы); иначе берём из базы.
+  async function b2bDocPdf(app, id, snap) {
+    const D = root.NietteB2bDocs, g = app.gen;
+    b2bPdfDrop(app);
+    app.b2bPdf = { id, busy: true, where: app.b2bUi.card ? 'card' : 'main', cid: app.b2bUi.card || '' };
+    b2bPdfShow(app);
+    let res = null, err = null;
+    try {
+      if (!snap) {
+        const r = await app.client.from('b2b_docs').select('id,snapshot').eq('id', id);
+        if (r.error) throw new Error(humanError(r.error, 'Документ'));
+        // Строки нет — документ удалили или (до переключения) тренировку стёр
+        // перенос из листов; строка без снимка — документ старой системы.
+        if (!(r.data || []).length) throw new Error('Документа ' + id + ' больше нет — обновите экран.' +
+          (b2bPerm(app).live ? '' : ' Тренировку стирает перенос из листов.'));
+        snap = r.data[0].snapshot || null;
+      }
+      const dd = D.docDefinition(snap);
+      const pm = await b2bPdfLib(app);
+      const blob = await new Promise((ok, bad) => { try { pm.createPdf(dd).getBlob(ok); } catch (e) { bad(e); } });
+      const name = D.fileName(snap);
+      let canShare = false;
+      try {
+        const nav = root.navigator;
+        canShare = !!(nav && nav.share && nav.canShare && root.File && nav.canShare({ files: [new root.File([blob], name, { type: 'application/pdf' })] }));
+      } catch (e) { canShare = false; }
+      res = { id, number: snap.number, kind: snap.kind, name, blob, canShare, cid: app.b2bPdf.cid, where: app.b2bPdf.where,
+              url: root.URL.createObjectURL(blob) };
+    } catch (e) { err = (e && e.message) || humanError(e, 'PDF'); }
+    if (g !== app.gen) { if (res && res.url) try { root.URL.revokeObjectURL(res.url); } catch (e) { /* */ } return; }
+    if (!app.b2bPdf || app.b2bPdf.id !== id) { if (res && res.url) try { root.URL.revokeObjectURL(res.url); } catch (e) { /* */ } return; }
+    app.b2bPdf = res || { id, err: 'PDF не собрался: ' + err, where: app.b2bPdf.where, cid: app.b2bPdf.cid };
+    b2bPdfShow(app);
+  }
+  // Отправить — в WhatsApp, Telegram, почту (меню телефона). Нажатие —
+  // отдельное: меню открывается только в ответ на нажатие, а не после
+  // загрузки библиотеки.
+  async function b2bDocShare(app) {
+    const p = app.b2bPdf, nav = root.navigator;
+    if (!p || !p.blob || !nav || !nav.share) return;
+    try { await nav.share({ files: [new root.File([p.blob], p.name, { type: 'application/pdf' })], title: p.name.replace(/\.pdf$/, '') }); }
+    catch (e) { /* закрыли меню — не ошибка */ }
   }
 
   async function b2bReload(app) {
@@ -1722,7 +1880,7 @@
     const F = root.NietteB2bForms, form = app.b2bForm;
     if (!form || form.busy) return;
     const kind = form.kind;
-    const needCid = kind !== 'client' && !(kind === 'visit' && form.newClient);
+    const needCid = kind !== 'client' && kind !== 'docset' && !(kind === 'visit' && form.newClient);
     if (needCid && !form.cid) return b2bFormMsg(app, form, 'bad', 'Выберите партнёра.');
     if (kind === 'visit' && form.newClient && !String(form.nc.name || '').trim()) return b2bFormMsg(app, form, 'bad', 'Укажите название новой точки.');
     if (kind === 'payment') {
@@ -1734,6 +1892,7 @@
       const p = F.rowProblem(form);
       if (p) return b2bFormMsg(app, form, 'bad', p);
     }
+    if (kind === 'doc' || kind === 'docset') return b2bSaveDoc(app, form);
     form.busy = true; form.msg = null;
     b2bRenderPanel(app);
     // Каждый ответ сети — после паузы: за это время могли выйти, а на этом
@@ -1785,6 +1944,7 @@
       return b2bFormMsg(app, form, 'bad', text + (files.length ? ' Файлы уже загружены — при повторе второй раз не грузятся.' : ''));
     }
     const text = F.savedText(kind, res.data, { files: files.length });
+    const wb = kind === 'shipment' && res.data && res.data.waybill && res.data.waybill.id ? res.data.waybill : null;
     if (!still) {
       app.b2bNotice = { tone: 'ok', text };
       if (kind === 'delclient' && app.b2bUi.card === form.cid) app.b2bUi.card = null;
@@ -1797,7 +1957,7 @@
       // надо начинать с выбора партнёра; сообщение — в ней же.
       const next = F.newForm(kind, { cid: kind === 'client' ? '' : form.cid }, b2bToday(app));
       next.inCard = form.inCard;
-      next.msg = { tone: 'ok', text };
+      next.msg = { tone: 'ok', text, doc: wb ? { id: wb.id, number: wb.number } : null };
       app.b2bForm = next;
     }
     await b2bReload(app);
@@ -1806,16 +1966,88 @@
     if (still && app.b2bForm && app.b2bForm.kind === 'payment' && app.b2bForm.cid) b2bLoadUnpaid(app, app.b2bForm);
   }
 
+  // Нет функций документов — назвать файл документов, а не записи (31).
+  function b2bDocError(err) {
+    const code = String((err && err.code) || ''), msg = String((err && err.message) || err || '');
+    if (code === 'PGRST202' || /could not find the function/i.test(msg))
+      return 'Функций документов нет в базе — выполните sql/32_b2b_docs.sql, затем sql/12_auth.sql.';
+    return b2bFormError(err);
+  }
+  // Документ, накладные на поставки без них, переформирование, «Оплачено»
+  // (sql/32). Ответ — плашкой над экраном; новый документ — сразу в PDF.
+  async function b2bSaveDoc(app, form) {
+    const D = root.NietteB2bDocs, g = app.gen;
+    let res;
+    if (form.kind === 'doc') {
+      const cm = root.NietteB2b.cardModel(b2bModel(app), form.cid);
+      const problem = D.docProblem(form, b2bContract(cm && cm.c));
+      if (problem) { form.touched = true; return b2bFormMsg(app, form, 'bad', problem); }
+      form.busy = true; form.msg = null;
+      b2bRenderPanel(app);
+      res = await b2bCall(app, 'form_b2b_add_doc', { d: D.docPayload(form) });
+    } else {
+      const patch = D.settingsChanges(form);
+      if (!Object.keys(patch).length) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
+      form.busy = true; form.msg = null;
+      b2bRenderPanel(app);
+      res = await b2bCall(app, 'form_b2b_doc_settings', { p: patch });
+    }
+    if (g !== app.gen) return;
+    const still = app.b2bForm === form;
+    form.busy = false;
+    if (res.error) {
+      const text = b2bDocError(res.error);
+      if (!still) { app.b2bNotice = { tone: 'bad', text: 'Не записано: ' + text }; return b2bRedraw(app); }
+      return b2bFormMsg(app, form, 'bad', text);
+    }
+    const d = res.data || {};
+    if (still) app.b2bForm = null;
+    app.b2bNotice = { tone: 'ok', text: D.savedText(form.kind, d) };
+    await b2bReload(app);
+    if (form.kind === 'doc' && d.id && g === app.gen) b2bDocPdf(app, d.id, d.snapshot || null);
+  }
+  async function b2bDocAct(app, fn, args, kind, after) {
+    if (app.b2bAct.busy) return;
+    const g = app.gen;
+    app.b2bAct.confirm = null; app.b2bAct.busy = true;
+    const res = await b2bCall(app, fn, args);
+    app.b2bAct.busy = false;
+    if (g !== app.gen) return;
+    app.b2bNotice = res.error ? { tone: 'bad', text: b2bDocError(res.error) } : { tone: 'ok', text: root.NietteB2bDocs.savedText(kind, res.data) };
+    if (res.error) return b2bRedraw(app);
+    await b2bReload(app);
+    if (after && g === app.gen) after(res.data || {});
+  }
+  async function b2bDocPaid(app, id, paid, el) {
+    const g = app.gen;
+    const res = await b2bCall(app, 'form_b2b_doc_paid', { p_id: id, p_paid: !!paid });
+    if (g !== app.gen) return;
+    if (res.error) {
+      if (el) el.checked = !paid;
+      app.b2bNotice = { tone: 'bad', text: 'Отметка не сохранилась: ' + b2bDocError(res.error) };
+      return b2bRedraw(app);
+    }
+    const row = (app.b2b.data.docs || []).find(x => s0(x.id) === s0(id));
+    if (row) { row.paid = !!paid; row.paid_day = res.data && res.data.paid_day || null; app.b2bModel = null; }
+    app.b2bNotice = { tone: 'ok', text: (paid ? 'Отмечено «оплачено»' : 'Снята отметка «оплачено»') + (res.data && res.data.training ? ' — тренировка.' : '.') };
+    return b2bRedraw(app);
+  }
+
   async function b2bDelete(app, kind, id) {
     if (app.b2bAct.busy) return;               // второе нажатие, пока идёт первое
     const g = app.gen;
     app.b2bAct.confirm = null; app.b2bAct.busy = true;
-    const res = await b2bCall(app, 'form_b2b_delete', { p_kind: kind, p_id: id });
+    const res = kind === 'doc' ? await b2bCall(app, 'form_b2b_doc_delete', { p_id: id })
+                               : await b2bCall(app, 'form_b2b_delete', { p_kind: kind, p_id: id });
+    if (res.error && kind === 'doc') res.error = { message: b2bDocError(res.error) };
     app.b2bAct.busy = false;
     if (g !== app.gen) return;
     app.b2bNotice = res.error ? { tone: 'bad', text: b2bFormError(res.error) }
-      : { tone: 'ok', text: 'Удалено: ' + id + (res.data && res.data.items ? ' и ' + res.data.items + ' ' + (kind === 'payment' ? 'её позиций' : 'позиций') : '') +
-          (res.data && res.data.training ? '. Тренировка.' : '.') };
+      : { tone: 'ok', text: 'Удалено: ' + (kind === 'doc' && res.data && res.data.number ? res.data.number : id) +
+          (res.data && res.data.items ? ' и ' + res.data.items + ' ' + (kind === 'payment' ? 'её позиций' : 'позиций') : '') +
+          (res.data && res.data.docs ? ', её накладная' : '') +
+          (kind === 'doc' ? ' — номер второй раз не выдаётся' : '') + (res.data && res.data.training ? '. Тренировка.' : '.') };
+    if (!res.error && kind === 'doc' && app.b2bPdf && app.b2bPdf.id === id) b2bPdfDrop(app);
     if (res.error) return b2bRedraw(app);
     return b2bReload(app);
   }
@@ -1871,7 +2103,34 @@
     if (action === 'b2b-del-yes') return b2bDelete(app, el.getAttribute('data-kind'), el.getAttribute('data-id'));
     if (action === 'b2b-bulk-save') return b2bBulkSave(app);
     if (action === 'b2b-train-reset') return b2bTrainReset(app);
+    if (action === 'b2b-doc-pdf') return b2bDocPdf(app, el.getAttribute('data-id'), null);
+    if (action === 'b2b-doc-pdf-close') { b2bPdfDrop(app); return b2bPdfShow(app); }
+    if (action === 'b2b-doc-share') return b2bDocShare(app);
+    if (action === 'b2b-doc-regen') { app.b2bAct.confirm = 'regen:' + el.getAttribute('data-id'); app.b2bNotice = null; return renderB2b(app); }
+    if (action === 'b2b-doc-regen-yes') {
+      const id = el.getAttribute('data-id');
+      return b2bDocAct(app, 'form_b2b_doc_regen', { p_id: id }, 'regen', d => b2bDocPdf(app, id, d.snapshot || null));
+    }
+    if (action === 'b2b-doc-missing') { app.b2bAct.confirm = 'docmiss:' + (app.b2bUi.card || ''); app.b2bNotice = null; return renderB2b(app); }
+    if (action === 'b2b-doc-missing-yes') return b2bDocAct(app, 'form_b2b_doc_waybills_missing', { p_client_id: app.b2bUi.card }, 'missing');
+    if (action === 'b2b-doc-ship') {
+      const sid = el.getAttribute('data-id');
+      return b2bDocAct(app, 'form_b2b_add_doc', { d: { kind: 'waybill', client_id: app.b2bUi.card, shipment_ids: [sid], from_shipments: true, once: true } },
+                       'doc', d => { if (d.id) b2bDocPdf(app, d.id, d.snapshot || null); });
+    }
     if (!form) return;
+    if (form.kind === 'doc') {
+      const D = root.NietteB2bDocs;
+      if (action === 'b2b-doc-line-add') { form.items.push(D.emptyLine()); form.dirty = true; return b2bRenderPanel(app); }
+      if (action === 'b2b-doc-line-del') { form.items.splice(Number(el.getAttribute('data-i')), 1); form.dirty = true; return b2bRenderPanel(app); }
+      if (action === 'b2b-doc-fill') {
+        form.dirty = false;
+        const cm = root.NietteB2b.cardModel(b2bModel(app), form.cid);
+        if (cm) D.prefill(form, cm);
+        return b2bRenderPanel(app);
+      }
+      return;
+    }
     if (action === 'b2b-f-item-add') { form.items.push(F.emptyItem()); return b2bRenderPanel(app); }
     if (action === 'b2b-f-item-del') { form.items.splice(Number(el.getAttribute('data-i')), 1); return b2bRenderPanel(app); }
     if (action === 'b2b-f-fifo') {
@@ -1906,8 +2165,11 @@
       }
       return;
     }
+    const paidId = t.getAttribute ? t.getAttribute('data-doc-paid') : null;
+    if (paidId !== null) { if (evType === 'change') b2bDocPaid(app, paidId, !!t.checked, t); return; }
     const form = app.b2bForm;
     if (!form) return;
+    if (form.kind === 'doc' || form.kind === 'docset') return b2bDocInput(app, form, t, evType);
     if (t.id === 'bfClient') {
       if (evType !== 'change') return;
       form.cid = t.value; form.f.branch_id = ''; form.msg = null;
@@ -1950,6 +2212,52 @@
       if (row && u) row.classList.toggle('over', Number(t.value) > Number(u.left_qty) + 1e-6);
       return b2bPaySum(app);
     }
+  }
+  // Форма документа: поле → состояние; строки — пересчёт суммы на месте.
+  const BD = { bdDay: 'day', bdComment: 'comment', bdFlatAmount: 'flat_amount', bdFlatName: 'flat_name' };
+  function b2bDocInput(app, form, t, evType) {
+    const D = root.NietteB2bDocs, rootEl = app.root;
+    if (form.kind === 'docset') {
+      const k = t.getAttribute ? t.getAttribute('data-bs') : null;
+      if (k === null || !(k in form.f)) return;
+      form.f[k] = t.type === 'checkbox' ? !!t.checked : t.value;
+      return;
+    }
+    if (t.id === 'bdFlat') { form.f.flat = !!t.checked; return b2bRenderPanel(app); }
+    if (BD[t.id]) {
+      form.f[BD[t.id]] = t.value;
+      if (t.id === 'bdFlatAmount') b2bDocTotal(app, form);
+      return;
+    }
+    const sid = t.getAttribute ? t.getAttribute('data-doc-ship') : null;
+    if (sid !== null) {
+      if (evType !== 'change') return;
+      form.ships = form.ships.filter(x => x !== sid);
+      if (t.checked) form.ships.push(sid);
+      // Строки руками не правили — пересобрать по отметкам; правили — не трогать
+      // (форма предложит «Подставить строки» кнопкой).
+      if (!form.dirty) {
+        const it = D.fillFromShipments(form.lines, form.ships, form.docKind);
+        form.items = it.length ? it : [D.emptyLine()];
+      }
+      return b2bRenderPanel(app);
+    }
+    const ii = t.getAttribute ? t.getAttribute('data-bd-item') : null;
+    if (ii !== null && form.items[Number(ii)]) {
+      const it = form.items[Number(ii)], col = t.getAttribute('data-bd-col');
+      it[col] = t.value;
+      form.dirty = true;
+      const row = t.closest ? t.closest('tr') : null, cell = row ? row.querySelector('.b2b-f-sum') : null;
+      if (cell) { const v = D.lineSum(it); cell.textContent = v > 0 || (Number(String(it.qty).replace(',', '.')) > 0 && String(it.price).trim() === '0') ? C.money(Math.round(v)) : '—'; }
+      return b2bDocTotal(app, form);
+    }
+  }
+  function b2bDocTotal(app, form) {
+    const D = root.NietteB2bDocs, rootEl = app.root, v = D.docTotal(form);
+    const tot = rootEl.querySelector('#bdTotal');
+    if (tot) tot.textContent = C.money(Math.round(v));
+    const btn = rootEl.querySelector('#b2bForm [data-action="b2b-f-save"]');
+    if (btn && !form.busy) btn.textContent = (form.docKind === 'invoice' ? 'Выписать счёт' : 'Выписать накладную') + (v > 0 ? ' на ' + C.money(Math.round(v)) : '');
   }
   function b2bPaySum(app) {
     const F = root.NietteB2bForms, form = app.b2bForm, rootEl = app.root;
@@ -2113,7 +2421,7 @@
       if (action.indexOf('b2b-') === 0) {
         if (app.route !== 'b2b' || !app.b2b) return;
         const ui = app.b2bUi, m = b2bModel(app);
-        if (/^b2b-(f-|del|bulk-save|train-reset)/.test(action)) return b2bFormAction(app, action, el);
+        if (/^b2b-(f-|del|bulk-save|train-reset|doc-)/.test(action)) return b2bFormAction(app, action, el);
         if (action === 'b2b-card') {
           ui.scroll = root.scrollY || 0;
           ui.card = el.getAttribute('data-id');

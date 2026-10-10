@@ -635,3 +635,40 @@ button.danger-text { color: var(--red); border-color: var(--red); }
   .b2b-f-pay th.who { white-space: normal; }
   .b2b-f-pay input { min-width: 56px; }
 }
+/* Документы B2B (sql/32, b2b_docs.js): счёт и накладная З-2. */
+.st-alert-info { border-left-color: var(--accent); }
+.st-field textarea { width: 100%; min-width: 0; font: inherit; color: inherit; background: var(--surface);
+                     border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+.b2b-doc-plate { margin: 0 0 12px; }
+.b2b-doc-ships { max-height: 220px; margin-top: 0; }
+.b2b-doc-tools { margin-bottom: 8px; }
+.b2b-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+.b2b-docs .where { white-space: normal; }
+.b2b-docs label.b2b-f-check { white-space: nowrap; font-size: 12px; }
+.b2b-ship-docs { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 2px; }
+.b2b-ship-docs a, .b2b-doc-num { font-size: 12px; font-weight: 600; color: var(--accent); }
+.b2b-ship-docs button.small { min-height: 24px; padding: 2px 8px; font-size: 11px; }
+.b2b-doc-num { text-decoration: underline; text-underline-offset: 2px; }
+/* Готовый PDF: открыть, скачать, отправить (меню телефона — WhatsApp, почта). */
+.b2b-pdf { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0 0 12px;
+           padding: 10px 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--surface); font-size: 13px; }
+.b2b-pdf-bad { border-color: var(--red); }
+.b2b-pdf-name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.b2b-pdf-act { display: flex; flex-wrap: wrap; gap: 8px; }
+.b2b-pdf a.button { display: inline-flex; align-items: center; min-height: 28px; padding: 4px 12px; border-radius: 8px; font-size: 12px;
+                    font-weight: 600; text-decoration: none; background: var(--accent); color: var(--on-accent); border: 1px solid transparent; }
+.b2b-pdf a.button.ghost { background: transparent; color: var(--text-2); border-color: var(--border-strong); }
+@media (max-width: 560px) {
+  .b2b-pdf-act { width: 100%; }
+  .b2b-pdf-act a.button, .b2b-pdf-act button { flex: 1 1 auto; justify-content: center; }
+  .b2b-doc-lines td:first-child input { min-width: 0; }
+}
+.b2b-docs a, .b2b-docs .b2b-doc-num { color: var(--accent); }
+.b2b-ship-docs a, .b2b-ship-docs button { white-space: nowrap; }
+.b2b-doc-mob { display: none; }
+@media (min-width: 561px) {
+  .b2b-doc-lines td:first-child { width: 50%; }
+  .b2b-doc-lines td:not(:first-child) input { max-width: 120px; }
+}
+@media (max-width: 560px) { .b2b-doc-mob { display: block; } }
+.b2b-docs th[scope="row"] { white-space: normal; min-width: 180px; }
