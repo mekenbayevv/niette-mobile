@@ -167,7 +167,7 @@
     const map = new Map();
     for (let d = rg.from, guard = 0; d <= rg.to && guard < 5000; d = addDays(d, 1), guard++) {
       const b = bucketOf(d, grouping);
-      if (!map.has(b.key)) map.set(b.key, { key: b.key, label: b.label, total: 0, by: {} });
+      if (!map.has(b.key)) map.set(b.key, { key: b.key, label: b.label, total: 0, by: {}, orders: 0, gross: 0 });
     }
     rows.forEach(r => {
       if (!inRange(r, rg)) return;
@@ -176,6 +176,8 @@
       const v = num(r.revenue);
       e.by[r.channel] = (e.by[r.channel] || 0) + v;
       e.total += v;
+      e.orders += num(r.orders);      // подсказке плитки канала: заказы и средний чек бакета
+      e.gross += num(r.gross);
     });
     const cur = today ? bucketOf(today, grouping).key : null;
     return Array.from(map.values())
@@ -219,59 +221,124 @@
     return '<span class="sw ' + (shape || 'sq') + ' ch-' + esc(key) + '" aria-hidden="true"></span>';
   }
 
-  function renderFilters(ui, rg) {
+  // Полоса фильтров под шапкой — как в старом дашборде: быстрые периоды,
+  // даты с подписью сверху, группировка «пилюлей». opts.groupings — показать
+  // группировку: она одна на все графики экрана, поэтому живёт здесь, а не
+  // над каждым графиком.
+  function renderFilters(ui, rg, opts) {
+    const o = opts || {};
     const btn = p => '<button type="button" class="seg' + (ui.preset === p.key ? ' on' : '') +
       '" data-action="ov-preset" data-preset="' + p.key + '" aria-pressed="' + (ui.preset === p.key) + '">' +
       esc(p.label) + '</button>';
     return '<div class="filters" role="group" aria-label="Период">' +
-      '<div class="seg-row">' + PRESETS.map(btn).join('') + '</div>' +
+      '<div class="seg-row quick">' + PRESETS.map(btn).join('') + '</div>' +
       '<div class="dates">' +
-        '<label for="ovFrom">с</label><input id="ovFrom" type="date" value="' + esc(rg.from) + '">' +
-        '<label for="ovTo">по</label><input id="ovTo" type="date" value="' + esc(rg.to) + '">' +
-      '</div></div>';
+        '<div class="f-group"><label class="f-label" for="ovFrom">Дата с</label>' +
+          '<input id="ovFrom" type="date" value="' + esc(rg.from) + '"></div>' +
+        '<div class="f-group"><label class="f-label" for="ovTo">Дата по</label>' +
+          '<input id="ovTo" type="date" value="' + esc(rg.to) + '"></div>' +
+      '</div>' +
+      (o.groupings ? '<div class="f-group"><span class="f-label" aria-hidden="true">Группировка</span>' +
+        renderGroupings(ui.grouping) + '</div>' : '') +
+      '</div>';
+  }
+
+  // Изменение к прошлому периоду одной строкой: стрелка и знак несут
+  // направление, цвет — только подсказка. Сравнивать не с чем — сказано.
+  function deltaLine(cur, prev, prg, cls) {
+    const c = 'hero-delta' + (cls ? ' ' + cls : '');
+    if (!prg || prev === null || prev === undefined) {
+      return '<div class="' + c + ' muted">Сравнивать не с чем: период — всё время.</div>';
+    }
+    if (!(Math.abs(prev) > 0)) {
+      return '<div class="' + c + ' muted">За ' + esc(rangeLabel(prg)) + ' выручки не было — сравнивать не с чем.</div>';
+    }
+    const d = pctOf(cur - prev, Math.abs(prev));
+    const up = d >= 0;
+    return '<div class="' + c + ' ' + (up ? 'up' : 'down') + '">' +
+      '<span aria-hidden="true">' + (up ? '▲' : '▼') + '</span> ' +
+      (up ? '+' : '−') + nf1.format(Math.abs(d)) + ' % к ' + esc(rangeLabel(prg)) +
+      ' <span class="muted">· было ' + money(prev) + '</span></div>';
   }
 
   // label — подпись над суммой: «Общая выручка» на «Обзоре», «Выручка Kaspi»
   // на экране Kaspi. parts — разметка под суммой (из чего она сложена);
   // тогда содержимое прижимается к верху карточки, а не висит посередине.
-  function renderHero(t, prevT, rg, prg, label, parts) {
-    let delta = '<div class="hero-delta muted">Сравнивать не с чем: период — всё время.</div>';
-    if (prg && prevT) {
-      const p = prevT.total;
-      if (!(Math.abs(p) > 0)) {
-        delta = '<div class="hero-delta muted">За ' + esc(rangeLabel(prg)) + ' выручки не было — сравнивать не с чем.</div>';
-      } else {
-        const d = pctOf(t.total - p, Math.abs(p));
-        const up = d >= 0;
-        delta = '<div class="hero-delta ' + (up ? 'up' : 'down') + '">' +
-          '<span aria-hidden="true">' + (up ? '▲' : '▼') + '</span> ' +
-          (up ? '+' : '−') + nf1.format(Math.abs(d)) + ' % к ' + esc(rangeLabel(prg)) +
-          ' <span class="muted">· было ' + money(p) + '</span></div>';
-      }
-    }
-    return '<section class="card hero' + (parts ? ' has-parts' : '') + '" aria-labelledby="ovHeroLabel">' +
+  // opts.bare — без своей карточки: итог стоит внутри квадранта или ленты.
+  function renderHero(t, prevT, rg, prg, label, parts, opts) {
+    const bare = !!(opts && opts.bare);
+    const delta = deltaLine(t.total, prg && prevT ? prevT.total : null, prg);
+    return '<' + (bare ? 'div' : 'section') + ' class="' + (bare ? 'hero hero-bare' : 'card hero') +
+      (parts ? ' has-parts' : '') + '" aria-labelledby="ovHeroLabel">' +
       '<div class="hero-label" id="ovHeroLabel">' + esc(label || 'Общая выручка') + ' · ' + esc(rangeLabel(rg)) + '</div>' +
-      '<div class="hero-value">' + money(t.total) + '</div>' + delta + (parts || '') + '</section>';
+      '<div class="hero-value">' + money(t.total) + '</div>' + delta + (parts || '') + '</' + (bare ? 'div' : 'section') + '>';
   }
 
-  // Доли — одна полоса 100% и строки с суммами. Пончик для этого хуже: доли
-  // Ozon и B2B близки, а углы на глаз не сравниваются.
-  function renderShares(t, chans) {
-    const list = chans.filter(c => Math.abs(t.by[c.key] || 0) > 0);
-    if (!list.length) return C.empty('За период выручки нет.');
+  // Лента итогов «Обзора» над квадрантами: общая выручка всех каналов с
+  // полосой долей и по плитке на канал — сумма, доля, изменение к прошлому
+  // периоду. Канал, у которого выручка была только в прошлом периоде, тоже
+  // здесь: «0 ₸ ▼ −100 %» честнее, чем пропавшая плитка. Плитки — по убыванию
+  // выручки; цвет плитки — цвет канала на графиках.
+  function renderRibbon(t, pt, rg, prg, chans) {
+    const has = c => Math.abs(t.by[c.key] || 0) > 0 || !!(pt && Math.abs(pt.by[c.key] || 0) > 0);
+    const list = chans.filter(has).sort((a, b) => (t.by[b.key] || 0) - (t.by[a.key] || 0));
     const pos = list.filter(c => (t.by[c.key] || 0) > 0);
     const posSum = pos.reduce((a, c) => a + t.by[c.key], 0);
-    const bar = '<div class="share-bar" aria-hidden="true">' + pos.map(c =>
+    const bar = pos.length ? '<div class="share-bar" aria-hidden="true">' + pos.map(c =>
       '<span class="share-seg ch-' + esc(c.key) + '" style="flex-grow:' +
-      (t.by[c.key] / posSum).toFixed(6) + '"></span>').join('') + '</div>';
-    const rows = list.slice().sort((a, b) => (t.by[b.key] || 0) - (t.by[a.key] || 0)).map(c => {
+      (t.by[c.key] / posSum).toFixed(6) + '"></span>').join('') + '</div>' : '';
+    const tile = c => {
       const v = t.by[c.key] || 0;
-      return '<tr><th scope="row">' + swatch(c.key) + esc(c.label) + '</th>' +
-        '<td class="num">' + money(v) + '</td>' +
-        '<td class="num muted">' + C.pct(pctOf(v, t.total)) + '</td></tr>';
-    }).join('');
-    return bar + '<table class="share-list"><caption class="sr-only">Выручка по каналам</caption><tbody>' +
-      rows + '</tbody></table>';
+      const pv = pt ? pt.by[c.key] || 0 : null;
+      const d = prg && pt && Math.abs(pv) > 0 ? pctOf(v - pv, Math.abs(pv)) : null;
+      const dl = d === null ? '' : '<span class="rb-delta ' + (d >= 0 ? 'up' : 'down') + '"><span aria-hidden="true">' +
+        (d >= 0 ? '▲' : '▼') + '</span> ' + (d >= 0 ? '+' : '−') + nf1.format(Math.abs(d)) + ' %</span>';
+      return '<div class="rb-ch ch-' + esc(c.key) + (c.other ? ' rb-other' : '') + '">' +
+        '<div class="rb-name">' + swatch(c.key) + esc(c.label) + '</div>' +
+        '<div class="rb-val">' + money(v) + '</div>' +
+        '<div class="rb-sub"><span class="rb-share">' + C.pct(pctOf(v, t.total)) + '</span>' + dl + '</div></div>';
+    };
+    return '<div class="ribbon" id="ovRibbon">' +
+      '<div class="rb-total">' + renderHero(t, pt, rg, prg, 'Общая выручка', bar, { bare: true }) + '</div>' +
+      (list.length ? list.map(tile).join('') : '<div class="rb-ch rb-empty">' + C.empty('За период выручки нет.') + '</div>') +
+      '</div>';
+  }
+
+  // Квадранты A и B «Обзора»: один канал — сумма за период, изменение к
+  // прошлому, заказы и средний чек. Источник тот же, что у ленты итогов
+  // (snap_overview_daily), поэтому сумма плитки равна плитке канала в ленте.
+  function channelStats(rows, key, rg, prg) {
+    const sum = r0 => {
+      const t = { revenue: 0, gross: 0, orders: 0 };
+      rows.forEach(r => {
+        if (r.channel !== key || !inRange(r, r0)) return;
+        t.revenue += num(r.revenue); t.gross += num(r.gross); t.orders += num(r.orders);
+      });
+      return t;
+    };
+    const cur = sum(rg);
+    return Object.assign(cur, { prev: prg ? sum(prg) : null, prg,
+                                avgCheck: cur.orders > 0 ? cur.gross / cur.orders : null });
+  }
+  function renderChannelStat(st) {
+    return '<div class="qp-stat">' +
+      '<div class="qp-big">' + money(st.revenue) + '</div>' +
+      deltaLine(st.revenue, st.prev ? st.prev.revenue : null, st.prg, 'qp-delta') +
+      '<div class="qp-meta">' + C.int(st.orders) + ' ' + plural(st.orders, 'заказ', 'заказа', 'заказов') +
+        (st.avgCheck === null ? '' : ' · средний чек ' + money(st.avgCheck)) + '</div></div>';
+  }
+  // Подсказка столбика канала: выручка, заказы, средний чек.
+  function channelTooltipHtml(e, key) {
+    const v = e.by[key] || 0;
+    return '<div class="tip-head">' + esc(e.label) + (e.current ? ' · идёт' : '') + '</div>' +
+      '<div class="tip-total"><b>' + money(v) + '</b> <span class="muted">выручка</span></div>' +
+      '<div class="tip-row"><b>' + C.int(e.orders) + '</b> <span class="muted">' + plural(e.orders, 'заказ', 'заказа', 'заказов') + '</span></div>' +
+      (e.orders > 0 ? '<div class="tip-row"><b>' + money(e.gross / e.orders) + '</b> <span class="muted">средний чек</span></div>' : '');
+  }
+  function plural(n, one, few, many) {
+    const a = Math.abs(Math.round(n)) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    return b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
   function renderLegend(chans, hidden, present) {
@@ -283,7 +350,7 @@
   }
 
   function renderGroupings(g) {
-    return '<div class="seg-row" role="group" aria-label="Группировка">' + GROUPINGS.map(x =>
+    return '<div class="seg-row pill" role="group" aria-label="Группировка">' + GROUPINGS.map(x =>
       '<button type="button" class="seg' + (g === x.key ? ' on' : '') + '" data-action="ov-group" data-group="' +
       x.key + '" aria-pressed="' + (g === x.key) + '">' + esc(x.label) + '</button>').join('') + '</div>';
   }
@@ -301,9 +368,15 @@
   // выдачи) рисуется нулём — шкала одна и от нуля, — а точная сумма со знаком
   // живёт в подсказке и в таблице ниже. noun — что в столбиках, для чтения
   // с экрана: «Выручка» по умолчанию, «Заказы» у «Аналитики».
-  function renderChart(series, chans, hidden, width, grouping, noun) {
+  // opts.id — id графика (по умолчанию ovChart: главный график экрана, его
+  // ищут тесты и подсказка), opts.height — высота: в квадранте график
+  // растягивается на всю свободную высоту, на телефоне — 250 px, как раньше.
+  // opts.tail — последняя фраза описания для чтения с экрана.
+  function renderChart(series, chans, hidden, width, grouping, noun, opts) {
+    const o = opts || {};
+    const id = o.id || 'ovChart', tipId = id === 'ovChart' ? 'ovTip' : id + 'Tip';
     const vis = chans.filter(c => !hidden[c.key]);
-    const W = Math.max(300, Math.round(width || 640)), H = 250;
+    const W = Math.max(300, Math.round(width || 640)), H = Math.max(150, Math.round(o.height || 250));
     const padL = 58, padR = 10, padT = 26, padB = 28;
     const iw = W - padL - padR, ih = H - padT - padB, base = padT + ih;
     const n = series.length;
@@ -381,12 +454,12 @@
     });
 
     const summary = (noun || 'Выручка') + ' по ' + ({ day: 'дням', week: 'неделям', decade: 'декадам', month: 'месяцам' })[grouping || 'day'] +
-      ', ' + n + ' столбцов. Точные ' + (noun ? 'числа' : 'суммы') + ' — в таблице ниже.';
-    return '<div class="chart" id="ovChart" tabindex="0" aria-label="' + esc(summary) + '">' +
+      ', ' + n + ' столбцов. ' + (o.tail || 'Точные ' + (noun ? 'числа' : 'суммы') + ' — в таблице ниже.');
+    return '<div class="chart" id="' + esc(id) + '" tabindex="0" aria-label="' + esc(summary) + '">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img" aria-label="' + esc(summary) + '">' +
       grid + '<line class="axis" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + (base + 0.5) + '" y2="' + (base + 0.5) + '"/>' +
       bars + label + xl + '<g class="hits">' + hits + '</g></svg>' +
-      '<div class="tip" id="ovTip" role="status" hidden></div></div>';
+      '<div class="tip" id="' + esc(tipId) + '" role="status" hidden></div></div>';
   }
 
   // Подсказка: сначала сумма, потом канал — читатель уже знает, где он, ему
@@ -453,7 +526,8 @@
     CHANNELS, PRESETS, GROUPINGS,
     todayIso, addDays, spanDays, presetRange, prevRange, bucketOf, monthsSpanned, rangeLabel,
     minDay, channelsOf, totals, buildSeries, recordIndex, compact, niceMax, topRounded,
-    renderFilters, renderHero, renderShares, renderLegend, renderGroupings, renderChart,
+    renderFilters, renderHero, renderRibbon, renderLegend, renderGroupings, renderChart, deltaLine,
+    channelStats, renderChannelStat, channelTooltipHtml, plural,
     tooltipHtml, renderTable, renderGaps, renderNotes
   };
 })(typeof window !== 'undefined' ? window : globalThis);

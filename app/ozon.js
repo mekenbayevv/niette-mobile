@@ -236,13 +236,6 @@
       '</tbody></table>' + cmp;
   }
 
-  function renderRevenueParts(k) {
-    const rows = [line('продажи · ' + int(k.orders) + NBSP + plural(k.orders, 'заказ', 'заказа', 'заказов'), money(k.sales))];
-    if (k.returns) rows.push(line('возвраты', '−' + money(k.returns)));
-    return '<table class="pnl hero-parts"><caption class="sr-only">Из чего сложена выручка</caption><tbody>' +
-      rows.join('') + '</tbody></table>';
-  }
-
   function tooltipHtml(e) {
     return '<div class="tip-head">' + esc(e.label) + (e.current ? ' · идёт' : '') + '</div>' +
       '<div class="tip-total"><b>' + money(e.revenue) + '</b> <span class="muted">выручка</span></div>' +
@@ -343,6 +336,6 @@
 
   root.NietteOzon = {
     SUM_COLS, sumRange, metrics, buildSeries, skuTotals, errorsInRange, statusWord, change,
-    renderKpis, renderMoney, renderRevenueParts, tooltipHtml, renderTable, renderSkus, renderErrors, renderNotes
+    renderKpis, renderMoney, tooltipHtml, renderTable, renderSkus, renderErrors, renderNotes
   };
 })(typeof window !== 'undefined' ? window : globalThis);

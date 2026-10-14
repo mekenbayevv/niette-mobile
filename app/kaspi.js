@@ -74,6 +74,61 @@
     return { active: active.size, fresh, repeat: active.size - fresh };
   }
 
+  // Покупатели по бакетам — квадрант C «Обзора»: в каждом бакете новые
+  // (первая покупка внутри бакета) и повторные (покупали и раньше). Бакет
+  // считается как свой маленький период — по тому же правилу, что clientsIn:
+  // клиент, купивший в бакете дважды, — один покупатель. Поэтому сумма новых
+  // по бакетам равна новым за весь период, а повторных — нет: вернувшийся в
+  // двух неделях — повторный в обеих.
+  function clientSeries(idx, rg, grouping, today) {
+    const map = new Map();
+    for (let d = rg.from, guard = 0; d <= rg.to && guard < 5000; d = O.addDays(d, 1), guard++) {
+      const b = O.bucketOf(d, grouping);
+      if (!map.has(b.key)) map.set(b.key, { key: b.key, label: b.label, from: d, ids: new Set() });
+    }
+    (idx ? idx.rows : []).forEach(r => {
+      if (!inRange(r.day, rg)) return;
+      const e = map.get(O.bucketOf(r.day, grouping).key);
+      if (e) e.ids.add(r.cid);
+    });
+    const cur = today ? O.bucketOf(today, grouping).key : null;
+    return Array.from(map.values())
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map(e => {
+        let fresh = 0;
+        e.ids.forEach(cid => { if (idx.first.get(cid) >= e.from) fresh++; });
+        const buyers = e.ids.size;
+        return { key: e.key, label: e.label, total: buyers, buyers, fresh, repeat: buyers - fresh,
+                 by: { new: fresh, ret: buyers - fresh }, current: e.key === cur };
+      });
+  }
+  const CLIENT_SERIES = [{ key: 'new', label: 'Новые' }, { key: 'ret', label: 'Повторные' }];
+
+  // Шапка квадранта C: покупатели периода, новые с изменением к прошлому
+  // периоду и доля повторных — те же числа, что в карточках экрана Kaspi.
+  function renderClientStat(cl, pcl) {
+    const share = isNum(cl.active) && cl.active > 0 ? 100 * cl.repeat / cl.active : null;
+    const d = pcl ? change(cl.fresh, pcl.fresh) : null;
+    return '<div class="qp-stat">' +
+      '<div class="qp-big">' + int(cl.active) + NBSP + '<span class="qp-unit">' +
+        plural(cl.active, 'покупатель', 'покупателя', 'покупателей') + '</span></div>' +
+      '<div class="qp-meta"><b>' + int(cl.fresh) + '</b> ' + plural(cl.fresh, 'новый', 'новых', 'новых') +
+        (d === null ? '' : ' <span class="kpi-delta-inline ' + (d >= 0 ? 'up' : 'down') + '"><span aria-hidden="true">' +
+          (d >= 0 ? '▲' : '▼') + '</span>' + NBSP + (d >= 0 ? '+' : '−') + nf1.format(Math.abs(d)) + NBSP + '%</span>') +
+        ' · <b>' + int(cl.repeat) + '</b> ' + plural(cl.repeat, 'повторный', 'повторных', 'повторных') +
+        (isNum(share) ? ' (' + pct(share) + ')' : '') + '</div></div>';
+  }
+
+  function clientTooltipHtml(e) {
+    return '<div class="tip-head">' + esc(e.label) + (e.current ? ' · идёт' : '') + '</div>' +
+      '<div class="tip-total"><b>' + int(e.buyers) + '</b> <span class="muted">' +
+        plural(e.buyers, 'покупатель', 'покупателя', 'покупателей') + '</span></div>' +
+      '<div class="tip-row"><span class="sw line ch-new" aria-hidden="true"></span><b>' + int(e.fresh) + '</b> <span class="muted">' +
+        plural(e.fresh, 'новый', 'новых', 'новых') + '</span></div>' +
+      '<div class="tip-row"><span class="sw line ch-ret" aria-hidden="true"></span><b>' + int(e.repeat) + '</b> <span class="muted">' +
+        plural(e.repeat, 'повторный', 'повторных', 'повторных') + '</span></div>';
+  }
+
   // ── Метрики периода ───────────────────────────────────────────────────────
   // Прибыль — только по заказам, где известно всё (counted_*): неизвестная
   // себестоимость не превращается в ноль. Нет ни одного посчитанного
@@ -180,16 +235,6 @@
                'известна не везде: ' + int(k.nocogs_orders) + NBSP + 'зак. на ' + money(k.nocogs_revenue) + ' без неё', null, 'warn')
         : card('Себестоимость', money(k.counted_cogs), 'с довесками')) +
     '</div>';
-  }
-
-  // Из чего сложена выручка — под крупной суммой: то же определение, что у
-  // строки Kaspi на «Обзоре», только по частям. Пустые части не показываются.
-  function renderRevenueParts(k) {
-    const rows = [line('выдано · ' + int(k.orders) + NBSP + plural(k.orders, 'заказ', 'заказа', 'заказов'), money(k.gross))];
-    if (k.extra) rows.push(line('удалённые оплаты · ' + int(k.remote_n) + NBSP + 'шт.', '+' + money(k.extra)));
-    if (k.returns) rows.push(line('возвраты выданных', minus(k.returns)));
-    return '<table class="pnl hero-parts"><caption class="sr-only">Из чего сложена выручка</caption><tbody>' +
-      rows.join('') + '</tbody></table>';
   }
 
   // Прибыль до расходов — лестницей, и лестница обязана сходиться: каждая
@@ -320,7 +365,8 @@
   }
 
   root.NietteKaspi = {
-    SUM_COLS, sumRange, clientIndex, clientsIn, metrics, buildSeries, change,
-    renderKpis, renderRevenueParts, renderProfit, tooltipHtml, renderTable, remoteInRange, renderRemote, renderNotes
+    SUM_COLS, sumRange, clientIndex, clientsIn, clientSeries, CLIENT_SERIES, renderClientStat, clientTooltipHtml,
+    metrics, buildSeries, change,
+    renderKpis, renderProfit, tooltipHtml, renderTable, remoteInRange, renderRemote, renderNotes
   };
 })(typeof window !== 'undefined' ? window : globalThis);

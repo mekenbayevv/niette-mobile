@@ -183,7 +183,17 @@
       items.push('<li><b>Без даты пересчёта</b> — ' + p.noDate.map(r => esc(displayName(r.name, r.sku))).join(', ') +
         ': расход по ним не вычитается вовсе, остаток равен пересчёту.</li>');
     }
-    return '<section class="card gaps" role="status"><h2>Что не сходится</h2><ul class="notes">' + items.join('') + '</ul></section>';
+    // Свёрнуто в одну жёлтую строку с короткой сутью (14.10.2026): над
+    // квадрантами место дорогое, а объяснение нужно не каждый раз. Текст
+    // объяснения — в разметке и при свёрнутом блоке.
+    const short = [];
+    if (p.notDeducted) short.push('не вычлось ' + qty(p.notDeducted) + NBSP + 'шт');
+    if (p.deficits.length) short.push('расход превысил пересчёт у ' + int(p.deficits.length) + NBSP +
+                                      plural(p.deficits.length, 'товара', 'товаров', 'товаров'));
+    if (p.noDate.length) short.push('без даты пересчёта: ' + int(p.noDate.length));
+    return '<details class="card gaps problems"><summary><h2><span aria-hidden="true">⚠ </span>Что не сходится</h2>' +
+      '<span class="problems-short">' + esc(short.join(' · ')) + '</span><span class="problems-more">подробнее</span></summary>' +
+      '<ul class="notes">' + items.join('') + '</ul></details>';
   }
 
   // ── Карточки по группам — как renderInvSkuGrid ────────────────────────────
@@ -214,6 +224,41 @@
         ' <span class="muted">' + int(items.length) + NBSP + 'SKU · ' + qty(total) + NBSP + 'шт</span></h3>' +
         '<div class="sku-grid">' + items.map(r => skuCard(r, now)).join('') + '</div></div>';
     }).join('');
+  }
+
+  // ── Склад одним взглядом — квадрант D «Обзора» ───────────────────────────
+  // Сколько всего, что кончается, и строка на товар: срочные сверху, полоса —
+  // запас в днях из 60 (больше 60 — полная). Цвет срока — подсказка, смысл
+  // несёт текст («срочно», «внимание»), как в карточках экрана «Склад».
+  // mp — строки v_mp_stocks или null (не загрузились): тогда строки про
+  // площадки нет вовсе, а не «0 шт».
+  const BRIEF_DAYS = 60;
+  function renderBrief(rows, now, mp) {
+    if (!rows.length) return C.empty('Лист «Склад» пуст — пересчёт не внесён.');
+    const k = kpis(rows, null, now);
+    const head = '<div class="qp-stat">' +
+      '<div class="qp-big">' + qty(k.total) + NBSP + '<span class="qp-unit">шт на своём складе</span></div>' +
+      '<div class="qp-meta">' +
+        (k.critical ? '<b class="st-bad-text">срочно: ' + int(k.critical) + NBSP + 'SKU</b>' : 'срочных нет') + ' · ' +
+        (k.warn ? '<b class="warn-text">внимание: ' + int(k.warn) + NBSP + 'SKU</b>' : 'на внимании нет') +
+        (isNum(k.avgDays) ? ' · в среднем хватит на ' + int(k.avgDays) + NBSP + 'дн' : '') + '</div></div>';
+    const list = rows.slice().sort(byDays).map(r => {
+      const d = days(r), st = status(d);
+      const w = d === INF ? 100 : Math.max(2, Math.min(100, Math.round(d / BRIEF_DAYS * 100)));
+      return '<li class="stb st-' + st + '" title="' + esc((r.name || r.sku || '') + ' · закончится ~' + endDate(d, now)) + '">' +
+        '<span class="stb-name">' + esc(displayName(r.name, r.sku)) + '</span>' +
+        '<span class="stb-qty">' + qty(r.current_stock) + NBSP + 'шт</span>' +
+        '<span class="stb-track" aria-hidden="true"><span class="stb-fill" style="width:' + w + '%"></span></span>' +
+        '<span class="stb-days">' + esc(daysLabel(d)) + '</span></li>';
+    }).join('');
+    let mpLine = '';
+    if (mp) {
+      const rep = mpReport(rows, mp), t = rep.totals;
+      const side = (s, v, label) => label + ' ' + (s.ok ? pcs(v) : 'нет данных');
+      mpLine = '<p class="note stb-mp">На складах площадок: ' + side(rep.oz, t.ozFbo, 'Ozon FBO') + ' · ' +
+        side(rep.wb, t.wb, 'Wildberries') + ' — в «свой склад» не входит.</p>';
+    }
+    return head + '<ul class="stb-list" aria-label="Остаток по товарам, срочные сверху">' + list + '</ul>' + mpLine;
   }
 
   // ── Как сложился остаток — расчётные колонки листа «Склад» ────────────────
@@ -955,7 +1000,7 @@
 
   root.NietteStock = {
     INF, GROUPS, groupOf, displayName, status, daysLabel, endDate, kpis, woff30, problems,
-    renderKpis, renderProblems, renderCards, renderTable, renderWriteoffs, renderNotes,
+    renderKpis, renderProblems, renderCards, renderBrief, BRIEF_DAYS, renderTable, renderWriteoffs, renderNotes,
     reconFor, winFrom, winToolbar, reconSub, renderRecon, pointsSub, renderPoints,
     KASPI_HOME, MP_STALE_H, mpSide, mpReport, mpErrText, mpSub, mpFresh, renderMp,
     WO_REASONS, itemKey, newForm, woSelected, woOver, woSumText, woPeople, renderWoPick, renderForms,

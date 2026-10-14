@@ -306,19 +306,23 @@
     return { data, errors, synced: fresh.synced, snapAt: fresh.snapAt, snapNever: fresh.snapNever };
   }
 
+  // «Обзор» с 14.10.2026 — четыре квадранта: кроме выручки по дням ему нужны
+  // пары «клиент × день» Kaspi (квадрант C) и остаток склада с площадками
+  // (D). Те же снимки, что у экранов Kaspi и «Склад»; упал один — его
+  // квадрант показывает причину, остальной экран работает.
   async function loadOverview(client) {
     const snapP = fetchSnapState(client);
-    const [daily, gaps, fresh] = await Promise.allSettled([
-      fetchAll(client, OV_DAILY), fetchSmall(client, OV_GAPS), fetchSmall(client, OV_FRESH)]);
+    const [daily, gaps, fresh, cdays, stock, mp] = await Promise.allSettled([
+      fetchAll(client, OV_DAILY), fetchSmall(client, OV_GAPS), fetchSmall(client, OV_FRESH),
+      fetchAll(client, KP_CLIENTS), fetchSmall(client, ST_STOCK), fetchSmall(client, ST_MP)]);
     const snap = await snapP;
+    const val = r => (r.status === 'fulfilled' ? r.value : []);
+    const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
     return {
-      rows: daily.status === 'fulfilled' ? daily.value : [],
-      gaps: gaps.status === 'fulfilled' ? gaps.value : [],
-      fresh: fresh.status === 'fulfilled' && fresh.value.length ? fresh.value[0] : {},
-      errors: {
-        daily: daily.status === 'rejected' ? humanError(daily.reason, OV_DAILY.what) : null,
-        gaps: gaps.status === 'rejected' ? humanError(gaps.reason, OV_GAPS.what) : null
-      },
+      rows: val(daily), gaps: val(gaps), fresh: val(fresh)[0] || {},
+      clientDays: val(cdays), idx: null, stock: val(stock), mp: mp.status === 'fulfilled' ? mp.value : null,
+      errors: { daily: err(daily, OV_DAILY), gaps: err(gaps, OV_GAPS), clients: err(cdays, KP_CLIENTS),
+                stock: err(stock, ST_STOCK), mp: err(mp, ST_MP) },
       snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
     };
   }
@@ -439,7 +443,45 @@
     return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
-  function page(inner) { return '<div class="page">' + inner + '</div>'; }
+  // id="screenBody" — тело экрана под полосой фильтров. Смена своих дат
+  // перерисовывает только его: поля дат живут в полосе и остаются теми же
+  // элементами, курсор из них не выпадает.
+  function page(inner, cls) { return '<div class="page' + (cls ? ' ' + cls : '') + '" id="screenBody">' + inner + '</div>'; }
+
+  // ── Каркас экрана (14.10.2026, «как в старом дашборде») ──────────────────
+  // Тёмная шапка с вкладками → белая полоса на всю ширину: слева фильтры
+  // экрана, справа свежесть данных → четыре квадранта A B / C D → остальное
+  // ниже. На компьютере квадранты — сетка 2×2 на высоту окна, длинное
+  // листается внутри квадранта, кнопка ⤢ разворачивает квадрант во всю
+  // ширину; на телефоне — один столбец: A, B, C, D подряд.
+  function subbar(tools, fresh) {
+    return '<div class="subbar"><div class="subbar-inner">' +
+      '<div class="subbar-tools">' + (tools || '') + '</div>' +
+      (fresh ? '<div class="subbar-meta">' + fresh + '</div>' : '') + '</div></div>';
+  }
+  // Подпись экрана без периода («Клиенты», «Склад») — слева в полосе.
+  function screenTitle(icon, title, sub) {
+    return '<div class="screen-title"><span class="qp-ico" aria-hidden="true">' + icon + '</span><b>' + C.esc(title) + '</b>' +
+      (sub ? '<span class="muted">' + C.esc(sub) + '</span>' : '') + '</div>';
+  }
+  function quad(a, b, c, d) { return '<div class="quad">' + a + b + c + d + '</div>'; }
+  function below(inner) { return '<div class="below">' + inner + '</div>'; }
+  // Ссылка из квадранта на свой экран: та же кнопка, что у вкладки.
+  function qpLink(route, label) {
+    return '<button type="button" class="qp-link" data-action="route" data-route="' + route + '">' + C.esc(label) +
+      ' <span aria-hidden="true">→</span></button>';
+  }
+  // Коробка графика: её ширину (и высоту — в квадранте) меряет fitCharts.
+  function chartBox(id, html) { return '<div class="chart-box" id="' + id + 'Box">' + html + '</div>'; }
+
+  // Свежесть: строка — в полосу фильтров, предупреждения — в начало экрана.
+  function freshParts(bits, notes) {
+    const txt = bits.filter(Boolean).join(' · ');
+    return {
+      line: '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>',
+      notes: (notes || []).filter(Boolean).map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('')
+    };
+  }
 
   function messageHtml(title, body, actions) {
     return page('<section class="card message" role="alert"><h1>' + C.esc(title) + '</h1>' + body +
@@ -448,7 +490,7 @@
 
   function loginHtml(errorText, email) {
     return page(
-      '<section class="card login"><h1>NIETTE</h1><p class="muted">Выручка и клиенты</p>' +
+      '<section class="card login"><div class="login-mark" aria-hidden="true"></div><h1>NIETTE</h1><p class="muted">Analytics · выручка и клиенты</p>' +
       '<form id="loginForm" novalidate>' +
         '<label for="loginEmail">Email</label>' +
         '<input id="loginEmail" name="email" type="email" autocomplete="username" required value="' + C.esc(email || '') + '">' +
@@ -456,7 +498,7 @@
         '<input id="loginPassword" name="password" type="password" autocomplete="current-password" required>' +
         '<button type="submit" class="primary">Войти</button>' +
         '<div id="loginError" class="error"' + (errorText ? ' role="alert">' + C.esc(errorText) : ' hidden>') + '</div>' +
-      '</form></section>');
+      '</form></section>', 'page-login');
   }
 
   // sec — раздел app_users.sections, которому принадлежит экран (sql/12_auth.sql):
@@ -484,7 +526,8 @@
       '" data-action="route" data-route="' + r.key + '"' + (app.route === r.key ? ' aria-current="page"' : '') + '>' +
       C.esc(r.label) + '</button>').join('');
     return '<header class="top"><div class="top-inner">' +
-      '<div class="brand">NIETTE</div>' +
+      '<div class="brand"><span class="brand-mark" aria-hidden="true"></span>NIETTE' +
+        '<span class="brand-sub" aria-hidden="true">Analytics</span></div>' +
       '<nav class="tabs" aria-label="Экраны">' + tabs + '</nav>' +
       '<div class="top-actions">' +
         (email ? '<span class="who-am-i" title="Вы вошли как">' + C.esc(email) + '</span>' : '') +
@@ -493,10 +536,31 @@
       '</div></div></header>';
   }
 
-  function section(id, title, sub, inner) {
-    return '<section class="card" id="' + id + '" aria-labelledby="' + id + 'Title">' +
-      '<div class="card-head"><h2 id="' + id + 'Title">' + C.esc(title) + '</h2>' +
-      (sub ? '<div class="card-sub">' + sub + '</div>' : '') + '</div>' + inner + '</section>';
+  // opts.qp — квадрант: шапка со значком, ссылкой на экран (opts.tools) и
+  // кнопкой ⤢, тело листается внутри (на компьютере). opts.fill — тело
+  // растягивает график на всю свободную высоту. opts.app — чтобы помнить
+  // развёрнутый квадрант между перерисовками.
+  function section(id, title, sub, inner, opts) {
+    const o = opts || {};
+    const ico = o.icon ? '<span class="qp-ico" aria-hidden="true">' + o.icon + '</span>' : '';
+    if (!o.qp) {
+      return '<section class="card' + (o.cls ? ' ' + o.cls : '') + '" id="' + id + '" aria-labelledby="' + id + 'Title">' +
+        '<div class="card-head"><h2 id="' + id + 'Title">' + ico + C.esc(title) + '</h2>' +
+        (sub ? '<div class="card-sub">' + sub + '</div>' : '') + '</div>' + inner + '</section>';
+    }
+    const max = !!(o.app && o.app.qpMax && o.app.qpMax[o.app.route] === id);
+    return '<section class="card qp' + (max ? ' qp-max' : '') + (o.cls ? ' ' + o.cls : '') + '" id="' + id + '" aria-labelledby="' + id + 'Title">' +
+      '<div class="card-head qp-head"><div class="qp-titles"><h2 id="' + id + 'Title">' + ico + C.esc(title) + '</h2>' +
+        (sub ? '<div class="card-sub">' + sub + '</div>' : '') + '</div>' +
+        '<div class="qp-tools">' + (o.tools || '') +
+          '<button type="button" class="qp-max-btn" data-action="qp-max" data-id="' + id + '" aria-pressed="' + max + '"' +
+            ' title="' + (max ? 'Свернуть' : 'Развернуть во всю ширину') + '"><span aria-hidden="true">' + (max ? '⤡' : '⤢') + '</span>' +
+            '<span class="sr-only">' + (max ? 'Свернуть' : 'Развернуть') + ' «' + C.esc(title) + '»</span></button>' +
+        '</div></div>' +
+      '<div class="qp-body' + (o.fill ? ' qp-fill' : '') + '">' + inner + '</div></section>';
+  }
+  function panel(app, id, icon, title, sub, inner, more) {
+    return section(id, title, sub, inner, Object.assign({ qp: true, app, icon }, more || {}));
   }
 
   function or(errors, key, render) { return errors[key] ? C.sectionError(errors[key]) : render(); }
@@ -532,7 +596,7 @@
       (d.retention || []).forEach(r => { if (Number(r.k) === 0) totals[String(r.cohort).slice(0, 7)] = Number(r.new_clients); });
       return C.renderRetention(d.retentionEntry.filter(r => r.entry === ent), m, { entry: ent, totals });
     };
-    return section('retention', 'Удержание по месяцам', 'Новые клиенты месяца — сколько из них купили в следующие месяцы',
+    return panel(app, 'retention', '🔁', 'Удержание по месяцам', 'Новые клиенты месяца — сколько из них купили в следующие месяцы',
       or(e, 'retention', () =>
         '<div class="toolbar" role="group" aria-label="Как считать месяцы">' +
           seg('ret-mode', 'data-mode', 'any', m === 'any', C.RET_MODES.any) +
@@ -555,7 +619,7 @@
           Object.keys(C.LTV_METRICS).map(k => seg('ltv-metric', 'data-metric', k, metric === k, C.LTV_METRICS[k])).join('') + '</div>' +
         '<div class="toolbar" role="group" aria-label="Разрез"><span class="toolbar-label">Разрез:</span>' +
           Object.keys(C.LTV_DIMS).map(k => seg('ltv-dim', 'data-dim', k, dim === k, C.LTV_DIMS[k])).join('') + '</div>' +
-        C.renderLtvCurve(d.ltvCurve, { dim, metric })));
+        C.renderLtvCurve(d.ltvCurve, { dim, metric })), { icon: '📈' });
   }
 
   // Главное о клиентах (sql/30) — первый блок экрана. Месяц (новые и
@@ -568,7 +632,7 @@
     const months = mix.map(m => m.month);
     const closed = mix.filter(m => m.complete).map(m => m.month);
     const sel = months.indexOf(app.ui.sumMonth) >= 0 ? app.ui.sumMonth : (closed[closed.length - 1] || months[months.length - 1]);
-    return section('summary', 'Главное о клиентах', 'Только Kaspi · новые клиенты считаются по дням от их первой покупки',
+    return panel(app, 'summary', '⭐', 'Главное о клиентах', 'Только Kaspi · новые клиенты считаются по дням от их первой покупки',
       or(e, 'summary', () => C.renderSummary(d.summary, { grp: app.ui.sumGrp, month: sel, mix, cac: app.ui.sumCac })));
   }
 
@@ -582,11 +646,16 @@
     const months = mixOk ? C.monthMix(d.monthMix).map(m => m.month) : [];
     const sel = months.indexOf(app.ui.mixMonth) >= 0 ? app.ui.mixMonth : months[months.length - 1];
     const row = (d.monthly || []).find(r => C.monthKey(r.month) === sel) || null;
-    const panel = mixOk
+    const mixHtml = mixOk
       ? '<div class="mix" id="mixBody">' + C.renderMonthMix(d.monthMix, sel, { monthly: row }) + '</div>'
       : (e.monthMix ? '<p class="note">Разбор месяца недоступен. ' + C.esc(e.monthMix) + '</p>' : '');
-    return section('monthly', 'Новые и вернувшиеся по месяцам', mixOk ? 'Нажмите на месяц — кто в нём покупал' : '',
-      or(e, 'monthly', () => C.renderMonthly(d.monthly, { months, selected: sel })) + panel);
+    return panel(app, 'monthly', '📆', 'Новые и вернувшиеся по месяцам', mixOk ? 'Нажмите на месяц — кто в нём покупал' : '',
+      or(e, 'monthly', () => C.renderMonthly(d.monthly, { months, selected: sel })) + mixHtml);
+  }
+
+  function riskSection(app) {
+    return panel(app, 'risk', '⚠️', 'Риск оттока', 'Давно не заказывал по меркам этого клиента · самые ценные сверху',
+      or(app.errors, 'risk', () => riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>'));
   }
 
   function riskBodyHtml(app) {
@@ -617,36 +686,107 @@
     if (e.risk) { k.high = null; k.mid = null; }
     if (e.repeat) k.medianDays = null;
     // «Данные на» — время снимка: это и есть момент, на который верны цифры.
-    const parts = [];
-    if (app.snapAt) parts.push('Данные на ' + hhmm(app.snapAt));
-    if (app.synced) parts.push('зеркало Apps Script обновлено ' + hhmm(app.synced));
-    parts.push('загружено ' + hhmm(app.loadedAt));
-    const fresh = parts.join(' · ');
-    const stale = staleNote(app);
-    return headerHtml(app) + page(
-      '<div class="fresh muted">' + C.esc(fresh.charAt(0).toUpperCase() + fresh.slice(1)) + '</div>' +
-      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '') +
-      (e.base ? C.sectionError(e.base) : C.renderKpis(k)) +
-      summarySection(app) +
-      section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
-              or(e, 'ltv', () => C.renderCohorts(d.ltv))) +
-      ltvSection(app) +
-      retentionSection(app) +
-      '<div class="two">' +
-        section('repeat', 'Время до второго заказа', '', or(e, 'repeat', () => C.renderRepeat(d.repeat))) +
-        section('entry', 'Вход через мини-пак', 'С чего начал клиент',
-                or(e, 'entry', () => C.renderEntry(d.entry))) +
-      '</div>' +
-      section('risk', 'Риск оттока', 'Давно не заказывал по меркам этого клиента · самые ценные сверху',
-              or(e, 'risk', () => riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>')) +
-      monthlySection(app) +
-      section('base', 'База клиентов', 'Клиент = имя + фамилия + город · только выданные заказы Kaspi',
-              or(e, 'base', () => baseToolbar(app) + '<div id="baseBody">' + baseBodyHtml(app) + '</div>')) +
-      section('notes', 'Как читать эти числа', '', C.renderNotes()));
+    const f = freshParts([app.snapAt ? 'Данные на ' + hhmm(app.snapAt) : '',
+                          app.synced ? 'зеркало Apps Script обновлено ' + hhmm(app.synced) : '',
+                          'загружено ' + hhmm(app.loadedAt)], [staleNote(app)]);
+    // Квадранты: A — главное, B — кто покупал по месяцам, C — удержание,
+    // D — риск оттока; когорты, LTV, время до второго заказа и база — ниже.
+    return headerHtml(app) +
+      subbar(screenTitle('👥', 'Клиенты', 'только Kaspi · опознанные по имени и городу'), f.line) + page(
+      f.notes +
+      (e.base ? C.sectionError(e.base) : '<div class="ribbon-kpis">' + C.renderKpis(k) + '</div>') +
+      quad(summarySection(app), monthlySection(app), retentionSection(app), riskSection(app)) +
+      below(
+        section('cohorts', 'Когорты: LTV и окупаемость', 'Когорта — месяц первого заказа · CAC только Meta',
+                or(e, 'ltv', () => C.renderCohorts(d.ltv)), { icon: '💵' }) +
+        ltvSection(app) +
+        '<div class="two">' +
+          section('repeat', 'Время до второго заказа', '', or(e, 'repeat', () => C.renderRepeat(d.repeat)), { icon: '⏱' }) +
+          section('entry', 'Вход через мини-пак', 'С чего начал клиент',
+                  or(e, 'entry', () => C.renderEntry(d.entry)), { icon: '🚪' }) +
+        '</div>' +
+        section('base', 'База клиентов', 'Клиент = имя + фамилия + город · только выданные заказы Kaspi',
+                or(e, 'base', () => baseToolbar(app) + '<div id="baseBody">' + baseBodyHtml(app) + '</div>'), { icon: '🗂' }) +
+        section('notes', 'Как читать эти числа', '', C.renderNotes(), { icon: 'ℹ️' })));
   }
 
   // ── Показ ─────────────────────────────────────────────────────────────────
   function show(app, html) { app.root.innerHTML = html; }
+  function loadingHtml(app, text) {
+    return headerHtml(app) + subbar('', '') + page('<div class="card loading" role="status">' + C.esc(text) + '</div>');
+  }
+
+  // Квадранты на высоту окна — только на широком экране (то же условие, что
+  // в style.css): на телефоне и планшете — один столбец обычной высоты.
+  const COCKPIT_MQ = '(min-width: 1100px)';
+  function isCockpit() { return !!(root.matchMedia && root.matchMedia(COCKPIT_MQ).matches); }
+
+  // После показа: высота квадрантов — от их места на странице, графики — по
+  // настоящему размеру своих коробок.
+  function afterShow(app) { fitQuad(app); fitCharts(app); }
+
+  // Верх квадрантов → CSS (--quad-top): высота строки = (окно − верх) / 2.
+  // Меряется после показа: над квадрантами бывают предупреждения разной высоты.
+  function fitQuad(app) {
+    const q = app.root.querySelector('.quad');
+    const de = root.document && root.document.documentElement;
+    if (!q || !q.getBoundingClientRect || !de) return;
+    const top = Math.round(q.getBoundingClientRect().top + (root.scrollY || root.pageYOffset || 0));
+    if (top > 0) de.style.setProperty('--quad-top', top + 'px');
+  }
+
+  // Размер графика — настоящий размер его коробки. SVG с чужой шириной
+  // масштабируется целиком, вместе с текстом: на телефоне подписи стали бы
+  // мельче шести пикселей. В квадранте на широком экране график ещё и
+  // занимает всю свободную высоту; развёрнутый квадрант и телефон — 250 px.
+  function fitCharts(app) {
+    const specs = screenCharts(app), cockpit = isCockpit();
+    Object.keys(specs).forEach(id => {
+      const box = app.root.querySelector('#' + id + 'Box');
+      if (!box) return;
+      const w = Math.round(box.clientWidth || 0);
+      if (!w) return;
+      const fill = cockpit && box.closest && box.closest('.qp-fill') && !box.closest('.qp-max');
+      const h = fill ? Math.round(box.clientHeight || 0) : 0;
+      const d = app.chartDims[id] || { w: 0, h: 0 };
+      if (Math.abs(w - d.w) < 8 && Math.abs(h - d.h) < 8) return;
+      app.chartDims[id] = { w, h };
+      box.innerHTML = specs[id].html(w, h);
+    });
+  }
+  function chartW(app, id) { const d = app.chartDims[id]; return d ? d.w : 0; }
+  function chartH(app, id) { const d = app.chartDims[id]; return d ? d.h : 0; }
+
+  // Смена своих дат: тело экрана — заново, полоса фильтров — та же.
+  function swapBody(app, html) {
+    const body = app.root.querySelector('#screenBody');
+    if (!body) return renderPeriodScreen(app);
+    body.innerHTML = html;
+    syncPresetButtons(app);
+    afterShow(app);
+  }
+
+  // Развёрнутый квадрант — во всю ширину и в полную высоту, без листания
+  // внутри. Один на экран; помнится до перезагрузки страницы.
+  function setQpMax(app, id) {
+    const cur = app.qpMax[app.route] === id;
+    app.qpMax[app.route] = cur ? null : id;
+    app.root.querySelectorAll('.qp').forEach(q => {
+      const on = !cur && q.id === id;
+      q.classList.toggle('qp-max', on);
+      const b = q.querySelector('[data-action="qp-max"]');
+      if (!b) return;
+      b.setAttribute('aria-pressed', String(on));
+      b.title = on ? 'Свернуть' : 'Развернуть во всю ширину';
+      const ico = b.querySelector('[aria-hidden="true"]');
+      if (ico) ico.textContent = on ? '⤡' : '⤢';
+      const sr = b.querySelector('.sr-only');
+      if (sr) sr.textContent = sr.textContent.replace(/^(Свернуть|Развернуть)/, on ? 'Свернуть' : 'Развернуть');
+    });
+    fitCharts(app);
+    const q = app.root.querySelector('#' + id);
+    if (q && !cur && typeof q.scrollIntoView === 'function') q.scrollIntoView({ block: 'nearest' });
+  }
 
   // Всё загруженное — из памяти вон: на том же телефоне следующим может войти
   // торгпред, и экраны владельца (Kaspi, склад, клиенты) не должны его ждать.
@@ -709,7 +849,7 @@
 
   async function loadAndRender(app) {
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю клиентов…</div>'));
+    show(app, loadingHtml(app, 'Загружаю клиентов…'));
     const res = await loadAll(app.client);
     if (g !== app.gen) return;                 // пока грузилось, вышли или вошёл другой
     app.data = res.data;
@@ -743,7 +883,7 @@
     return same ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : hhmm(d);
   }
 
-  function ovFreshHtml(app) {
+  function ovFresh(app) {
     const f = app.ov.fresh || {};
     const bits = [];
     if (app.ov.snapAt) bits.push('Данные на ' + when(app.ov.snapAt));
@@ -758,16 +898,19 @@
     if (poll.length) bits.push('опрос ' + poll.join(', '));
     if (f.mirror_synced_at) bits.push('зеркало ' + when(f.mirror_synced_at));
     bits.push('загружено ' + when(app.ov.loadedAt));
-    const txt = bits.join(' · ');
-    const stale = staleNote(app.ov);
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+    return freshParts(bits, [staleNote(app.ov)]);
   }
 
+  const OV_PANELS = {
+    kaspi: { id: 'ovKaspi', chart: 'ovKpChart', icon: '🔵', title: 'Kaspi · продажи', link: 'Kaspi', basis: 'по дню выдачи' },
+    ozon:  { id: 'ovOzon',  chart: 'ovOzChart', icon: '🟠', title: 'Ozon · продажи',  link: 'Ozon',  basis: 'по дню начисления' }
+  };
+  const CLIENT_LEGEND = [{ key: 'new', label: 'Новые' }, { key: 'ret', label: 'Повторные' }];
+
   // Всё, что зависит от периода, считается здесь одним проходом и кладётся
-  // в app.ovView — подсказке графика нужны ровно те бакеты, что нарисованы.
+  // в app.ovView — подсказкам графиков нужны ровно те бакеты, что нарисованы.
   function ovCompute(app) {
-    const O = root.NietteOverview, ui = app.ovUi, rows = app.ov.rows;
+    const O = root.NietteOverview, K = root.NietteKaspi, ui = app.ovUi, ov = app.ov, rows = ov.rows;
     const today = O.todayIso(app.now());
     const rg = ovRange(app);
     const prg = O.prevRange(ui.preset === 'custom' ? 'custom' : ui.preset, rg);
@@ -775,50 +918,97 @@
     const series = O.buildSeries(rows, rg, ui.grouping, today);
     const present = {};
     chans.forEach(c => { present[c.key] = series.some(e => (e.by[c.key] || 0) !== 0); });
-    app.ovView = { rg, prg, chans, series, present, t: O.totals(rows, rg), pt: prg ? O.totals(rows, prg) : null };
+    const chSeries = {};
+    Object.keys(OV_PANELS).forEach(k => { chSeries[k] = O.buildSeries(rows.filter(r => r.channel === k), rg, ui.grouping, today); });
+    // Клиенты — квадрант C: пары «клиент × день» Kaspi, как на экране Kaspi.
+    const idx = K && !ov.errors.clients ? (ov.idx || (ov.idx = K.clientIndex(ov.clientDays))) : null;
+    app.ovView = {
+      rg, prg, chans, series, present, chSeries, t: O.totals(rows, rg), pt: prg ? O.totals(rows, prg) : null,
+      cl: idx ? K.clientsIn(idx, rg) : null, pcl: idx && prg ? K.clientsIn(idx, prg) : null,
+      cliSeries: idx ? K.clientSeries(idx, rg, ui.grouping, today) : []
+    };
     return app.ovView;
   }
 
-  function ovChartHtml(app, width) {
+  function ovChartHtml(app, width, height) {
     const v = app.ovView;
-    return root.NietteOverview.renderChart(v.series, v.chans, app.ovUi.hidden, width, app.ovUi.grouping);
+    return root.NietteOverview.renderChart(v.series, v.chans, app.ovUi.hidden, width, app.ovUi.grouping, null,
+                                           { height: height || 0 });
+  }
+  function ovChannelChartHtml(app, key, width, height) {
+    const p = OV_PANELS[key], ch = app.ovView.chans.filter(c => c.key === key);
+    return root.NietteOverview.renderChart(app.ovView.chSeries[key], ch.length ? ch : [{ key, label: key }], {}, width,
+      app.ovUi.grouping, null, { id: p.chart, height: height || 0, tail: 'Точные суммы — в подсказке столбика и в таблице «По периодам» ниже.' });
+  }
+  function ovClientChartHtml(app, width, height) {
+    return root.NietteOverview.renderChart(app.ovView.cliSeries, CLIENT_LEGEND, {}, width, app.ovUi.grouping, 'Покупатели',
+      { id: 'ovCliChart', height: height || 0, tail: 'Новые и повторные по каждому столбику — в подсказке.' });
   }
 
   function ovTrendInner(app) {
     const O = root.NietteOverview, v = app.ovView;
-    return O.renderGroupings(app.ovUi.grouping) + O.renderLegend(v.chans, app.ovUi.hidden, v.present) +
-      '<div id="ovChartBox">' + ovChartHtml(app, app.ovChartWidth) + '</div>';
+    return O.renderLegend(v.chans, app.ovUi.hidden, v.present) +
+      chartBox('ovChart', ovChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart')));
+  }
+
+  // A и B: канал — сумма, изменение к прошлому периоду, заказы, график.
+  function ovChannelPanel(app, key) {
+    const O = root.NietteOverview, v = app.ovView, p = OV_PANELS[key];
+    const st = O.channelStats(app.ov.rows, key, v.rg, v.prg);
+    return panel(app, p.id, p.icon, p.title, C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · ' + p.basis + ' · ' + C.esc(O.rangeLabel(v.rg)),
+      O.renderChannelStat(st) + chartBox(p.chart, ovChannelChartHtml(app, key, chartW(app, p.chart), chartH(app, p.chart))),
+      { fill: true, tools: qpLink(key, p.link) });
+  }
+
+  // C: покупатели Kaspi — новые и повторные по тем же бакетам.
+  function ovClientsPanel(app) {
+    const K = root.NietteKaspi, ov = app.ov, v = app.ovView;
+    const sub = C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · опознанные покупатели Kaspi · по дню выдачи';
+    const more = { fill: true, tools: qpLink('clients', 'Клиенты') };
+    if (!K) return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub, C.sectionError('Не загрузился kaspi.js — обновите страницу.'), more);
+    if (ov.errors.clients) return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub, C.sectionError(ov.errors.clients), more);
+    const legend = '<div class="legend static" aria-hidden="true">' + CLIENT_LEGEND.map(c =>
+      '<span class="chip"><span class="sw sq ch-' + c.key + '"></span>' + C.esc(c.label) + '</span>').join('') + '</div>';
+    return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub,
+      '<div class="qp-headline">' + K.renderClientStat(v.cl, v.pcl) + legend + '</div>' +
+      chartBox('ovCliChart', ovClientChartHtml(app, chartW(app, 'ovCliChart'), chartH(app, 'ovCliChart'))),
+      more);
+  }
+
+  // D: склад — остаток на сейчас, период его не режет.
+  function ovStockPanel(app) {
+    const S = root.NietteStock, ov = app.ov;
+    const more = { tools: qpLink('stock', 'Склад') };
+    const sub = 'на сейчас · срочные сверху · период не влияет';
+    if (!S) return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, C.sectionError('Не загрузился stock.js — обновите страницу.'), more);
+    if (ov.errors.stock) return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, C.sectionError(ov.errors.stock), more);
+    return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, S.renderBrief(ov.stock, app.now(), ov.errors.mp ? null : ov.mp), more);
   }
 
   function overviewHtml(app) {
-    const O = root.NietteOverview, ov = app.ov;
+    const O = root.NietteOverview, ov = app.ov, f = ovFresh(app);
     if (ov.errors.daily) {
-      return headerHtml(app) + page(ovFreshHtml(app) + C.sectionError(ov.errors.daily));
+      app.ovView = null;
+      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(ov.errors.daily));
     }
     const v = ovCompute(app);
-    const gSub = GROUP_SUB[app.ovUi.grouping];
-    return headerHtml(app) + page(
-      ovFreshHtml(app) +
-      O.renderFilters(app.ovUi, v.rg) +
-      '<div class="two hero-row">' + O.renderHero(v.t, v.pt, v.rg, v.prg) +
-        section('ovShares', 'Доли каналов', 'по выручке за период', O.renderShares(v.t, v.chans)) + '</div>' +
-      (ov.errors.gaps ? C.sectionError(ov.errors.gaps) : O.renderGaps(ov.gaps)) +
-      section('ovTrend', 'Динамика выручки', C.esc(gSub) + ' · незакрытый период бледнее', '<div id="ovTrendBody">' + ovTrendInner(app) + '</div>') +
-      section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans)) +
-      section('ovNotes', 'Как читать эти числа', '', O.renderNotes()));
+    return headerHtml(app) + subbar(O.renderFilters(app.ovUi, v.rg, { groupings: true }), f.line) + page(ovBodyHtml(app, f));
   }
 
-  // Ширина графика — настоящая ширина карточки. SVG с чужой шириной
-  // масштабируется целиком, вместе с текстом: на телефоне подписи стали бы
-  // мельче шести пикселей.
-  function fitChart(app) {
-    const box = app.root.querySelector('#ovChartBox');
-    const scr = periodScreen(app);
-    if (!box || !scr || !scr.view()) return;
-    const w = Math.round(box.clientWidth || 0);
-    if (!w || Math.abs(w - (app.ovChartWidth || 0)) < 8) return;
-    app.ovChartWidth = w;
-    box.innerHTML = scr.chart(w);
+  // Лента итогов всех каналов → A Kaspi, B Ozon / C клиенты, D склад → ниже
+  // все каналы на одном графике, таблица периодов и пояснения.
+  function ovBodyHtml(app, f) {
+    const O = root.NietteOverview, ov = app.ov, v = app.ovView;
+    const gSub = GROUP_SUB[app.ovUi.grouping];
+    return (f || ovFresh(app)).notes +
+      (ov.errors.gaps ? C.sectionError(ov.errors.gaps) : O.renderGaps(ov.gaps)) +
+      O.renderRibbon(v.t, v.pt, v.rg, v.prg, v.chans) +
+      quad(ovChannelPanel(app, 'kaspi'), ovChannelPanel(app, 'ozon'), ovClientsPanel(app), ovStockPanel(app)) +
+      below(
+        section('ovTrend', 'Все каналы · динамика выручки', C.esc(gSub) + ' · незакрытый период бледнее',
+                '<div id="ovTrendBody">' + ovTrendInner(app) + '</div>', { icon: '📈' }) +
+        section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans), { icon: '📅' }) +
+        section('ovNotes', 'Как читать эти числа', '', O.renderNotes(), { icon: 'ℹ️' }));
   }
 
   function syncPresetButtons(app) {
@@ -830,26 +1020,20 @@
 
   function renderOverview(app) {
     show(app, overviewHtml(app));
-    fitChart(app);
+    afterShow(app);
   }
 
-  // Период или каналы поменялись — перерисовать всё, что от них зависит, но
-  // не фильтры: поле даты, в котором сейчас курсор, не должно пересоздаваться.
+  // Период или каналы поменялись — перерисовать тело экрана, но не полосу
+  // фильтров: поле даты, в котором сейчас курсор, не должно пересоздаваться.
   function rerenderOverview(app, keepFilters) {
-    if (!keepFilters) return renderOverview(app);
-    const O = root.NietteOverview, v = ovCompute(app);
-    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
-    swap('.hero-row', '<div class="two hero-row">' + O.renderHero(v.t, v.pt, v.rg, v.prg) +
-      section('ovShares', 'Доли каналов', 'по выручке за период', O.renderShares(v.t, v.chans)) + '</div>');
-    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = ovTrendInner(app);
-    swap('#ovTable', section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans)));
-    syncPresetButtons(app);
-    fitChart(app);
+    if (!keepFilters || app.ov.errors.daily) return renderOverview(app);
+    ovCompute(app);
+    swapBody(app, ovBodyHtml(app));
   }
 
   async function loadOverviewScreen(app) {
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю выручку…</div>'));
+    show(app, loadingHtml(app, 'Загружаю выручку…'));
     const ov = await loadOverview(app.client);
     if (g !== app.gen) return;
     app.ov = ov;
@@ -858,20 +1042,18 @@
 
   // ── «Kaspi» ───────────────────────────────────────────────────────────────
   // Разметка и расчёты — в kaspi.js; здесь только сборка экрана из частей и
-  // перерисовка частей при смене периода.
+  // перерисовка при смене периода. Квадранты: A — выручка и график, B —
+  // прибыль до расходов, C — показатели периода, D — по периодам.
   const KASPI_CH = [{ key: 'kaspi', label: 'Kaspi' }];
 
-  function kpFreshHtml(app) {
+  function kpFresh(app) {
     const f = app.kp.fresh || {};
     const bits = [];
     if (app.kp.snapAt) bits.push('Данные на ' + when(app.kp.snapAt));
     if (f.kaspi_polled_at) bits.push('опрос Kaspi ' + when(f.kaspi_polled_at));
     if (f.mirror_synced_at) bits.push('удалённые оплаты — с таблицей ' + when(f.mirror_synced_at));
     bits.push('загружено ' + when(app.kp.loadedAt));
-    const txt = bits.join(' · ');
-    const stale = staleNote(app.kp);
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+    return freshParts(bits, [staleNote(app.kp)]);
   }
 
   function kpCompute(app) {
@@ -890,77 +1072,71 @@
     return app.kpView;
   }
 
-  function kpChartHtml(app, width) {
-    return root.NietteOverview.renderChart(app.kpView.series, KASPI_CH, {}, width, app.ovUi.grouping);
+  function kpChartHtml(app, width, height) {
+    return root.NietteOverview.renderChart(app.kpView.series, KASPI_CH, {}, width, app.ovUi.grouping, null, { height: height || 0 });
   }
-  function kpTrendInner(app) {
-    return root.NietteOverview.renderGroupings(app.ovUi.grouping) +
-      '<div id="ovChartBox">' + kpChartHtml(app, app.ovChartWidth) + '</div>';
-  }
-  function kpTopHtml(app) {
+  function kpSalesHtml(app) {
     const O = root.NietteOverview, v = app.kpView;
-    return '<div class="two hero-row">' +
-      O.renderHero({ total: v.k.revenue }, v.pk ? { total: v.pk.revenue } : null, v.rg, v.prg, 'Выручка Kaspi',
-                   root.NietteKaspi.renderRevenueParts(v.k)) +
-      section('kpProfit', 'Прибыль до расходов', 'по заказам с известной себестоимостью',
-              root.NietteKaspi.renderProfit(v.k, v.pk, v.prg)) + '</div>';
+    return panel(app, 'kpSales', '🔵', 'Выручка Kaspi · динамика',
+      C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню выдачи · незакрытый период бледнее',
+      O.renderHero({ total: v.k.revenue }, v.pk ? { total: v.pk.revenue } : null, v.rg, v.prg, 'Выручка Kaspi', '', { bare: true }) +
+      chartBox('ovChart', kpChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart'))),
+      { fill: true });
+  }
+  function kpProfitHtml(app) {
+    const v = app.kpView;
+    return panel(app, 'kpProfit', '💰', 'Прибыль до расходов', 'по заказам с известной себестоимостью',
+                 root.NietteKaspi.renderProfit(v.k, v.pk, v.prg));
   }
   function kpKpisHtml(app) {
     const kp = app.kp, v = app.kpView;
-    return '<div id="kpKpis">' + (kp.errors.clients ? C.sectionError(kp.errors.clients) : '') +
-      root.NietteKaspi.renderKpis(v.k, v.pk, kp.errors.now ? null : kp.now) + '</div>';
+    return panel(app, 'kpKpis', '📊', 'Показатели периода', 'изменение — к прошлому периоду той же длины',
+      (kp.errors.clients ? C.sectionError(kp.errors.clients) : '') +
+      root.NietteKaspi.renderKpis(v.k, v.pk, kp.errors.now ? null : kp.now));
   }
   function kpTableHtml(app) {
-    return section('ovTable', 'По периодам', 'новые сверху · итог сходится с выручкой',
-                   root.NietteKaspi.renderTable(app.kpView.series));
+    return panel(app, 'ovTable', '📅', 'По периодам', 'новые сверху · итог сходится с выручкой',
+                 root.NietteKaspi.renderTable(app.kpView.series));
   }
   function kpRemoteHtml(app) {
     const kp = app.kp;
     return section('kpRemote', 'Удалённые оплаты', 'оплаты без заказа в Kaspi · в выручке по дню оплаты, без комиссии',
-      kp.errors.remote ? C.sectionError(kp.errors.remote) : root.NietteKaspi.renderRemote(kp.remote, app.kpView.rg));
+      kp.errors.remote ? C.sectionError(kp.errors.remote) : root.NietteKaspi.renderRemote(kp.remote, app.kpView.rg), { icon: '🧾' });
   }
 
   function kaspiHtml(app) {
-    const kp = app.kp;
+    const kp = app.kp, f = kpFresh(app);
     if (kp.errors.daily) {
       app.kpView = null;
-      return headerHtml(app) + page(kpFreshHtml(app) + C.sectionError(kp.errors.daily));
+      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(kp.errors.daily));
     }
     kpCompute(app);
-    return headerHtml(app) + page(
-      kpFreshHtml(app) +
-      root.NietteOverview.renderFilters(app.ovUi, app.kpView.rg) +
-      kpTopHtml(app) + kpKpisHtml(app) +
-      section('ovTrend', 'Динамика продаж', C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню выдачи · незакрытый период бледнее',
-              '<div id="ovTrendBody">' + kpTrendInner(app) + '</div>') +
-      kpTableHtml(app) + kpRemoteHtml(app) +
-      section('kpNotes', 'Как читать эти числа', '', root.NietteKaspi.renderNotes()));
+    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.kpView.rg, { groupings: true }), f.line) +
+      page(kpBodyHtml(app, f));
+  }
+  function kpBodyHtml(app, f) {
+    return (f || kpFresh(app)).notes +
+      quad(kpSalesHtml(app), kpProfitHtml(app), kpKpisHtml(app), kpTableHtml(app)) +
+      below(kpRemoteHtml(app) + section('kpNotes', 'Как читать эти числа', '', root.NietteKaspi.renderNotes(), { icon: 'ℹ️' }));
   }
 
   function renderKaspi(app) {
     show(app, kaspiHtml(app));
-    fitChart(app);
+    afterShow(app);
   }
 
-  // Смена своих дат: перерисовать всё, что зависит от периода, кроме полей
-  // дат — в одном из них сейчас курсор.
+  // Смена своих дат: перерисовать тело экрана, кроме полосы фильтров — в
+  // одном из полей дат сейчас курсор.
   function rerenderKaspi(app, keepFilters) {
     if (!keepFilters || app.kp.errors.daily) return renderKaspi(app);
     kpCompute(app);
-    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
-    swap('.hero-row', kpTopHtml(app));
-    swap('#kpKpis', kpKpisHtml(app));
-    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = kpTrendInner(app);
-    swap('#ovTable', kpTableHtml(app));
-    swap('#kpRemote', kpRemoteHtml(app));
-    syncPresetButtons(app);
-    fitChart(app);
+    swapBody(app, kpBodyHtml(app));
   }
 
   async function loadKaspiScreen(app) {
     app.kpView = null;
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю Kaspi…</div>'));
+    show(app, loadingHtml(app, 'Загружаю Kaspi…'));
     const kp = await loadKaspi(app.client);
     if (g !== app.gen) return;
     app.kp = kp;
@@ -968,19 +1144,18 @@
   }
 
   // ── «Ozon» ────────────────────────────────────────────────────────────────
+  // Квадранты: A — выручка и график, B — деньги Ozon, C — показатели,
+  // D — ошибки продавца; товары и таблица периодов — ниже.
   const OZON_CH = [{ key: 'ozon', label: 'Ozon' }];
 
-  function ozFreshHtml(app) {
+  function ozFresh(app) {
     const n = app.oz.now || {};
     const bits = [];
     if (app.oz.snapAt) bits.push('Данные на ' + when(app.oz.snapAt));
     if (n.accruals_polled_at) bits.push('начисления Ozon ' + when(n.accruals_polled_at));
     if (n.journal_polled_at) bits.push('отправления ' + when(n.journal_polled_at));
     bits.push('загружено ' + when(app.oz.loadedAt));
-    const txt = bits.join(' · ');
-    const stale = staleNote(app.oz);
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+    return freshParts(bits, [staleNote(app.oz)]);
   }
 
   function ozCompute(app) {
@@ -997,80 +1172,74 @@
     return app.ozView;
   }
 
-  function ozChartHtml(app, width) {
-    return root.NietteOverview.renderChart(app.ozView.series, OZON_CH, {}, width, app.ovUi.grouping);
+  function ozChartHtml(app, width, height) {
+    return root.NietteOverview.renderChart(app.ozView.series, OZON_CH, {}, width, app.ovUi.grouping, null, { height: height || 0 });
   }
-  function ozTrendInner(app) {
-    return root.NietteOverview.renderGroupings(app.ovUi.grouping) +
-      '<div id="ovChartBox">' + ozChartHtml(app, app.ovChartWidth) + '</div>';
+  function ozSalesHtml(app) {
+    const O = root.NietteOverview, v = app.ozView;
+    return panel(app, 'ozSales', '🟠', 'Выручка Ozon · динамика',
+      C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню начисления · незакрытый период бледнее',
+      O.renderHero({ total: v.k.revenue }, v.pk ? { total: v.pk.revenue } : null, v.rg, v.prg, 'Выручка Ozon', '', { bare: true }) +
+      chartBox('ovChart', ozChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart'))),
+      { fill: true });
   }
-  function ozTopHtml(app) {
-    const O = root.NietteOverview, Z = root.NietteOzon, v = app.ozView;
-    return '<div class="two hero-row">' +
-      O.renderHero({ total: v.k.revenue }, v.pk ? { total: v.pk.revenue } : null, v.rg, v.prg, 'Выручка Ozon',
-                   Z.renderRevenueParts(v.k)) +
-      section('ozMoney', 'Деньги Ozon', 'из начислений: что продано, что удержано, что пришло',
-              Z.renderMoney(v.k, v.pk, v.prg)) + '</div>';
+  function ozMoneyHtml(app) {
+    const v = app.ozView;
+    return panel(app, 'ozMoney', '💰', 'Деньги Ozon', 'из начислений: что продано, что удержано, что пришло',
+                 root.NietteOzon.renderMoney(v.k, v.pk, v.prg));
   }
   function ozKpisHtml(app) {
     const oz = app.oz, v = app.ozView;
-    return '<div id="ozKpis">' + root.NietteOzon.renderKpis(v.k, v.pk, oz.errors.now ? null : oz.now) + '</div>';
+    return panel(app, 'ozKpis', '📊', 'Показатели периода', 'изменение — к прошлому периоду той же длины',
+                 root.NietteOzon.renderKpis(v.k, v.pk, oz.errors.now ? null : oz.now));
   }
   function ozTableHtml(app) {
     return section('ovTable', 'По периодам', 'новые сверху · итог сходится с выручкой',
-                   root.NietteOzon.renderTable(app.ozView.series));
+                   root.NietteOzon.renderTable(app.ozView.series), { icon: '📅' });
   }
   function ozSkuHtml(app) {
     const oz = app.oz, Z = root.NietteOzon;
     return section('ozSkus', 'Товары', 'за период · по выручке',
-      oz.errors.skus ? C.sectionError(oz.errors.skus) : Z.renderSkus(Z.skuTotals(oz.skus, app.ozView.rg)));
+      oz.errors.skus ? C.sectionError(oz.errors.skus) : Z.renderSkus(Z.skuTotals(oz.skus, app.ozView.rg)), { icon: '🧷' });
   }
   function ozErrorsHtml(app) {
     const oz = app.oz;
-    return section('ozErrors', 'Ошибки продавца', 'штрафы Ozon за период · новые сверху',
+    return panel(app, 'ozErrors', '⚠️', 'Ошибки продавца', 'штрафы Ozon за период · новые сверху',
       oz.errors.list ? C.sectionError(oz.errors.list) : root.NietteOzon.renderErrors(oz.errorsList, app.ozView.rg));
   }
 
   function ozonHtml(app) {
-    const oz = app.oz;
+    const oz = app.oz, f = ozFresh(app);
     if (oz.errors.daily) {
       app.ozView = null;
-      return headerHtml(app) + page(ozFreshHtml(app) + C.sectionError(oz.errors.daily));
+      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(oz.errors.daily));
     }
     ozCompute(app);
-    return headerHtml(app) + page(
-      ozFreshHtml(app) +
-      root.NietteOverview.renderFilters(app.ovUi, app.ozView.rg) +
-      ozTopHtml(app) + ozKpisHtml(app) +
-      section('ovTrend', 'Динамика выручки', C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню начисления · незакрытый период бледнее',
-              '<div id="ovTrendBody">' + ozTrendInner(app) + '</div>') +
-      ozTableHtml(app) + ozErrorsHtml(app) + ozSkuHtml(app) +
-      section('ozNotes', 'Как читать эти числа', '', root.NietteOzon.renderNotes()));
+    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.ozView.rg, { groupings: true }), f.line) +
+      page(ozBodyHtml(app, f));
+  }
+  function ozBodyHtml(app, f) {
+    return (f || ozFresh(app)).notes +
+      quad(ozSalesHtml(app), ozMoneyHtml(app), ozKpisHtml(app), ozErrorsHtml(app)) +
+      below(ozSkuHtml(app) + ozTableHtml(app) +
+            section('ozNotes', 'Как читать эти числа', '', root.NietteOzon.renderNotes(), { icon: 'ℹ️' }));
   }
 
   function renderOzon(app) {
     show(app, ozonHtml(app));
-    fitChart(app);
+    afterShow(app);
   }
 
   function rerenderOzon(app, keepFilters) {
     if (!keepFilters || app.oz.errors.daily) return renderOzon(app);
     ozCompute(app);
-    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
-    swap('.hero-row', ozTopHtml(app));
-    swap('#ozKpis', ozKpisHtml(app));
-    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = ozTrendInner(app);
-    swap('#ovTable', ozTableHtml(app));
-    swap('#ozErrors', ozErrorsHtml(app));
-    swap('#ozSkus', ozSkuHtml(app));
-    syncPresetButtons(app);
-    fitChart(app);
+    swapBody(app, ozBodyHtml(app));
   }
 
   async function loadOzonScreen(app) {
     app.ozView = null;
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю Ozon…</div>'));
+    show(app, loadingHtml(app, 'Загружаю Ozon…'));
     const oz = await loadOzon(app.client);
     if (g !== app.gen) return;
     app.oz = oz;
@@ -1079,17 +1248,15 @@
 
   // ── «Аналитика» ───────────────────────────────────────────────────────────
   // Спрос по дню заказа. График — та же стопка, что у «Обзора», только в
-  // столбике не каналы, а исходы заказов.
-  function anFreshHtml(app) {
+  // столбике не каналы, а исходы заказов. Квадранты: A — что стало с
+  // заказами, B — товары, C — города, D — дни недели и способы доставки.
+  function anFresh(app) {
     const f = app.an.fresh || {};
     const bits = [];
     if (app.an.snapAt) bits.push('Данные на ' + when(app.an.snapAt));
     if (f.kaspi_polled_at) bits.push('опрос Kaspi ' + when(f.kaspi_polled_at));
     bits.push('загружено ' + when(app.an.loadedAt));
-    const txt = bits.join(' · ');
-    const stale = staleNote(app.an);
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      (stale ? '<div class="stale" role="status">' + C.esc(stale) + '</div>' : '');
+    return freshParts(bits, [staleNote(app.an)]);
   }
 
   function anCompute(app) {
@@ -1111,85 +1278,80 @@
     return app.anView;
   }
 
-  function anChartHtml(app, width) {
+  function anChartHtml(app, width, height) {
     const v = app.anView;
     return root.NietteOverview.renderChart(v.chartSeries, root.NietteAnalytics.OUTCOMES, {}, width,
-                                           app.ovUi.grouping, v.city ? 'Заказы в городе ' + v.city : 'Заказы');
+                                           app.ovUi.grouping, v.city ? 'Заказы в городе ' + v.city : 'Заказы',
+                                           { height: height || 0 });
   }
-  function anTrendInner(app) {
+  function anTrendHtml(app) {
     const v = app.anView;
-    return '<div class="an-controls">' + root.NietteOverview.renderGroupings(app.ovUi.grouping) +
-      (v.cityOptions ? root.NietteAnalytics.renderCityPicker(v.cityOptions, v.city) : '') + '</div>' +
-      root.NietteAnalytics.renderLegend() +
-      '<div id="ovChartBox">' + anChartHtml(app, app.ovChartWidth) + '</div>';
+    return panel(app, 'ovTrend', '📈', 'Что стало с заказами',
+      C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню заказа · незакрытый период бледнее',
+      '<div class="an-controls">' + root.NietteAnalytics.renderLegend() +
+        (v.cityOptions ? root.NietteAnalytics.renderCityPicker(v.cityOptions, v.city) : '') + '</div>' +
+      chartBox('ovChart', anChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart'))),
+      { fill: true });
   }
   function anKpisHtml(app) {
-    return '<div id="anKpis">' + root.NietteAnalytics.renderKpis(app.anView.k, app.anView.pk) + '</div>';
+    return '<div id="anKpis" class="ribbon-kpis">' + root.NietteAnalytics.renderKpis(app.anView.k, app.anView.pk) + '</div>';
   }
   function anTableHtml(app) {
     return section('ovTable', 'По периодам', 'по дню заказа · новые сверху · итог сходится с карточками',
-                   root.NietteAnalytics.renderTable(app.anView.series));
+                   root.NietteAnalytics.renderTable(app.anView.series), { icon: '📅' });
   }
+  // Дни недели и способы доставки — один квадрант, два блока подряд.
   function anWeekDeliveryHtml(app) {
     const A = root.NietteAnalytics, an = app.an, rg = app.anView.rg;
-    return '<div class="two" id="anPair">' +
-      section('anWeek', 'Дни недели', 'в среднем за день · когда заказывают',
-              A.renderWeekdays(A.weekdays(an.rows, rg), rg)) +
-      section('anDelivery', 'Способы доставки', 'по дню заказа',
-              an.errors.delivery ? C.sectionError(an.errors.delivery) : A.renderDelivery(A.deliveryTotals(an.delivery, rg))) +
-    '</div>';
+    const sub = (id, title, note, inner) => '<div class="qp-part" id="' + id + '"><h3 class="st-subhead">' + C.esc(title) +
+      ' <span class="muted">· ' + C.esc(note) + '</span></h3>' + inner + '</div>';
+    return panel(app, 'anPair', '🗓', 'Дни недели и доставка', 'по дню заказа',
+      sub('anWeek', 'Дни недели', 'в среднем за день · когда заказывают', A.renderWeekdays(A.weekdays(an.rows, rg), rg)) +
+      sub('anDelivery', 'Способы доставки', 'по дню заказа',
+          an.errors.delivery ? C.sectionError(an.errors.delivery) : A.renderDelivery(A.deliveryTotals(an.delivery, rg))));
   }
   function anSkuHtml(app) {
     const A = root.NietteAnalytics, an = app.an;
-    return section('anSkus', 'Товары', 'по дню заказа · что заказали и что выкупили',
+    return panel(app, 'anSkus', '🧷', 'Товары', 'по дню заказа · что заказали и что выкупили',
       an.errors.skus ? C.sectionError(an.errors.skus) : A.renderSkus(A.skuTotals(an.skus, app.anView.rg)));
   }
   function anCityHtml(app) {
     const A = root.NietteAnalytics, an = app.an;
-    return section('anCities', 'Города', 'по дню заказа · город доставки',
+    return panel(app, 'anCities', '📍', 'Города', 'по дню заказа · город доставки',
       an.errors.cities ? C.sectionError(an.errors.cities) : A.renderCities(A.cityTotals(an.cities, app.anView.rg), 15));
   }
 
   function analyticsHtml(app) {
-    const an = app.an;
+    const an = app.an, f = anFresh(app);
     if (an.errors.daily) {
       app.anView = null;
-      return headerHtml(app) + page(anFreshHtml(app) + C.sectionError(an.errors.daily));
+      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(an.errors.daily));
     }
     anCompute(app);
-    return headerHtml(app) + page(
-      anFreshHtml(app) +
-      root.NietteOverview.renderFilters(app.ovUi, app.anView.rg) +
-      anKpisHtml(app) +
-      section('ovTrend', 'Что стало с заказами', C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · по дню заказа · незакрытый период бледнее',
-              '<div id="ovTrendBody">' + anTrendInner(app) + '</div>') +
-      anTableHtml(app) + anWeekDeliveryHtml(app) + anSkuHtml(app) + anCityHtml(app) +
-      section('anNotes', 'Как читать эти числа', '', root.NietteAnalytics.renderNotes()));
+    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.anView.rg, { groupings: true }), f.line) +
+      page(anBodyHtml(app, f));
+  }
+  function anBodyHtml(app, f) {
+    return (f || anFresh(app)).notes + anKpisHtml(app) +
+      quad(anTrendHtml(app), anSkuHtml(app), anCityHtml(app), anWeekDeliveryHtml(app)) +
+      below(anTableHtml(app) + section('anNotes', 'Как читать эти числа', '', root.NietteAnalytics.renderNotes(), { icon: 'ℹ️' }));
   }
 
   function renderAnalytics(app) {
     show(app, analyticsHtml(app));
-    fitChart(app);
+    afterShow(app);
   }
 
   function rerenderAnalytics(app, keepFilters) {
     if (!keepFilters || app.an.errors.daily) return renderAnalytics(app);
     anCompute(app);
-    const swap = (sel, html) => { const el = app.root.querySelector(sel); if (el) el.outerHTML = html; };
-    swap('#anKpis', anKpisHtml(app));
-    const tb = app.root.querySelector('#ovTrendBody'); if (tb) tb.innerHTML = anTrendInner(app);
-    swap('#ovTable', anTableHtml(app));
-    swap('#anPair', anWeekDeliveryHtml(app));
-    swap('#anSkus', anSkuHtml(app));
-    swap('#anCities', anCityHtml(app));
-    syncPresetButtons(app);
-    fitChart(app);
+    swapBody(app, anBodyHtml(app));
   }
 
   async function loadAnalyticsScreen(app) {
     app.anView = null;
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю аналитику…</div>'));
+    show(app, loadingHtml(app, 'Загружаю аналитику…'));
     const an = await loadAnalytics(app.client);
     if (g !== app.gen) return;
     app.an = an;
@@ -1198,31 +1360,32 @@
 
   // ── «Склад» ───────────────────────────────────────────────────────────────
   // Разметка и расчёты — в stock.js. Периода нет: остаток на сейчас.
+  // Квадранты: A — остатки по группам, B — остатки по площадкам, C — приход
+  // и списание, D — журналы; как сложился остаток и сверка — ниже.
   // Продажи из таблицы старше этого — остаток уже не учитывает свежие продажи.
   // Тот же порог, что у тревоги mirror_stale в гейте опросника (sql/10).
   const MIRROR_STALE_H = 6;
 
-  function stFreshHtml(app) {
+  function stFresh(app) {
     const f = app.st.fresh || {};
     const bits = [];
     if (app.st.snapAt) bits.push('Данные на ' + when(app.st.snapAt));
     if (f.stock_synced_at) bits.push('лист «Склад» ' + when(f.stock_synced_at));
     if (f.sales_synced_at) bits.push('продажи ' + when(f.sales_synced_at));
     bits.push('загружено ' + when(app.st.loadedAt));
-    const txt = bits.join(' · ');
     const notes = [staleNote(app.st)];
     const sales = f.sales_synced_at ? new Date(f.sales_synced_at) : null;
     if (sales && !isNaN(sales) && app.st.loadedAt - sales > MIRROR_STALE_H * 3600000) {
       notes.push('Продажи из таблицы не приезжали ' + Math.round((app.st.loadedAt - sales) / 3600000) +
                  ' ч — остаток не учитывает свежие продажи. Проверьте импорт в Apps Script.');
     }
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      notes.filter(Boolean).map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('');
+    return freshParts(bits, notes);
   }
 
   function stockHtml(app) {
-    const S = root.NietteStock, st = app.st;
-    if (st.errors.stock) return headerHtml(app) + page(stFreshHtml(app) + C.sectionError(st.errors.stock));
+    const S = root.NietteStock, st = app.st, f = stFresh(app);
+    const top = headerHtml(app) + subbar(screenTitle('📦', 'Склад', 'остаток на сейчас · период не влияет'), f.line);
+    if (st.errors.stock) return top + page(f.notes + C.sectionError(st.errors.stock));
     const now = app.now(), win = app.stUi.win;
     const rep = st.errors.recon ? null : S.reconFor(st.recon, win);
     const form = app.stForm || (app.stForm = S.newForm(now));
@@ -1230,32 +1393,36 @@
     const delMsg = kind => (form.msg.del && form.msg.del.kind === kind
       ? '<div class="st-msg ' + (form.msg.del.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' +
         C.esc(form.msg.del.text) + '</div>' : '');
-    return headerHtml(app) + page(
-      stFreshHtml(app) +
+    const part = (id, title, note, inner) => '<div class="qp-part" id="' + id + '"><h3 class="st-subhead">' + C.esc(title) +
+      ' <span class="muted">· ' + C.esc(note) + '</span></h3>' + inner + '</div>';
+    return top + page(
+      f.notes +
       S.pendingNote(st.pending, now) +
-      S.renderKpis(S.kpis(st.rows, st.woffs, now)) +
+      '<div class="ribbon-kpis">' + S.renderKpis(S.kpis(st.rows, st.woffs, now)) + '</div>' +
       S.renderProblems(S.problems(st.rows, rep)) +
-      // Где лежит товар — сразу под сводкой, как в старом табе.
-      section('stMp', 'Остатки по площадкам', C.esc(S.mpSub()),
-              st.errors.mp ? C.sectionError(st.errors.mp) : S.renderMp(S.mpReport(st.rows, st.mp), rep, win, now)) +
-      section('stCards', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)) +
-      section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
-              S.renderTable(st.rows)) +
-      section('stForms', 'Приход и списание', 'записанное видно в журналах сразу, в остатке — через минуту–две',
-              S.renderForms(st.rows, form, { canWrite: st.canWrite, woffs: st.woffs, now })) +
-      section('stWoff', 'Списания за 30 дней', 'брак, образцы, подарки — мимо продаж',
-              st.errors.woff ? C.sectionError(st.errors.woff) : delMsg('writeoff') + S.renderWriteoffs(st.woffs, now, del)) +
-      section('stArr', 'Приходы за 90 дней', 'из формы и из листа «Приходы»',
-              st.errors.arr ? C.sectionError(st.errors.arr) : delMsg('arrival') + S.renderArrivals(st.arrs, now, del)) +
-      // Сверка и склады Kaspi — одно окно на двоих, как в старом табе.
-      section('stRecon', 'Сверка: что не доехало до остатка', C.esc(S.reconSub(rep, win)),
-              S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win, st.rows))) +
-      section('stPoints', 'Склады отгрузки Kaspi', C.esc(S.pointsSub(rep, win)),
-              st.errors.recon ? C.sectionError(st.errors.recon) : S.renderPoints(rep)) +
-      section('stNotes', 'Как читать эти числа', '', S.renderNotes()));
+      quad(
+        panel(app, 'stCards', '📦', 'Остатки', 'по группам · срочные сверху', S.renderCards(st.rows, now)),
+        panel(app, 'stMp', '🌐', 'Остатки по площадкам', C.esc(S.mpSub()),
+              st.errors.mp ? C.sectionError(st.errors.mp) : S.renderMp(S.mpReport(st.rows, st.mp), rep, win, now)),
+        panel(app, 'stForms', '➕', 'Приход и списание', 'записанное видно в журналах сразу, в остатке — через минуту–две',
+              S.renderForms(st.rows, form, { canWrite: st.canWrite, woffs: st.woffs, now })),
+        panel(app, 'stLog', '🗒', 'Журналы', 'списания за 30 дней и приходы за 90',
+              part('stWoff', 'Списания за 30 дней', 'брак, образцы, подарки — мимо продаж',
+                   st.errors.woff ? C.sectionError(st.errors.woff) : delMsg('writeoff') + S.renderWriteoffs(st.woffs, now, del)) +
+              part('stArr', 'Приходы за 90 дней', 'из формы и из листа «Приходы»',
+                   st.errors.arr ? C.sectionError(st.errors.arr) : delMsg('arrival') + S.renderArrivals(st.arrs, now, del)))) +
+      below(
+        section('stTable', 'Как сложился остаток', 'с даты пересчёта · те же колонки, что на листе «Склад»',
+                S.renderTable(st.rows), { icon: '🧮' }) +
+        // Сверка и склады Kaspi — одно окно на двоих, как в старом табе.
+        section('stRecon', 'Сверка: что не доехало до остатка', C.esc(S.reconSub(rep, win)),
+                S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win, st.rows)), { icon: '🔎' }) +
+        section('stPoints', 'Склады отгрузки Kaspi', C.esc(S.pointsSub(rep, win)),
+                st.errors.recon ? C.sectionError(st.errors.recon) : S.renderPoints(rep), { icon: '🚚' }) +
+        section('stNotes', 'Как читать эти числа', '', S.renderNotes(), { icon: 'ℹ️' })));
   }
 
-  function renderStock(app) { show(app, stockHtml(app)); }
+  function renderStock(app) { show(app, stockHtml(app)); afterShow(app); }
 
   // ── Формы «Склада» (sql/26) ──────────────────────────────────────────────
   // Ошибки форм — текстом базы: его пишет sql/26 по-русски и для человека.
@@ -1414,7 +1581,7 @@
 
   async function loadStockScreen(app) {
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю склад…</div>'));
+    show(app, loadingHtml(app, 'Загружаю склад…'));
     const st = await loadStock(app.client);
     if (g !== app.gen) return;
     app.st = st;
@@ -1445,7 +1612,7 @@
     return app.b2bModel || (app.b2bModel = root.NietteB2b.prepare(app.b2b.data, root.NietteOverview.todayIso(app.now())));
   }
 
-  function b2bFreshHtml(app) {
+  function b2bFresh(app) {
     const st = app.b2b.status || {}, bits = [], notes = [];
     // Журнал загрузок (sync_log) торгпреду не виден — не его раздел, и
     // mirror_synced_at у него пуст. Тогда время зеркала — то, что взял
@@ -1454,7 +1621,6 @@
     if (st.imported_at) bits.push('Перенос из таблицы ' + when(st.imported_at));
     if (mirrorAt) bits.push('зеркало ' + when(mirrorAt));
     bits.push('загружено ' + when(app.b2b.loadedAt));
-    const txt = bits.join(' · ');
     const synced = mirrorAt ? new Date(mirrorAt) : null;
     const imported = st.imported_at ? new Date(st.imported_at) : null;
     if (!imported) notes.push('Перенос из таблицы ещё ни разу не работал — Supabase → SQL Editor: select b2b_import(true);');
@@ -1465,40 +1631,42 @@
     if (st.mode !== 'live' && synced && imported && synced - imported > 15 * 60000) {
       notes.push('Перенос отстаёт от зеркала: листы приехали, а таблицы не обновились. Проверка: sql/diag_b2b.sql.');
     }
+    const f = freshParts(bits, notes);
     const p = b2bPerm(app);
     const ro = p.write ? root.NietteB2bForms.renderTraining(p)
       : st.mode === 'live' ? '<p class="note b2b-ro">Только чтение: вносить могут те, кому владелец включил право записи.</p>'
       : '<p class="note b2b-ro">Только чтение: поставки, оплаты и визиты пока вносятся в старом табе B2B ' +
         'и в мобильном торгпреда — сюда они приходят с зеркалом таблицы, днём обычно через 15–30 минут.</p>';
-    return '<div class="fresh muted">' + C.esc(txt.charAt(0).toUpperCase() + txt.slice(1)) + '</div>' +
-      notes.map(n => '<div class="stale" role="status">' + C.esc(n) + '</div>').join('') + ro +
-      (app.b2bNotice ? '<div class="st-msg ' + (app.b2bNotice.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' +
-        C.esc(app.b2bNotice.text) + '</div>' : '');
+    f.notes += ro + (app.b2bNotice ? '<div class="st-msg ' + (app.b2bNotice.tone === 'bad' ? 'st-bad-text' : 'st-good-text') + '" role="status">' +
+      C.esc(app.b2bNotice.text) + '</div>' : '');
+    return f;
   }
 
+  // KPI периода — лента над квадрантами; её перерисовывает смена периода.
   function b2bOvInner(app, m, per, k) {
-    const B = root.NietteB2b, ui = app.b2bUi;
-    const urg = B.renderUrgent(B.urgent(m, ui), m.today);
-    return B.renderKpis(k, per, ui) +
-      (urg ? section('b2bUrgent', 'Горит сегодня', 'требует внимания прямо сейчас', urg) : '') +
-      b2bOverdueHtml(app, m) +
-      b2bForecastHtml(app, m);
+    return root.NietteB2b.renderKpis(k, per, app.b2bUi);
+  }
+  // A — что горит сегодня. Пусто — так и сказано: квадрант не пропадает.
+  function b2bUrgentHtml(app, m) {
+    const B = root.NietteB2b, urg = B.renderUrgent(B.urgent(m, app.b2bUi), m.today);
+    return panel(app, 'b2bUrgent', '🔥', 'Горит сегодня', 'требует внимания прямо сейчас',
+                 urg || '<p class="empty">Сегодня ничего не горит: просроченных оплат и пропущенных контактов нет.</p>');
   }
   function b2bOverdueHtml(app, m) {
     const B = root.NietteB2b, ui = app.b2bUi, p = b2bPerm(app);
-    return section('b2bOverdue', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
+    return panel(app, 'b2bOverdue', '⏳', 'Разбор просрочки', 'поставки партнёров, у которых затих счёт',
       B.renderOverdue(B.overdueShipments(m).filter(r => B.ovInScope(m, ui, r.cid)), ui.overdueOpen,
                       p.write ? { perm: p, bulk: app.b2bBulk } : undefined));
   }
   function b2bForecastHtml(app, m) {
     const B = root.NietteB2b;
-    return section('b2bForecast', 'Прогноз поступлений', 'по срокам оплаты из поставок',
-                   B.renderForecast(B.forecast(m, app.b2bUi), app.b2bUi.fc, m.today));
+    return panel(app, 'b2bForecast', '📅', 'Прогноз поступлений', 'по срокам оплаты из поставок',
+                 B.renderForecast(B.forecast(m, app.b2bUi), app.b2bUi.fc, m.today));
   }
   function b2bPartnersHtml(app, m) {
     const B = root.NietteB2b;
-    return section('b2bPartners', 'Партнёры', 'контрагенты, деньги и последний контакт · клик по названию — карточка партнёра',
-                   B.renderPartnerToolbar(app.b2bUi.p) + '<div id="b2bPartnersBody">' + b2bPartnersBody(app, m) + '</div>');
+    return panel(app, 'b2bPartners', '🤝', 'Партнёры', 'контрагенты, деньги и последний контакт · клик по названию — карточка партнёра',
+                 B.renderPartnerToolbar(app.b2bUi.p) + '<div id="b2bPartnersBody">' + b2bPartnersBody(app, m) + '</div>');
   }
   function b2bPartnersBody(app, m) {
     const B = root.NietteB2b;
@@ -1506,9 +1674,9 @@
   }
 
   function b2bHtml(app) {
-    const B = root.NietteB2b, b = app.b2b;
+    const B = root.NietteB2b, b = app.b2b, f = b2bFresh(app);
     const core = B2B_CORE.map(k => b.errors[k]).filter(Boolean);
-    if (core.length) return headerHtml(app) + page(b2bFreshHtml(app) + C.sectionError(core[0]));
+    if (core.length) return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(core[0]));
     const m = b2bModel(app);
     if (app.b2bUi.card) {
       const cm = B.cardModel(m, app.b2bUi.card);
@@ -1517,33 +1685,43 @@
         const p = b2bPerm(app);
         const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned, waybillsFrom: b2bWaybillsFrom(app),
                       top: (p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '') + b2bPdfPanel(app) };
-        return headerHtml(app) + page(b2bFreshHtml(app) + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
+        return headerHtml(app) + subbar(screenTitle('🤝', 'B2B', 'карточка партнёра'), f.line) +
+          page(f.notes + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
       }
       app.b2bUi.card = null;                     // партнёра больше нет (обновили, удалили) — к списку
       if (app.b2bForm && app.b2bForm.cid && !m.byId[app.b2bForm.cid]) app.b2bForm = null;
     }
     const per = b2bPer(app), k = B.kpis(m, app.b2bUi, per), p = b2bPerm(app);
-    return headerHtml(app) + page(
-      b2bFreshHtml(app) +
-      (p.write ? root.NietteB2bForms.renderActions(p, false) + b2bFormPanel(app, m, null) : '') + b2bPdfPanel(app) +
-      root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)) +
-      B.renderFilters(app.b2bUi, k) +
-      '<div id="b2bOv">' + b2bOvInner(app, m, per, k) + '</div>' +
-      b2bPartnersHtml(app, m) +
-      section('b2bNotes', 'Как читать эти числа', '', B.renderNotes()));
+    // Квадранты: A — горит сегодня, B — прогноз поступлений, C — разбор
+    // просрочки, D — партнёры. Период режет только потоки (KPI), остаток —
+    // на сегодня.
+    // Срез партнёров и кнопки «внести» — одной строкой: над квадрантами
+    // место дорогое. Открытая форма — сразу под ней, как раньше.
+    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)), f.line) + page(
+      f.notes +
+      '<div class="b2b-bar">' + B.renderFilters(app.b2bUi, k) + (p.write ? root.NietteB2bForms.renderActions(p, false) : '') + '</div>' +
+      (p.write ? b2bFormPanel(app, m, null) : '') + b2bPdfPanel(app) +
+      '<div id="b2bOv" class="ribbon-kpis">' + b2bOvInner(app, m, per, k) + '</div>' +
+      quad(b2bUrgentHtml(app, m), b2bForecastHtml(app, m), b2bOverdueHtml(app, m), b2bPartnersHtml(app, m)) +
+      below(section('b2bNotes', 'Как читать эти числа', '', B.renderNotes(), { icon: 'ℹ️' })));
   }
 
   function renderB2b(app) {
     show(app, b2bHtml(app));
     if (app.b2bUi.card) b2bSign(app);
+    afterShow(app);
   }
 
-  // Период поменялся — пересчитать всё, что от него зависит, не трогая поля дат.
+  // Период поменялся — пересчитать всё, что от него зависит, не трогая поля
+  // дат и открытую форму: KPI, «горит», просрочку и прогноз.
   function rerenderB2b(app, keep) {
     if (!keep || app.b2bUi.card) return renderB2b(app);
     const m = b2bModel(app), per = b2bPer(app), k = root.NietteB2b.kpis(m, app.b2bUi, per);
     const box = app.root.querySelector('#b2bOv');
     if (box) box.innerHTML = b2bOvInner(app, m, per, k);
+    swapSection(app, 'b2bUrgent', b2bUrgentHtml(app, m));
+    swapSection(app, 'b2bOverdue', b2bOverdueHtml(app, m));
+    swapSection(app, 'b2bForecast', b2bForecastHtml(app, m));
     syncPresetButtons(app);
   }
   function swapSection(app, id, html) {
@@ -1553,7 +1731,7 @@
 
   async function loadB2bScreen(app) {
     const g = app.gen;
-    show(app, headerHtml(app) + page('<div class="card loading" role="status">Загружаю B2B…</div>'));
+    show(app, loadingHtml(app, 'Загружаю B2B…'));
     const b2b = await loadB2b(app.client);
     if (g !== app.gen) return;
     app.b2b = b2b;
@@ -2298,39 +2476,56 @@
   // Кнопки периода, группировка, свои даты, график и его подсказка у
   // «Обзора», «Kaspi», «Ozon» и «Аналитики» общие. Что у открытого экрана
   // своё — здесь, одной таблицей: новый экран с периодом — одна строка.
+  // График экрана: series — нарисованные бакеты, html(w, h) — разметка под
+  // размер коробки, tip(i) — подсказка столбика.
+  function chartSpec(series, html, tip) { return { series, html, tip }; }
+
   function periodScreen(app) {
     if (app.route === 'overview') return {
       view: () => app.ovView, ready: () => !!(app.ov && app.ovView),
       render: () => renderOverview(app), rerender: keep => rerenderOverview(app, keep),
-      chart: w => ovChartHtml(app, w),
-      tip: i => root.NietteOverview.tooltipHtml(app.ovView.series[i], app.ovView.chans, app.ovUi.hidden) };
+      charts: () => {
+        const v = app.ovView, O = root.NietteOverview, K = root.NietteKaspi;
+        if (!v) return {};
+        const out = { ovChart: chartSpec(() => v.series, (w, h) => ovChartHtml(app, w, h),
+                                         i => O.tooltipHtml(v.series[i], v.chans, app.ovUi.hidden)) };
+        Object.keys(OV_PANELS).forEach(k => {
+          out[OV_PANELS[k].chart] = chartSpec(() => v.chSeries[k], (w, h) => ovChannelChartHtml(app, k, w, h),
+                                              i => O.channelTooltipHtml(v.chSeries[k][i], k));
+        });
+        if (K && !app.ov.errors.clients) {
+          out.ovCliChart = chartSpec(() => v.cliSeries, (w, h) => ovClientChartHtml(app, w, h), i => K.clientTooltipHtml(v.cliSeries[i]));
+        }
+        return out;
+      } };
     if (app.route === 'kaspi') return {
       view: () => app.kpView, ready: () => !!(app.kp && app.kpView),
       render: () => renderKaspi(app), rerender: keep => rerenderKaspi(app, keep),
-      chart: w => kpChartHtml(app, w),
-      tip: i => root.NietteKaspi.tooltipHtml(app.kpView.series[i]) };
+      charts: () => (app.kpView ? { ovChart: chartSpec(() => app.kpView.series, (w, h) => kpChartHtml(app, w, h),
+                                                       i => root.NietteKaspi.tooltipHtml(app.kpView.series[i])) } : {}) };
     if (app.route === 'ozon') return {
       view: () => app.ozView, ready: () => !!(app.oz && app.ozView),
       render: () => renderOzon(app), rerender: keep => rerenderOzon(app, keep),
-      chart: w => ozChartHtml(app, w),
-      tip: i => root.NietteOzon.tooltipHtml(app.ozView.series[i]) };
+      charts: () => (app.ozView ? { ovChart: chartSpec(() => app.ozView.series, (w, h) => ozChartHtml(app, w, h),
+                                                       i => root.NietteOzon.tooltipHtml(app.ozView.series[i])) } : {}) };
     if (app.route === 'b2b') return {
       view: () => (app.b2b ? { rg: b2bInputsRange(app), series: [] } : null),
       ready: () => !!(app.b2b && !app.b2bUi.card),
       render: () => renderB2b(app), rerender: keep => rerenderB2b(app, keep),
-      chart: () => '', tip: () => '' };
+      charts: () => ({}) };
     if (app.route === 'analytics') return {
       view: () => app.anView, ready: () => !!(app.an && app.anView),
       render: () => renderAnalytics(app), rerender: keep => rerenderAnalytics(app, keep),
-      chart: w => anChartHtml(app, w),
-      tip: i => root.NietteAnalytics.tooltipHtml(app.anView.chartSeries[i]) };
+      charts: () => (app.anView ? { ovChart: chartSpec(() => app.anView.chartSeries, (w, h) => anChartHtml(app, w, h),
+                                                       i => root.NietteAnalytics.tooltipHtml(app.anView.chartSeries[i])) } : {}) };
     return null;
   }
+  // Графики открытого экрана: id → chartSpec. У экранов без периода — нет.
+  function screenCharts(app) { const s = periodScreen(app); return s && s.charts ? s.charts() : {}; }
   function periodView(app) { const s = periodScreen(app); return s ? s.view() : null; }
   function periodReady(app) { const s = periodScreen(app); return !!(s && s.ready()); }
   function renderPeriodScreen(app) { const s = periodScreen(app); return s ? s.render() : undefined; }
   function rerenderPeriodScreen(app, keep) { const s = periodScreen(app); return s ? s.rerender(keep) : undefined; }
-  function tipHtmlAt(app, i) { return periodScreen(app).tip(i); }
 
   function saveOvPrefs(app) {
     try { root.localStorage.setItem(OV_PREFS, JSON.stringify({ preset: app.ovUi.preset, grouping: app.ovUi.grouping })); }
@@ -2428,6 +2623,7 @@
         else app.ov = null;
         return afterLogin(app);
       }
+      if (action === 'qp-max') return setQpMax(app, el.getAttribute('data-id'));
       if (action === 'st-arr-save' && app.route === 'stock' && app.st) return stSaveArrival(app);
       if (action === 'st-wo-save' && app.route === 'stock' && app.st) return stSaveWriteoffs(app);
       if ((action === 'st-del' || action === 'st-del-no' || action === 'st-del-yes') && app.route === 'stock' && app.st) {
@@ -2534,9 +2730,7 @@
         app.ui.riskLevel = el.getAttribute('data-level');
         app.ui.riskAll = false;
         const box = rootEl.querySelector('#risk');
-        if (box) box.outerHTML = section('risk', 'Риск оттока',
-          'Давно не заказывал по меркам этого клиента · самые ценные сверху',
-          riskToolbar(app) + '<div id="riskBody">' + riskBodyHtml(app) + '</div>');
+        if (box) box.outerHTML = riskSection(app);
         return;
       }
       if (action === 'ret-mode' || action === 'ret-entry') {
@@ -2643,7 +2837,7 @@
       app.anUi.city = t.value;
       anCompute(app);
       const box = rootEl.querySelector('#ovChartBox');
-      if (box) box.innerHTML = anChartHtml(app, app.ovChartWidth);
+      if (box) box.innerHTML = anChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart'));
       const tip = rootEl.querySelector('#ovTip');
       if (tip) tip.hidden = true;
     });
@@ -2660,62 +2854,64 @@
       rerenderPeriodScreen(app, true);
     });
 
-    // Подсказка графика: наведение, касание и стрелки с клавиатуры.
-    function tipAt(i) {
-      const box = rootEl.querySelector('#ovChart');
-      const tip = rootEl.querySelector('#ovTip');
-      const v = periodView(app);
-      if (!box || !tip || !v || !v.series[i]) return;
-      app.ovTipIndex = i;
-      tip.innerHTML = tipHtmlAt(app, i);
+    // Подсказка графика: наведение, касание и стрелки с клавиатуры. Графиков
+    // на экране несколько (квадранты): у каждого своя подсказка и свой
+    // выбранный столбик, данные — из screenCharts по id графика.
+    const chartOf = el => (el && el.closest ? el.closest('.chart') : null);
+    const isChart = el => !!(el && el.classList && el.classList.contains('chart'));
+    function tipAt(chart, i) {
+      const spec = chart ? screenCharts(app)[chart.id] : null;
+      const tip = chart ? chart.querySelector('.tip') : null;
+      if (!spec || !tip || !spec.series()[i]) return;
+      app.tipIdx[chart.id] = i;
+      tip.innerHTML = spec.tip(i);
       tip.hidden = false;
-      rootEl.querySelectorAll('#ovChart .hit.on').forEach(h => h.classList.remove('on'));
-      const hit = rootEl.querySelector('#ovChart .hit[data-i="' + i + '"]');
+      chart.querySelectorAll('.hit.on').forEach(h => h.classList.remove('on'));
+      const hit = chart.querySelector('.hit[data-i="' + i + '"]');
       if (hit) hit.classList.add('on');
-      if (hit && hit.getBoundingClientRect && box.getBoundingClientRect) {
-        const hr = hit.getBoundingClientRect(), br = box.getBoundingClientRect();
+      if (hit && hit.getBoundingClientRect && chart.getBoundingClientRect) {
+        const hr = hit.getBoundingClientRect(), br = chart.getBoundingClientRect();
         const w = tip.offsetWidth || 180;
         let left = hr.left - br.left + hr.width / 2 - w / 2;
         left = Math.max(4, Math.min(left, br.width - w - 4));
         tip.style.left = left + 'px';
       }
     }
-    function tipHide() {
-      const tip = rootEl.querySelector('#ovTip');
+    function tipHide(chart) {
+      if (!chart) return;
+      const tip = chart.querySelector('.tip');
       if (tip) tip.hidden = true;
-      rootEl.querySelectorAll('#ovChart .hit.on').forEach(h => h.classList.remove('on'));
+      chart.querySelectorAll('.hit.on').forEach(h => h.classList.remove('on'));
     }
-    rootEl.addEventListener('pointermove', ev => {
-      const hit = ev.target && ev.target.closest ? ev.target.closest('#ovChart .hit') : null;
-      if (hit) tipAt(Number(hit.getAttribute('data-i')));
-    });
-    rootEl.addEventListener('pointerdown', ev => {
-      const hit = ev.target && ev.target.closest ? ev.target.closest('#ovChart .hit') : null;
-      if (hit) tipAt(Number(hit.getAttribute('data-i')));
-    });
-    rootEl.addEventListener('pointerleave', ev => {
-      if (ev.target && ev.target.id === 'ovChart') tipHide();
-    }, true);
+    const onHit = ev => {
+      const hit = ev.target && ev.target.closest ? ev.target.closest('.chart .hit') : null;
+      if (hit) tipAt(chartOf(hit), Number(hit.getAttribute('data-i')));
+    };
+    rootEl.addEventListener('pointermove', onHit);
+    rootEl.addEventListener('pointerdown', onHit);
+    rootEl.addEventListener('pointerleave', ev => { if (isChart(ev.target)) tipHide(ev.target); }, true);
     rootEl.addEventListener('focusin', ev => {
-      const v = periodView(app);
-      if (ev.target && ev.target.id === 'ovChart' && v) {
-        tipAt(app.ovTipIndex !== undefined && v.series[app.ovTipIndex] ? app.ovTipIndex : v.series.length - 1);
-      }
+      if (!isChart(ev.target)) return;
+      const spec = screenCharts(app)[ev.target.id];
+      if (!spec) return;
+      const n = spec.series().length, i = app.tipIdx[ev.target.id];
+      tipAt(ev.target, i !== undefined && i < n ? i : n - 1);
     });
-    rootEl.addEventListener('focusout', ev => { if (ev.target && ev.target.id === 'ovChart') tipHide(); });
+    rootEl.addEventListener('focusout', ev => { if (isChart(ev.target)) tipHide(ev.target); });
     rootEl.addEventListener('keydown', ev => {
-      const v = periodView(app);
-      if (!ev.target || ev.target.id !== 'ovChart' || !v) return;
-      const n = v.series.length;
-      let i = app.ovTipIndex === undefined ? n - 1 : app.ovTipIndex;
+      if (!isChart(ev.target)) return;
+      const spec = screenCharts(app)[ev.target.id];
+      if (!spec) return;
+      const n = spec.series().length;
+      let i = app.tipIdx[ev.target.id] === undefined ? n - 1 : app.tipIdx[ev.target.id];
       if (ev.key === 'ArrowLeft') i = Math.max(0, i - 1);
       else if (ev.key === 'ArrowRight') i = Math.min(n - 1, i + 1);
       else if (ev.key === 'Home') i = 0;
       else if (ev.key === 'End') i = n - 1;
-      else if (ev.key === 'Escape') { tipHide(); return; }
+      else if (ev.key === 'Escape') { tipHide(ev.target); return; }
       else return;
       ev.preventDefault();
-      tipAt(i);
+      tipAt(ev.target, i);
     });
 
     rootEl.addEventListener('change', ev => {
@@ -2738,7 +2934,7 @@
     const app = {
       opts, root: rootEl, client: null, session: null, me: null, gen: 0, data: null, errors: {},
       riskByKey: {}, synced: null, loadedAt: null,
-      route: 'overview', ov: null, ovView: null, ovChartWidth: 0, kp: null, kpView: null, oz: null, ozView: null,
+      route: 'overview', ov: null, ovView: null, chartDims: {}, tipIdx: {}, qpMax: {}, kp: null, kpView: null, oz: null, ozView: null,
       an: null, anView: null, anUi: { city: '' }, st: null, stUi: { win: 30 }, stForm: null,
       b2b: null, b2bModel: null, b2bForm: null, b2bAct: { confirm: null }, b2bBulk: newBulk(), b2bSigned: {}, b2bNotice: null,
       b2bUi: { type: 'all', noWholesale: false, showClosed: false, card: null, scroll: 0, overdueOpen: false,
@@ -2784,7 +2980,7 @@
       let t = null;
       root.addEventListener('resize', () => {
         if (t) clearTimeout(t);
-        t = setTimeout(() => { if (periodScreen(app)) fitChart(app); }, 150);
+        t = setTimeout(() => { if (app.session) afterShow(app); }, 150);
       });
     }
     if (app.client.auth.onAuthStateChange) {
