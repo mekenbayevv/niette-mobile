@@ -38,6 +38,7 @@
   const s0 = v => String(v === null || v === undefined ? '' : v);
 
   const C = root.NietteClients;
+  const NBSP = '\u00a0';
   const PAGE = 1000;
   const BASE_STEP = 50;
   const RISK_STEP = 20;
@@ -448,21 +449,42 @@
   // элементами, курсор из них не выпадает.
   function page(inner, cls) { return '<div class="page' + (cls ? ' ' + cls : '') + '" id="screenBody">' + inner + '</div>'; }
 
-  // ── Каркас экрана (14.10.2026, «как в старом дашборде») ──────────────────
-  // Тёмная шапка с вкладками → белая полоса на всю ширину: слева фильтры
-  // экрана, справа свежесть данных → четыре квадранта A B / C D → остальное
-  // ниже. На компьютере квадранты — сетка 2×2 на высоту окна, длинное
-  // листается внутри квадранта, кнопка ⤢ разворачивает квадрант во всю
-  // ширину; на телефоне — один столбец: A, B, C, D подряд.
-  function subbar(tools, fresh) {
-    return '<div class="subbar"><div class="subbar-inner">' +
-      '<div class="subbar-tools">' + (tools || '') + '</div>' +
-      (fresh ? '<div class="subbar-meta">' + fresh + '</div>' : '') + '</div></div>';
-  }
-  // Подпись экрана без периода («Клиенты», «Склад») — слева в полосе.
-  function screenTitle(icon, title, sub) {
-    return '<div class="screen-title"><span class="qp-ico" aria-hidden="true">' + icon + '</span><b>' + C.esc(title) + '</b>' +
-      (sub ? '<span class="muted">' + C.esc(sub) + '</span>' : '') + '</div>';
+  // ── Каркас экрана (14.10.2026, по референсу) ───────────────────────────────
+  // Слева — боковое меню экранов. Справа от него: верхняя белая панель
+  // (фильтры экрана слева, «Обновить» и вход справа) → заголовок экрана и
+  // свежесть данных → лента KPI → четыре квадранта A B / C D → подробности
+  // ниже. Правая колонка — сигналы, инсайты и быстрые действия экрана, всё из
+  // уже загруженных данных. На компьютере квадранты — сетка 2×2 на высоту окна,
+  // длинное листается внутри квадранта, ⤢ разворачивает квадрант во всю
+  // ширину; уже 1280 px правая колонка уходит под экран, на телефоне меню —
+  // полоса сверху, всё — одним столбцом.
+  const ROUTE_META = {
+    overview:  { icon: '📊', title: 'Обзор бизнеса', sub: 'все каналы продаж · выручка, клиенты, склад' },
+    kaspi:     { icon: '🔵', title: 'Kaspi', sub: 'продажи, прибыль и клиенты Kaspi' },
+    ozon:      { icon: '🟠', title: 'Ozon', sub: 'продажи, деньги и ошибки продавца' },
+    analytics: { icon: '📈', title: 'Аналитика заказов', sub: 'спрос по дню заказа: исходы, товары, города' },
+    clients:   { icon: '👥', title: 'Клиенты и удержание', sub: 'только Kaspi · опознанные по имени и городу' },
+    stock:     { icon: '📦', title: 'Склад и запасы', sub: 'остаток на сейчас · период не влияет' },
+    b2b:       { icon: '🤝', title: 'B2B · аптеки и магазины', sub: 'поставки, оплаты, долги и контакты' }
+  };
+
+  // o: tools — фильтры в верхнюю панель, fresh — строка свежести, body —
+  // тело экрана, title/sub — свой заголовок, rail: false — без правой колонки.
+  function frame(app, o) {
+    const m = ROUTE_META[app.route] || {}, title = o.title || m.title || '', sub = o.sub !== undefined ? o.sub : m.sub;
+    const rail = o.rail !== false;
+    return '<div class="shell">' + sideHtml(app) +
+      '<div class="main">' + topHtml(app, o.tools) +
+        '<div class="workspace' + (rail ? '' : ' no-rail') + '">' +
+          '<div class="ws-main">' +
+            '<div class="page-head"><div class="ph-titles"><h1>' +
+              (m.icon ? '<span class="ph-ico" aria-hidden="true">' + m.icon + '</span>' : '') + C.esc(title) + '</h1>' +
+              (sub ? '<p class="ph-sub muted">' + C.esc(sub) + '</p>' : '') + '</div>' +
+              (o.fresh ? '<div class="ph-meta">' + o.fresh + '</div>' : '') + '</div>' +
+            page(o.body || '') +
+          '</div>' +
+          (rail ? '<aside class="rail" id="screenRail" aria-label="Сигналы, инсайты и быстрые действия">' + railInner(app) + '</aside>' : '') +
+        '</div></div></div>';
   }
   function quad(a, b, c, d) { return '<div class="quad">' + a + b + c + d + '</div>'; }
   function below(inner) { return '<div class="below">' + inner + '</div>'; }
@@ -520,19 +542,28 @@
     try { if (root.history && root.history.replaceState) root.history.replaceState(null, '', '#' + r); } catch (e) { /* неважно */ }
   }
 
-  function headerHtml(app) {
-    const email = app.session && app.session.user ? app.session.user.email : '';
+  // Боковое меню: знак и экраны. Значок экрана рисует CSS (по data-route):
+  // у кнопки остаётся одно имя экрана — его читает и экранный диктор.
+  function sideHtml(app) {
     const tabs = routesFor(app).map(r => '<button type="button" class="tab' + (app.route === r.key ? ' on' : '') +
-      '" data-action="route" data-route="' + r.key + '"' + (app.route === r.key ? ' aria-current="page"' : '') + '>' +
-      C.esc(r.label) + '</button>').join('');
-    return '<header class="top"><div class="top-inner">' +
-      '<div class="brand"><span class="brand-mark" aria-hidden="true"></span>NIETTE' +
+      '" data-action="route" data-route="' + r.key + '" title="' + C.esc(r.label) + '"' +
+      (app.route === r.key ? ' aria-current="page"' : '') + '>' + C.esc(r.label) + '</button>').join('');
+    return '<aside class="side">' +
+      '<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">NIETTE</span>' +
         '<span class="brand-sub" aria-hidden="true">Analytics</span></div>' +
       '<nav class="tabs" aria-label="Экраны">' + tabs + '</nav>' +
+      '<div class="side-foot">' + (email(app) ? '<span class="who-am-i" title="Вы вошли как">' + C.esc(email(app)) + '</span>' : '') +
+        '<button type="button" data-action="logout" class="ghost">Выйти</button></div></aside>';
+  }
+  function email(app) { return app.session && app.session.user ? app.session.user.email : ''; }
+  // Верхняя панель: фильтры экрана слева, «Обновить» справа. На телефоне
+  // низа меню нет — «Выйти» здесь же.
+  function topHtml(app, tools) {
+    return '<header class="top"><div class="top-inner">' +
+      '<div class="top-tools">' + (tools || '') + '</div>' +
       '<div class="top-actions">' +
-        (email ? '<span class="who-am-i" title="Вы вошли как">' + C.esc(email) + '</span>' : '') +
         '<button type="button" data-action="refresh">Обновить</button>' +
-        '<button type="button" data-action="logout" class="ghost">Выйти</button>' +
+        '<button type="button" data-action="logout" class="ghost top-logout">Выйти</button>' +
       '</div></div></header>';
   }
 
@@ -691,8 +722,7 @@
                           'загружено ' + hhmm(app.loadedAt)], [staleNote(app)]);
     // Квадранты: A — главное, B — кто покупал по месяцам, C — удержание,
     // D — риск оттока; когорты, LTV, время до второго заказа и база — ниже.
-    return headerHtml(app) +
-      subbar(screenTitle('👥', 'Клиенты', 'только Kaspi · опознанные по имени и городу'), f.line) + page(
+    return frame(app, { fresh: f.line, body:
       f.notes +
       (e.base ? C.sectionError(e.base) : '<div class="ribbon-kpis">' + C.renderKpis(k) + '</div>') +
       quad(summarySection(app), monthlySection(app), retentionSection(app), riskSection(app)) +
@@ -707,13 +737,255 @@
         '</div>' +
         section('base', 'База клиентов', 'Клиент = имя + фамилия + город · только выданные заказы Kaspi',
                 or(e, 'base', () => baseToolbar(app) + '<div id="baseBody">' + baseBodyHtml(app) + '</div>'), { icon: '🗂' }) +
-        section('notes', 'Как читать эти числа', '', C.renderNotes(), { icon: 'ℹ️' })));
+        section('notes', 'Как читать эти числа', '', C.renderNotes(), { icon: 'ℹ️' })) });
+  }
+
+  // ── Правая колонка: сигналы, инсайты, быстрые действия ────────────────────
+  // Только из того, что экран уже загрузил: в базу колонка не ходит. Сигнал —
+  // то, что требует внимания (не загрузилось, устарело, горит, падает);
+  // инсайт — одна цифра с изменением к прошлому периоду той же длины;
+  // действие — обновить данные, перейти к блоку этого экрана или на другой
+  // экран. Пустые сигналы так и названы: колонка не пропадает.
+  const RAIL_DROP = -20;   // канал просел сильнее, чем на 20 % к прошлому периоду, — сигнал
+
+  function railDelta(cur, prev, invert) {
+    if (!C.isNum(cur) || !C.isNum(prev) || !(Math.abs(Number(prev)) > 0)) return '';
+    const d = 100 * (Number(cur) - Number(prev)) / Math.abs(Number(prev));
+    const up = d >= 0, good = invert ? !up : up;
+    return '<span class="kpi-delta-inline ' + (good ? 'up' : 'down') + '"><span aria-hidden="true">' + (up ? '▲' : '▼') + '</span> ' +
+      (up ? '+' : '−') + C.pct(Math.abs(d)) + '</span>';
+  }
+  // sig: { tone: bad | warn | info, title, text, go: { jump | route, label } }
+  function railSignal(x) {
+    const go = x.go ? (x.go.route
+      ? '<button type="button" class="qp-link" data-action="route" data-route="' + x.go.route + '">' + C.esc(x.go.label) + ' <span aria-hidden="true">→</span></button>'
+      : '<button type="button" class="qp-link" data-action="jump" data-id="' + x.go.jump + '">' + C.esc(x.go.label) + ' <span aria-hidden="true">↓</span></button>') : '';
+    return '<li class="rl-sig rl-' + x.tone + '"><span class="rl-dot" aria-hidden="true"></span><div class="rl-txt">' +
+      '<b>' + C.esc(x.title) + '</b>' + (x.text ? '<span>' + C.esc(x.text) + '</span>' : '') + go + '</div></li>';
+  }
+  // ins: { label, value (готовая разметка), sub (разметка) }
+  function railInsight(x) {
+    return '<li class="rl-ins"><span class="rl-label">' + C.esc(x.label) + '</span><span class="rl-val' + (x.txt ? ' txt' : '') + '">' + x.value + '</span>' +
+      (x.sub ? '<span class="rl-sub">' + x.sub + '</span>' : '') + '</li>';
+  }
+  // act: { refresh } | { jump, label } | { route, label }
+  function railAction(x) {
+    if (x.refresh) return '<button type="button" class="ghost rl-act" data-action="refresh"><span class="rl-act-ico" aria-hidden="true">↻</span>Обновить данные</button>';
+    const attr = x.route ? 'data-action="route" data-route="' + x.route + '"' : 'data-action="jump" data-id="' + x.jump + '"';
+    return '<button type="button" class="ghost rl-act" ' + attr + '><span class="rl-act-ico" aria-hidden="true">' + (x.route ? '→' : '↓') +
+      '</span>' + C.esc(x.label) + '</button>';
+  }
+  function railCard(id, icon, title, count, inner) {
+    return '<section class="card rail-card" id="' + id + '" aria-labelledby="' + id + 'Title">' +
+      '<div class="card-head qp-head"><div class="qp-titles"><h2 id="' + id + 'Title"><span class="qp-ico" aria-hidden="true">' + icon + '</span>' +
+      C.esc(title) + '</h2></div>' + (count ? '<span class="rl-count">' + count + '</span>' : '') + '</div>' + inner + '</section>';
+  }
+  function railErrors(sig, errors) {
+    Object.keys(errors || {}).forEach(k => { if (errors[k]) sig.push({ tone: 'bad', title: 'Не загрузилось', text: String(errors[k]) }); });
+  }
+  function railStale(sig, holder) {
+    const n = staleNote(holder);
+    if (n) sig.push({ tone: 'warn', title: 'Данные могли устареть', text: n });
+  }
+
+  const RAIL = {
+    overview(app) {
+      const O = root.NietteOverview, S = root.NietteStock, ov = app.ov, v = app.ovView;
+      if (!ov) return null;
+      const sig = [], ins = [];
+      railErrors(sig, ov.errors);
+      railStale(sig, ov);
+      if (!v) return { sig, ins, act: [{ refresh: true }] };
+      if (!ov.errors.gaps && (ov.gaps || []).length) {
+        const sum = ov.gaps.reduce((a, g) => a + (Number(g.amount) || 0), 0);
+        sig.push({ tone: 'warn', title: 'Не вошло в выручку', text: C.int(ov.gaps.reduce((a, g) => a + (Number(g.rows) || 0), 0)) + ' записей · ' + C.money(sum),
+                   go: { jump: 'ovGapsTitle', label: 'Разбор' } });
+      }
+      if (S && !ov.errors.stock && (ov.stock || []).length) {
+        const now = app.now(), k = S.kpis(ov.stock, null, now);
+        const urgent = ov.stock.filter(r => S.status(C.isNum(r.days_remaining) ? Number(r.days_remaining) : S.INF) === 'bad')
+          .map(r => S.displayName(r.name, r.sku));
+        if (k.critical) sig.push({ tone: 'bad', title: 'Склад: срочно ' + C.int(k.critical) + ' SKU', text: 'хватит меньше чем на неделю: ' + urgent.slice(0, 4).join(', '),
+                                   go: { route: 'stock', label: 'Склад' } });
+        if (k.warn) sig.push({ tone: 'warn', title: 'Склад: на внимании ' + C.int(k.warn) + ' SKU', text: 'хватит на 7–13 дней', go: { route: 'stock', label: 'Склад' } });
+      }
+      const t = v.t, pt = v.pt;
+      if (pt) {
+        v.chans.forEach(c => {
+          const cur = t.by[c.key] || 0, prev = pt.by[c.key] || 0;
+          if (prev > 0 && 100 * (cur - prev) / prev <= RAIL_DROP) {
+            sig.push({ tone: 'warn', title: c.label + ': −' + C.pct(100 * (prev - cur) / prev), text: 'к ' + O.rangeLabel(v.prg) + ' · было ' + C.money(prev) + ', стало ' + C.money(cur) });
+          }
+        });
+      }
+      ins.push({ label: 'Выручка за период', value: C.money(t.total), sub: pt ? railDelta(t.total, pt.total) + ' к прошлому периоду' : 'сравнивать не с чем' });
+      const ranked = v.chans.map(c => ({ c, v: t.by[c.key] || 0 })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+      if (ranked.length && t.total > 0) ins.push({ label: 'Главный канал', txt: true, value: C.esc(ranked[0].c.label), sub: C.pct(100 * ranked[0].v / t.total) + ' выручки · ' + C.money(ranked[0].v) });
+      if (pt) {
+        const grow = v.chans.map(c => ({ c, cur: t.by[c.key] || 0, prev: pt.by[c.key] || 0 }))
+          .filter(x => x.prev > 0 && x.cur > x.prev).sort((a, b) => (b.cur / b.prev) - (a.cur / a.prev))[0];
+        if (grow) ins.push({ label: 'Быстрее всех растёт', txt: true, value: C.esc(grow.c.label), sub: railDelta(grow.cur, grow.prev) + ' · ' + C.money(grow.cur) });
+      }
+      if (v.cl && C.isNum(v.cl.active)) {
+        ins.push({ label: 'Покупатели Kaspi', value: C.int(v.cl.active),
+                   sub: 'новых ' + C.int(v.cl.fresh) + (v.pcl ? ' ' + railDelta(v.cl.fresh, v.pcl.fresh) : '') +
+                        (v.cl.active > 0 ? ' · повторные ' + C.pct(100 * v.cl.repeat / v.cl.active) : '') });
+      }
+      const ks = O.channelStats(ov.rows, 'kaspi', v.rg, v.prg);
+      if (C.isNum(ks.avgCheck)) {
+        const pk = ks.prev && ks.prev.orders > 0 ? ks.prev.gross / ks.prev.orders : null;
+        ins.push({ label: 'Средний чек Kaspi', value: C.money(ks.avgCheck), sub: (pk ? railDelta(ks.avgCheck, pk) + ' · ' : '') + C.int(ks.orders) + ' заказов' });
+      }
+      return { sig, ins, act: [{ refresh: true }, { jump: 'ovTrend', label: 'Все каналы на одном графике' }, { jump: 'ovTable', label: 'Выручка по периодам' },
+                               { route: 'clients', label: 'Риск оттока клиентов' }, { route: 'stock', label: 'Остатки склада' }] };
+    },
+    kaspi(app) {
+      const kp = app.kp, v = app.kpView;
+      if (!kp) return null;
+      const sig = [], ins = [];
+      railErrors(sig, kp.errors);
+      railStale(sig, kp);
+      if (!v) return { sig, ins, act: [{ refresh: true }] };
+      const k = v.k, p = v.pk;
+      if (k.nocogs_orders) sig.push({ tone: 'warn', title: 'Себестоимость известна не везде', text: C.int(k.nocogs_orders) + ' зак. на ' + C.money(k.nocogs_revenue) + ' — прибыль по ним не посчитана',
+                                      go: { jump: 'kpProfit', label: 'Прибыль' } });
+      const now = kp.errors.now ? null : kp.now;
+      if (now && Number(now.in_work_stale) > 0) sig.push({ tone: 'warn', title: 'В работе дольше 14 дней: ' + C.int(now.in_work_stale) + ' зак.',
+                                                          text: 'на ' + C.money(now.in_work_stale_amount), go: { jump: 'kpKpis', label: 'Показатели' } });
+      ins.push({ label: 'Выручка Kaspi', value: C.money(k.revenue), sub: p ? railDelta(k.revenue, p.revenue) + ' к прошлому периоду' : 'сравнивать не с чем' });
+      if (C.isNum(k.profit)) ins.push({ label: 'Прибыль до расходов', value: C.money(k.profit), sub: 'маржа ' + C.pct(k.margin) + (p && C.isNum(p.profit) ? ' · ' + railDelta(k.profit, p.profit) : '') });
+      ins.push({ label: 'Средний чек', value: C.money(k.avgCheck), sub: (p ? railDelta(k.avgCheck, p.avgCheck) + ' · ' : '') + C.int(k.orders) + ' заказов' });
+      if (k.clients && C.isNum(k.clients.fresh)) ins.push({ label: 'Новые клиенты', value: C.int(k.clients.fresh),
+        sub: (p && p.clients ? railDelta(k.clients.fresh, p.clients.fresh) + ' · ' : '') + 'повторных ' + C.int(k.clients.repeat) });
+      if (C.isNum(k.cancelPct)) ins.push({ label: 'Отмены', value: C.pct(k.cancelPct), sub: C.int(k.cancels_n) + ' зак. · ' + C.money(k.cancels_amount) });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'kpProfit', label: 'Прибыль до расходов' }, { jump: 'kpRemote', label: 'Удалённые оплаты' },
+                               { jump: 'ovTable', label: 'Выручка по периодам' }, { route: 'clients', label: 'Клиенты Kaspi' }, { route: 'analytics', label: 'Аналитика заказов' }] };
+    },
+    ozon(app) {
+      const oz = app.oz, v = app.ozView;
+      if (!oz) return null;
+      const sig = [], ins = [];
+      railErrors(sig, oz.errors);
+      railStale(sig, oz);
+      if (!v) return { sig, ins, act: [{ refresh: true }] };
+      const k = v.k, p = v.pk, now = oz.errors.now ? null : oz.now;
+      if (k.seller_errors_n) sig.push({ tone: 'warn', title: 'Ошибки продавца: ' + C.int(k.seller_errors_n) + ' шт.', text: 'штрафы на ' + C.money(k.seller_errors),
+                                        go: { jump: 'ozErrors', label: 'Список' } });
+      if (now && Number(now.to_ship) > 0) sig.push({ tone: 'info', title: 'Ждут отгрузки: ' + C.int(now.to_ship),
+                                                     text: now.to_ship_oldest ? 'самое старое от ' + C.date(now.to_ship_oldest) : '' });
+      if (now && Number(now.stale) > 0) sig.push({ tone: 'warn', title: 'Застыли старше 60 дней: ' + C.int(now.stale), text: 'отправления без движения' });
+      ins.push({ label: 'Выручка Ozon', value: C.money(k.revenue), sub: p ? railDelta(k.revenue, p.revenue) + ' к прошлому периоду' : 'сравнивать не с чем' });
+      ins.push({ label: 'Пришло на счёт', value: C.money(k.payout), sub: C.isNum(k.payoutPct) ? C.pct(k.payoutPct) + ' выручки' : '' });
+      if (C.isNum(k.profit)) ins.push({ label: 'Прибыль после себестоимости', value: C.money(k.profit), sub: C.isNum(k.margin) ? 'маржа ' + C.pct(k.margin) : '' });
+      ins.push({ label: 'Средний чек', value: C.money(k.avgCheck), sub: (p ? railDelta(k.avgCheck, p.avgCheck) + ' · ' : '') + C.int(k.orders) + ' заказов' });
+      if (C.isNum(k.commissionPct)) ins.push({ label: 'Вознаграждение Ozon', value: C.pct(k.commissionPct), sub: C.money(k.commission) + ' · от продаж' });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'ozMoney', label: 'Деньги Ozon' }, { jump: 'ozSkus', label: 'Товары' },
+                               { jump: 'ozErrors', label: 'Ошибки продавца' }, { jump: 'ovTable', label: 'Выручка по периодам' }] };
+    },
+    analytics(app) {
+      const A = root.NietteAnalytics, an = app.an, v = app.anView;
+      if (!an) return null;
+      const sig = [], ins = [];
+      railErrors(sig, an.errors);
+      railStale(sig, an);
+      if (!v) return { sig, ins, act: [{ refresh: true }] };
+      const k = v.k, p = v.pk;
+      if (C.isNum(k.work_orders) && k.work_orders > 0) sig.push({ tone: 'info', title: 'Ещё в работе: ' + C.int(k.work_orders) + ' зак.', text: 'исход заказов периода пока не известен' });
+      ins.push({ label: 'Поступило заказов', value: C.int(k.placed_orders), sub: (p ? railDelta(k.placed_orders, p.placed_orders) + ' · ' : '') + C.money(k.placed_amount) });
+      if (C.isNum(k.buyout)) ins.push({ label: 'Выкуп', value: C.pct(k.buyout), sub: 'отмены ' + C.pct(k.cancelShare) + ' · возвраты ' + C.pct(k.returnShare) });
+      if (!an.errors.cities) {
+        const top = A.cityTotals(an.cities, v.rg).filter(e => e.city !== '')[0];
+        if (top && k.placed_orders > 0) ins.push({ label: 'Главный город', txt: true, value: C.esc(top.city), sub: C.int(top.placed_orders) + ' зак. · ' + C.pct(100 * top.placed_orders / k.placed_orders) + ' заказов' });
+      }
+      if (!an.errors.skus) {
+        const top = A.skuTotals(an.skus, v.rg)[0];
+        if (top && top.placed_amount > 0) ins.push({ label: 'Главный товар', txt: true, value: C.esc(top.name || top.sku), sub: C.money(top.placed_amount) + ' заказано' });
+      }
+      const wd = A.weekdays(an.rows, v.rg).filter(e => C.isNum(e.avgOrders) && e.avgOrders > 0).sort((a, b) => b.avgOrders - a.avgOrders)[0];
+      if (wd) ins.push({ label: 'Сильнейший день недели', txt: true, value: C.esc(String(wd.full || wd.label).replace(/^./, ch => ch.toUpperCase())), sub: 'в среднем ' + C.int(wd.avgOrders) + ' зак. в день' });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'anSkus', label: 'Товары' }, { jump: 'anCities', label: 'Города' },
+                               { jump: 'anPair', label: 'Дни недели и доставка' }, { jump: 'ovTable', label: 'Заказы по периодам' }] };
+    },
+    clients(app) {
+      const d = app.data, e = app.errors || {};
+      if (!d) return null;
+      const sig = [], ins = [];
+      railErrors(sig, e);
+      railStale(sig, app);
+      const k = C.computeKpis(d.base || [], d.repeat || [], d.risk || []);
+      if (!e.risk && k.high) sig.push({ tone: 'bad', title: 'Высокий риск оттока: ' + C.int(k.high), text: 'давно не заказывали по своим меркам', go: { jump: 'risk', label: 'Список' } });
+      if (!e.risk && k.mid) sig.push({ tone: 'warn', title: 'Средний риск оттока: ' + C.int(k.mid), text: 'стоит напомнить о себе', go: { jump: 'risk', label: 'Список' } });
+      if (!e.base) {
+        ins.push({ label: 'Клиентов в базе', value: C.int(k.clients), sub: 'повторных ' + C.int(k.repeaters) + ' · ' + C.pct(k.repeatPct) });
+        ins.push({ label: 'Выручка на клиента', value: C.money(k.avgRevenue), sub: 'прибыль ' + C.money(k.avgProfit) });
+      }
+      if (!e.repeat && C.isNum(k.medianDays)) ins.push({ label: 'Медиана до второго заказа', value: C.days(k.medianDays), sub: 'половина повторяет быстрее' });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'risk', label: 'Риск оттока' }, { jump: 'retention', label: 'Удержание по месяцам' },
+                               { jump: 'cohorts', label: 'Когорты и окупаемость' }, { jump: 'ltv', label: 'LTV по месяцам жизни' }, { jump: 'base', label: 'База клиентов' }] };
+    },
+    stock(app) {
+      const S = root.NietteStock, st = app.st;
+      if (!st) return null;
+      const sig = [], ins = [];
+      railErrors(sig, st.errors);
+      railStale(sig, st);
+      if (st.errors.stock) return { sig, ins, act: [{ refresh: true }] };
+      const now = app.now(), k = S.kpis(st.rows, st.errors.woff ? null : st.woffs, now);
+      const rep = st.errors.recon ? null : S.reconFor(st.recon, app.stUi.win), pr = S.problems(st.rows, rep);
+      const names = tone => st.rows.filter(r => S.status(C.isNum(r.days_remaining) ? Number(r.days_remaining) : S.INF) === tone)
+        .map(r => S.displayName(r.name, r.sku)).slice(0, 4).join(', ');
+      if (k.critical) sig.push({ tone: 'bad', title: 'Срочно пополнить: ' + C.int(k.critical) + ' SKU', text: 'меньше недели: ' + names('bad'), go: { jump: 'stCards', label: 'Остатки' } });
+      if (k.warn) sig.push({ tone: 'warn', title: 'На внимании: ' + C.int(k.warn) + ' SKU', text: '7–13 дней: ' + names('warn'), go: { jump: 'stCards', label: 'Остатки' } });
+      if (pr.notDeducted) sig.push({ tone: 'warn', title: 'Не вычлось с пересчёта: ' + C.int(pr.notDeducted) + ' шт', text: 'остаток может быть выше реального', go: { jump: 'stRecon', label: 'Сверка' } });
+      if (pr.deficits.length) sig.push({ tone: 'warn', title: 'Расход превысил пересчёт: ' + C.int(pr.deficits.length) + ' SKU', text: 'проверьте приходы и пересчёт', go: { jump: 'stTable', label: 'Расчёт' } });
+      ins.push({ label: 'На своём складе', value: C.int(k.total) + ' шт', sub: C.int(k.items) + ' товаров' });
+      if (C.isNum(k.avgDays)) ins.push({ label: 'В среднем хватит', value: C.int(k.avgDays) + ' дн', sub: 'по скорости продаж' });
+      if (C.isNum(k.woffQty)) ins.push({ label: 'Списано за 30 дней', value: C.int(k.woffQty) + ' шт', sub: C.int(k.woffN) + ' записей' });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'stForms', label: 'Внести приход или списание' }, { jump: 'stMp', label: 'Остатки по площадкам' },
+                               { jump: 'stLog', label: 'Журналы' }, { jump: 'stRecon', label: 'Сверка' }] };
+    },
+    b2b(app) {
+      const B = root.NietteB2b, b = app.b2b;
+      if (!b) return null;
+      const sig = [], ins = [];
+      railErrors(sig, b.errors);
+      if (B2B_CORE.some(k => b.errors[k])) return { sig, ins, act: [{ refresh: true }] };
+      const m = b2bModel(app), ui = app.b2bUi, per = b2bPer(app), k = B.kpis(m, ui, per), u = B.urgent(m, ui);
+      if (u.overdue.length) sig.push({ tone: 'bad', title: 'Просрочена оплата: ' + C.int(u.overdue.length) + ' партн.', text: 'долг ' + C.money(u.overdue.reduce((a, x) => a + x.debt, 0)),
+                                       go: { jump: 'b2bUrgent', label: 'Горит' } });
+      if (u.contacts.length) sig.push({ tone: 'warn', title: 'Пора связаться: ' + C.int(u.contacts.length), text: 'срок следующего контакта наступил', go: { jump: 'b2bUrgent', label: 'Горит' } });
+      ins.push({ label: 'Поставлено', value: C.money(k.shipped), sub: (k.delta !== null ? '<span class="kpi-delta-inline ' + (k.delta >= 0 ? 'up' : 'down') + '">' +
+        (k.delta >= 0 ? '▲ +' : '▼ −') + C.int(Math.abs(k.delta)) + NBSP + '%</span> к прошлому · ' : '') + C.int(k.shipCount) + ' поставок' });
+      ins.push({ label: 'Оплачено', value: C.money(k.paid), sub: k.payRate + NBSP + '% от поставленного в долг' });
+      ins.push({ label: 'Долг партнёров', value: C.money(k.debt), sub: 'просрочено ' + C.money(k.overdue) + ' · должников ' + C.int(k.debtorsN) });
+      ins.push({ label: 'Активные точки', value: C.int(k.active), sub: 'из ' + C.int(k.total) + ' · новых ' + C.int(k.newN) });
+      return { sig, ins, act: [{ refresh: true }, { jump: 'b2bForecast', label: 'Прогноз поступлений' }, { jump: 'b2bOverdue', label: 'Разбор просрочки' },
+                               { jump: 'b2bPartners', label: 'Партнёры' }] };
+    }
+  };
+
+  function railInner(app) {
+    const f = RAIL[app.route];
+    let r = null;
+    try { r = f ? f(app) : null; }
+    catch (e) { r = { sig: [{ tone: 'bad', title: 'Сигналы не собрались', text: String((e && e.message) || e) }], ins: [], act: [{ refresh: true }] }; }
+    if (!r) return '';
+    const sig = r.sig || [], ins = r.ins || [], act = r.act || [];
+    return railCard('railSignals', '🔔', 'Сигналы', sig.length ? C.int(sig.length) : '',
+             sig.length ? '<ul class="rl-list">' + sig.map(railSignal).join('') + '</ul>'
+                        : '<p class="rl-calm">Сигналов нет: всё загрузилось, тревожного не видно.</p>') +
+      (ins.length ? railCard('railInsights', '💡', 'Инсайты', '', '<ul class="rl-list">' + ins.map(railInsight).join('') + '</ul>') : '') +
+      railCard('railActions', '⚡', 'Быстрые действия', '', '<div class="rl-actions">' + act.map(railAction).join('') + '</div>');
+  }
+  function refreshRail(app) {
+    const el = app.root.querySelector('#screenRail');
+    if (el) el.innerHTML = railInner(app);
   }
 
   // ── Показ ─────────────────────────────────────────────────────────────────
   function show(app, html) { app.root.innerHTML = html; }
   function loadingHtml(app, text) {
-    return headerHtml(app) + subbar('', '') + page('<div class="card loading" role="status">' + C.esc(text) + '</div>');
+    return frame(app, { body: '<div class="card loading" role="status">' + C.esc(text) + '</div>' });
   }
 
   // Квадранты на высоту окна — только на широком экране (то же условие, что
@@ -730,6 +1002,8 @@
   function fitQuad(app) {
     const q = app.root.querySelector('.quad');
     const de = root.document && root.document.documentElement;
+    const bar = app.root.querySelector('.top');
+    if (bar && de && bar.offsetHeight) de.style.setProperty('--top-h', bar.offsetHeight + 'px');
     if (!q || !q.getBoundingClientRect || !de) return;
     const top = Math.round(q.getBoundingClientRect().top + (root.scrollY || root.pageYOffset || 0));
     if (top > 0) de.style.setProperty('--quad-top', top + 'px');
@@ -762,6 +1036,7 @@
     const body = app.root.querySelector('#screenBody');
     if (!body) return renderPeriodScreen(app);
     body.innerHTML = html;
+    refreshRail(app);
     syncPresetButtons(app);
     afterShow(app);
   }
@@ -786,6 +1061,18 @@
     fitCharts(app);
     const q = app.root.querySelector('#' + id);
     if (q && !cur && typeof q.scrollIntoView === 'function') q.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Переход из правой колонки к блоку экрана. Свёрнутое («Что не сходится») —
+  // раскрыть; квадрант на широком экране — показать целиком.
+  function jumpTo(app, id) {
+    const el = id ? app.root.querySelector('#' + id) : null;
+    if (!el) return;
+    const det = el.closest ? el.closest('details') : null;
+    if (det) det.open = true;
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const f = el.matches && el.matches('section, details') ? el : (el.closest ? el.closest('section') : null);
+    if (f && f.focus) { if (!f.hasAttribute('tabindex')) f.setAttribute('tabindex', '-1'); f.focus({ preventScroll: true }); }
   }
 
   // Всё загруженное — из памяти вон: на том же телефоне следующим может войти
@@ -989,10 +1276,10 @@
     const O = root.NietteOverview, ov = app.ov, f = ovFresh(app);
     if (ov.errors.daily) {
       app.ovView = null;
-      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(ov.errors.daily));
+      return frame(app, { fresh: f.line, body: f.notes + C.sectionError(ov.errors.daily) });
     }
     const v = ovCompute(app);
-    return headerHtml(app) + subbar(O.renderFilters(app.ovUi, v.rg, { groupings: true }), f.line) + page(ovBodyHtml(app, f));
+    return frame(app, { tools: O.renderFilters(app.ovUi, v.rg, { groupings: true }), fresh: f.line, body: ovBodyHtml(app, f) });
   }
 
   // Лента итогов всех каналов → A Kaspi, B Ozon / C клиенты, D склад → ниже
@@ -1042,8 +1329,9 @@
 
   // ── «Kaspi» ───────────────────────────────────────────────────────────────
   // Разметка и расчёты — в kaspi.js; здесь только сборка экрана из частей и
-  // перерисовка при смене периода. Квадранты: A — выручка и график, B —
-  // прибыль до расходов, C — показатели периода, D — по периодам.
+  // перерисовка при смене периода. Показатели периода — лента над
+  // квадрантами; A — выручка и график, B — прибыль до расходов, C — удалённые
+  // оплаты, D — по периодам.
   const KASPI_CH = [{ key: 'kaspi', label: 'Kaspi' }];
 
   function kpFresh(app) {
@@ -1088,11 +1376,11 @@
     return panel(app, 'kpProfit', '💰', 'Прибыль до расходов', 'по заказам с известной себестоимостью',
                  root.NietteKaspi.renderProfit(v.k, v.pk, v.prg));
   }
+  // Показатели периода — лента KPI над квадрантами, как на остальных экранах.
   function kpKpisHtml(app) {
     const kp = app.kp, v = app.kpView;
-    return panel(app, 'kpKpis', '📊', 'Показатели периода', 'изменение — к прошлому периоду той же длины',
-      (kp.errors.clients ? C.sectionError(kp.errors.clients) : '') +
-      root.NietteKaspi.renderKpis(v.k, v.pk, kp.errors.now ? null : kp.now));
+    return '<div id="kpKpis" class="ribbon-kpis">' + (kp.errors.clients ? C.sectionError(kp.errors.clients) : '') +
+      root.NietteKaspi.renderKpis(v.k, v.pk, kp.errors.now ? null : kp.now) + '</div>';
   }
   function kpTableHtml(app) {
     return panel(app, 'ovTable', '📅', 'По периодам', 'новые сверху · итог сходится с выручкой',
@@ -1100,24 +1388,24 @@
   }
   function kpRemoteHtml(app) {
     const kp = app.kp;
-    return section('kpRemote', 'Удалённые оплаты', 'оплаты без заказа в Kaspi · в выручке по дню оплаты, без комиссии',
-      kp.errors.remote ? C.sectionError(kp.errors.remote) : root.NietteKaspi.renderRemote(kp.remote, app.kpView.rg), { icon: '🧾' });
+    return panel(app, 'kpRemote', '🧾', 'Удалённые оплаты', 'оплаты без заказа в Kaspi · в выручке по дню оплаты, без комиссии',
+      kp.errors.remote ? C.sectionError(kp.errors.remote) : root.NietteKaspi.renderRemote(kp.remote, app.kpView.rg));
   }
 
   function kaspiHtml(app) {
     const kp = app.kp, f = kpFresh(app);
     if (kp.errors.daily) {
       app.kpView = null;
-      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(kp.errors.daily));
+      return frame(app, { fresh: f.line, body: f.notes + C.sectionError(kp.errors.daily) });
     }
     kpCompute(app);
-    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.kpView.rg, { groupings: true }), f.line) +
-      page(kpBodyHtml(app, f));
+    return frame(app, { tools: root.NietteOverview.renderFilters(app.ovUi, app.kpView.rg, { groupings: true }),
+                        fresh: f.line, body: kpBodyHtml(app, f) });
   }
   function kpBodyHtml(app, f) {
-    return (f || kpFresh(app)).notes +
-      quad(kpSalesHtml(app), kpProfitHtml(app), kpKpisHtml(app), kpTableHtml(app)) +
-      below(kpRemoteHtml(app) + section('kpNotes', 'Как читать эти числа', '', root.NietteKaspi.renderNotes(), { icon: 'ℹ️' }));
+    return (f || kpFresh(app)).notes + kpKpisHtml(app) +
+      quad(kpSalesHtml(app), kpProfitHtml(app), kpRemoteHtml(app), kpTableHtml(app)) +
+      below(section('kpNotes', 'Как читать эти числа', '', root.NietteKaspi.renderNotes(), { icon: 'ℹ️' }));
   }
 
   function renderKaspi(app) {
@@ -1144,8 +1432,8 @@
   }
 
   // ── «Ozon» ────────────────────────────────────────────────────────────────
-  // Квадранты: A — выручка и график, B — деньги Ozon, C — показатели,
-  // D — ошибки продавца; товары и таблица периодов — ниже.
+  // Показатели — лента над квадрантами; A — выручка и график, B — деньги
+  // Ozon, C — товары, D — ошибки продавца; таблица периодов — ниже.
   const OZON_CH = [{ key: 'ozon', label: 'Ozon' }];
 
   function ozFresh(app) {
@@ -1190,8 +1478,7 @@
   }
   function ozKpisHtml(app) {
     const oz = app.oz, v = app.ozView;
-    return panel(app, 'ozKpis', '📊', 'Показатели периода', 'изменение — к прошлому периоду той же длины',
-                 root.NietteOzon.renderKpis(v.k, v.pk, oz.errors.now ? null : oz.now));
+    return '<div id="ozKpis" class="ribbon-kpis">' + root.NietteOzon.renderKpis(v.k, v.pk, oz.errors.now ? null : oz.now) + '</div>';
   }
   function ozTableHtml(app) {
     return section('ovTable', 'По периодам', 'новые сверху · итог сходится с выручкой',
@@ -1199,8 +1486,8 @@
   }
   function ozSkuHtml(app) {
     const oz = app.oz, Z = root.NietteOzon;
-    return section('ozSkus', 'Товары', 'за период · по выручке',
-      oz.errors.skus ? C.sectionError(oz.errors.skus) : Z.renderSkus(Z.skuTotals(oz.skus, app.ozView.rg)), { icon: '🧷' });
+    return panel(app, 'ozSkus', '🧷', 'Товары', 'за период · по выручке',
+      oz.errors.skus ? C.sectionError(oz.errors.skus) : Z.renderSkus(Z.skuTotals(oz.skus, app.ozView.rg)));
   }
   function ozErrorsHtml(app) {
     const oz = app.oz;
@@ -1212,16 +1499,16 @@
     const oz = app.oz, f = ozFresh(app);
     if (oz.errors.daily) {
       app.ozView = null;
-      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(oz.errors.daily));
+      return frame(app, { fresh: f.line, body: f.notes + C.sectionError(oz.errors.daily) });
     }
     ozCompute(app);
-    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.ozView.rg, { groupings: true }), f.line) +
-      page(ozBodyHtml(app, f));
+    return frame(app, { tools: root.NietteOverview.renderFilters(app.ovUi, app.ozView.rg, { groupings: true }),
+                        fresh: f.line, body: ozBodyHtml(app, f) });
   }
   function ozBodyHtml(app, f) {
-    return (f || ozFresh(app)).notes +
-      quad(ozSalesHtml(app), ozMoneyHtml(app), ozKpisHtml(app), ozErrorsHtml(app)) +
-      below(ozSkuHtml(app) + ozTableHtml(app) +
+    return (f || ozFresh(app)).notes + ozKpisHtml(app) +
+      quad(ozSalesHtml(app), ozMoneyHtml(app), ozSkuHtml(app), ozErrorsHtml(app)) +
+      below(ozTableHtml(app) +
             section('ozNotes', 'Как читать эти числа', '', root.NietteOzon.renderNotes(), { icon: 'ℹ️' }));
   }
 
@@ -1325,11 +1612,11 @@
     const an = app.an, f = anFresh(app);
     if (an.errors.daily) {
       app.anView = null;
-      return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(an.errors.daily));
+      return frame(app, { fresh: f.line, body: f.notes + C.sectionError(an.errors.daily) });
     }
     anCompute(app);
-    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, app.anView.rg, { groupings: true }), f.line) +
-      page(anBodyHtml(app, f));
+    return frame(app, { tools: root.NietteOverview.renderFilters(app.ovUi, app.anView.rg, { groupings: true }),
+                        fresh: f.line, body: anBodyHtml(app, f) });
   }
   function anBodyHtml(app, f) {
     return (f || anFresh(app)).notes + anKpisHtml(app) +
@@ -1384,8 +1671,7 @@
 
   function stockHtml(app) {
     const S = root.NietteStock, st = app.st, f = stFresh(app);
-    const top = headerHtml(app) + subbar(screenTitle('📦', 'Склад', 'остаток на сейчас · период не влияет'), f.line);
-    if (st.errors.stock) return top + page(f.notes + C.sectionError(st.errors.stock));
+    if (st.errors.stock) return frame(app, { fresh: f.line, body: f.notes + C.sectionError(st.errors.stock) });
     const now = app.now(), win = app.stUi.win;
     const rep = st.errors.recon ? null : S.reconFor(st.recon, win);
     const form = app.stForm || (app.stForm = S.newForm(now));
@@ -1395,7 +1681,7 @@
         C.esc(form.msg.del.text) + '</div>' : '');
     const part = (id, title, note, inner) => '<div class="qp-part" id="' + id + '"><h3 class="st-subhead">' + C.esc(title) +
       ' <span class="muted">· ' + C.esc(note) + '</span></h3>' + inner + '</div>';
-    return top + page(
+    return frame(app, { fresh: f.line, body:
       f.notes +
       S.pendingNote(st.pending, now) +
       '<div class="ribbon-kpis">' + S.renderKpis(S.kpis(st.rows, st.woffs, now)) + '</div>' +
@@ -1419,7 +1705,7 @@
                 S.winToolbar(win) + (st.errors.recon ? C.sectionError(st.errors.recon) : S.renderRecon(rep, win, st.rows)), { icon: '🔎' }) +
         section('stPoints', 'Склады отгрузки Kaspi', C.esc(S.pointsSub(rep, win)),
                 st.errors.recon ? C.sectionError(st.errors.recon) : S.renderPoints(rep), { icon: '🚚' }) +
-        section('stNotes', 'Как читать эти числа', '', S.renderNotes(), { icon: 'ℹ️' })));
+        section('stNotes', 'Как читать эти числа', '', S.renderNotes(), { icon: 'ℹ️' })) });
   }
 
   function renderStock(app) { show(app, stockHtml(app)); afterShow(app); }
@@ -1676,7 +1962,7 @@
   function b2bHtml(app) {
     const B = root.NietteB2b, b = app.b2b, f = b2bFresh(app);
     const core = B2B_CORE.map(k => b.errors[k]).filter(Boolean);
-    if (core.length) return headerHtml(app) + subbar('', f.line) + page(f.notes + C.sectionError(core[0]));
+    if (core.length) return frame(app, { fresh: f.line, body: f.notes + C.sectionError(core[0]) });
     const m = b2bModel(app);
     if (app.b2bUi.card) {
       const cm = B.cardModel(m, app.b2bUi.card);
@@ -1685,8 +1971,8 @@
         const p = b2bPerm(app);
         const act = { perm: p, confirm: app.b2bAct.confirm, signed: app.b2bSigned, waybillsFrom: b2bWaybillsFrom(app),
                       top: (p.write ? root.NietteB2bForms.renderActions(p, true) + b2bFormPanel(app, m, cm) : '') + b2bPdfPanel(app) };
-        return headerHtml(app) + subbar(screenTitle('🤝', 'B2B', 'карточка партнёра'), f.line) +
-          page(f.notes + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act));
+        return frame(app, { sub: 'карточка партнёра', fresh: f.line, rail: false,
+          body: f.notes + partial.map(e => C.sectionError(e)).join('') + B.renderCard(cm, m.today, act) });
       }
       app.b2bUi.card = null;                     // партнёра больше нет (обновили, удалили) — к списку
       if (app.b2bForm && app.b2bForm.cid && !m.byId[app.b2bForm.cid]) app.b2bForm = null;
@@ -1697,13 +1983,13 @@
     // на сегодня.
     // Срез партнёров и кнопки «внести» — одной строкой: над квадрантами
     // место дорогое. Открытая форма — сразу под ней, как раньше.
-    return headerHtml(app) + subbar(root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)), f.line) + page(
+    return frame(app, { tools: root.NietteOverview.renderFilters(app.ovUi, b2bInputsRange(app)), fresh: f.line, body:
       f.notes +
       '<div class="b2b-bar">' + B.renderFilters(app.b2bUi, k) + (p.write ? root.NietteB2bForms.renderActions(p, false) : '') + '</div>' +
       (p.write ? b2bFormPanel(app, m, null) : '') + b2bPdfPanel(app) +
       '<div id="b2bOv" class="ribbon-kpis">' + b2bOvInner(app, m, per, k) + '</div>' +
       quad(b2bUrgentHtml(app, m), b2bForecastHtml(app, m), b2bOverdueHtml(app, m), b2bPartnersHtml(app, m)) +
-      below(section('b2bNotes', 'Как читать эти числа', '', B.renderNotes(), { icon: 'ℹ️' })));
+      below(section('b2bNotes', 'Как читать эти числа', '', B.renderNotes(), { icon: 'ℹ️' })) });
   }
 
   function renderB2b(app) {
@@ -1722,6 +2008,7 @@
     swapSection(app, 'b2bUrgent', b2bUrgentHtml(app, m));
     swapSection(app, 'b2bOverdue', b2bOverdueHtml(app, m));
     swapSection(app, 'b2bForecast', b2bForecastHtml(app, m));
+    refreshRail(app);
     syncPresetButtons(app);
   }
   function swapSection(app, id, html) {
@@ -2624,6 +2911,7 @@
         return afterLogin(app);
       }
       if (action === 'qp-max') return setQpMax(app, el.getAttribute('data-id'));
+      if (action === 'jump') return jumpTo(app, el.getAttribute('data-id'));
       if (action === 'st-arr-save' && app.route === 'stock' && app.st) return stSaveArrival(app);
       if (action === 'st-wo-save' && app.route === 'stock' && app.st) return stSaveWriteoffs(app);
       if ((action === 'st-del' || action === 'st-del-no' || action === 'st-del-yes') && app.route === 'stock' && app.st) {
