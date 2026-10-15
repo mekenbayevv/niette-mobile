@@ -307,23 +307,27 @@
     return { data, errors, synced: fresh.synced, snapAt: fresh.snapAt, snapNever: fresh.snapNever };
   }
 
-  // «Обзор» с 14.10.2026 — четыре квадранта: кроме выручки по дням ему нужны
-  // пары «клиент × день» Kaspi (квадрант C) и остаток склада с площадками
-  // (D). Те же снимки, что у экранов Kaspi и «Склад»; упал один — его
-  // квадрант показывает причину, остальной экран работает.
+  // «Обзор» с 15.10.2026 — по референсу (overview_board.js): кроме выручки
+  // по дням ему нужны пары «клиент × день» Kaspi (покупатели), Kaspi и Ozon по
+  // дням (штуки, прибыль, маржа), товары и способы доставки «Аналитики» (топ
+  // товаров, структура заказов) и остаток склада. Те же снимки, что у своих
+  // экранов; упал один — его блок показывает причину, остальное работает.
   async function loadOverview(client) {
     const snapP = fetchSnapState(client);
-    const [daily, gaps, fresh, cdays, stock, mp] = await Promise.allSettled([
+    const [daily, gaps, fresh, cdays, stock, mp, kd, od, sku, del] = await Promise.allSettled([
       fetchAll(client, OV_DAILY), fetchSmall(client, OV_GAPS), fetchSmall(client, OV_FRESH),
-      fetchAll(client, KP_CLIENTS), fetchSmall(client, ST_STOCK), fetchSmall(client, ST_MP)]);
+      fetchAll(client, KP_CLIENTS), fetchSmall(client, ST_STOCK), fetchSmall(client, ST_MP),
+      fetchAll(client, KP_DAILY), fetchAll(client, OZ_DAILY), fetchAll(client, AN_SKU), fetchAll(client, AN_DELIVERY)]);
     const snap = await snapP;
     const val = r => (r.status === 'fulfilled' ? r.value : []);
     const err = (r, src) => (r.status === 'rejected' ? humanError(r.reason, src.what) : null);
     return {
       rows: val(daily), gaps: val(gaps), fresh: val(fresh)[0] || {},
       clientDays: val(cdays), idx: null, stock: val(stock), mp: mp.status === 'fulfilled' ? mp.value : null,
+      kp: val(kd), oz: val(od), sku: val(sku), del: val(del),
       errors: { daily: err(daily, OV_DAILY), gaps: err(gaps, OV_GAPS), clients: err(cdays, KP_CLIENTS),
-                stock: err(stock, ST_STOCK), mp: err(mp, ST_MP) },
+                stock: err(stock, ST_STOCK), mp: err(mp, ST_MP), kp: err(kd, KP_DAILY), oz: err(od, OZ_DAILY),
+                sku: err(sku, AN_SKU), del: err(del, AN_DELIVERY) },
       snapAt: snap.snapAt, snapNever: snap.snapNever, loadedAt: new Date()
     };
   }
@@ -549,7 +553,7 @@
       '" data-action="route" data-route="' + r.key + '" title="' + C.esc(r.label) + '"' +
       (app.route === r.key ? ' aria-current="page"' : '') + '>' + C.esc(r.label) + '</button>').join('');
     return '<aside class="side">' +
-      '<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">NIETTE</span>' +
+      '<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Niette</span>' +
         '<span class="brand-sub" aria-hidden="true">Analytics</span></div>' +
       '<nav class="tabs" aria-label="Экраны">' + tabs + '</nav>' +
       '<div class="side-foot">' + (email(app) ? '<span class="who-am-i" title="Вы вошли как">' + C.esc(email(app)) + '</span>' : '') +
@@ -1188,12 +1192,6 @@
     return freshParts(bits, [staleNote(app.ov)]);
   }
 
-  const OV_PANELS = {
-    kaspi: { id: 'ovKaspi', chart: 'ovKpChart', icon: '🔵', title: 'Kaspi · продажи', link: 'Kaspi', basis: 'по дню выдачи' },
-    ozon:  { id: 'ovOzon',  chart: 'ovOzChart', icon: '🟠', title: 'Ozon · продажи',  link: 'Ozon',  basis: 'по дню начисления' }
-  };
-  const CLIENT_LEGEND = [{ key: 'new', label: 'Новые' }, { key: 'ret', label: 'Повторные' }];
-
   // Всё, что зависит от периода, считается здесь одним проходом и кладётся
   // в app.ovView — подсказкам графиков нужны ровно те бакеты, что нарисованы.
   function ovCompute(app) {
@@ -1205,15 +1203,17 @@
     const series = O.buildSeries(rows, rg, ui.grouping, today);
     const present = {};
     chans.forEach(c => { present[c.key] = series.some(e => (e.by[c.key] || 0) !== 0); });
-    const chSeries = {};
-    Object.keys(OV_PANELS).forEach(k => { chSeries[k] = O.buildSeries(rows.filter(r => r.channel === k), rg, ui.grouping, today); });
     // Клиенты — квадрант C: пары «клиент × день» Kaspi, как на экране Kaspi.
     const idx = K && !ov.errors.clients ? (ov.idx || (ov.idx = K.clientIndex(ov.clientDays))) : null;
     app.ovView = {
-      rg, prg, chans, series, present, chSeries, t: O.totals(rows, rg), pt: prg ? O.totals(rows, prg) : null,
+      rg, prg, chans, series, present, t: O.totals(rows, rg), pt: prg ? O.totals(rows, prg) : null,
       cl: idx ? K.clientsIn(idx, rg) : null, pcl: idx && prg ? K.clientsIn(idx, prg) : null,
-      cliSeries: idx ? K.clientSeries(idx, rg, ui.grouping, today) : []
     };
+    const B = root.NietteBoard;
+    if (B && K) {   // Ozon и «Аналитика» не загрузились — их блоки скажут об этом сами
+      app.ovView.board = B.model({ O, K, Z: root.NietteOzon, A: root.NietteAnalytics, ov: rows, kp: ov.kp, oz: ov.oz, sku: ov.sku,
+        del: ov.del, idx, rg, prg, prevLabel: prg ? O.rangeLabel(prg) : '', grouping: ui.grouping, today, errors: ov.errors });
+    }
     return app.ovView;
   }
 
@@ -1222,54 +1222,21 @@
     return root.NietteOverview.renderChart(v.series, v.chans, app.ovUi.hidden, width, app.ovUi.grouping, null,
                                            { height: height || 0 });
   }
-  function ovChannelChartHtml(app, key, width, height) {
-    const p = OV_PANELS[key], ch = app.ovView.chans.filter(c => c.key === key);
-    return root.NietteOverview.renderChart(app.ovView.chSeries[key], ch.length ? ch : [{ key, label: key }], {}, width,
-      app.ovUi.grouping, null, { id: p.chart, height: height || 0, tail: 'Точные суммы — в подсказке столбика и в таблице «По периодам» ниже.' });
-  }
-  function ovClientChartHtml(app, width, height) {
-    return root.NietteOverview.renderChart(app.ovView.cliSeries, CLIENT_LEGEND, {}, width, app.ovUi.grouping, 'Покупатели',
-      { id: 'ovCliChart', height: height || 0, tail: 'Новые и повторные по каждому столбику — в подсказке.' });
-  }
-
   function ovTrendInner(app) {
     const O = root.NietteOverview, v = app.ovView;
     return O.renderLegend(v.chans, app.ovUi.hidden, v.present) +
       chartBox('ovChart', ovChartHtml(app, chartW(app, 'ovChart'), chartH(app, 'ovChart')));
   }
 
-  // A и B: канал — сумма, изменение к прошлому периоду, заказы, график.
-  function ovChannelPanel(app, key) {
-    const O = root.NietteOverview, v = app.ovView, p = OV_PANELS[key];
-    const st = O.channelStats(app.ov.rows, key, v.rg, v.prg);
-    return panel(app, p.id, p.icon, p.title, C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · ' + p.basis + ' · ' + C.esc(O.rangeLabel(v.rg)),
-      O.renderChannelStat(st) + chartBox(p.chart, ovChannelChartHtml(app, key, chartW(app, p.chart), chartH(app, p.chart))),
-      { fill: true, tools: qpLink(key, p.link) });
-  }
-
-  // C: покупатели Kaspi — новые и повторные по тем же бакетам.
-  function ovClientsPanel(app) {
-    const K = root.NietteKaspi, ov = app.ov, v = app.ovView;
-    const sub = C.esc(GROUP_SUB[app.ovUi.grouping]) + ' · опознанные покупатели Kaspi · по дню выдачи';
-    const more = { fill: true, tools: qpLink('clients', 'Клиенты') };
-    if (!K) return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub, C.sectionError('Не загрузился kaspi.js — обновите страницу.'), more);
-    if (ov.errors.clients) return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub, C.sectionError(ov.errors.clients), more);
-    const legend = '<div class="legend static" aria-hidden="true">' + CLIENT_LEGEND.map(c =>
-      '<span class="chip"><span class="sw sq ch-' + c.key + '"></span>' + C.esc(c.label) + '</span>').join('') + '</div>';
-    return panel(app, 'ovClients', '👥', 'Клиенты · динамика', sub,
-      '<div class="qp-headline">' + K.renderClientStat(v.cl, v.pcl) + legend + '</div>' +
-      chartBox('ovCliChart', ovClientChartHtml(app, chartW(app, 'ovCliChart'), chartH(app, 'ovCliChart'))),
-      more);
-  }
-
-  // D: склад — остаток на сейчас, период его не режет.
+  // Склад — остаток на сейчас, период его не режет. С 15.10 — под блоками
+  // референса, обычной карточкой.
   function ovStockPanel(app) {
     const S = root.NietteStock, ov = app.ov;
-    const more = { tools: qpLink('stock', 'Склад') };
     const sub = 'на сейчас · срочные сверху · период не влияет';
-    if (!S) return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, C.sectionError('Не загрузился stock.js — обновите страницу.'), more);
-    if (ov.errors.stock) return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, C.sectionError(ov.errors.stock), more);
-    return panel(app, 'ovStock', '📦', 'Склад · остатки', sub, S.renderBrief(ov.stock, app.now(), ov.errors.mp ? null : ov.mp), more);
+    const inner = !S ? C.sectionError('Не загрузился stock.js — обновите страницу.')
+      : ov.errors.stock ? C.sectionError(ov.errors.stock) : S.renderBrief(ov.stock, app.now(), ov.errors.mp ? null : ov.mp);
+    return '<section class="card kb-card-box kb-stock" id="ovStock" aria-labelledby="ovStockTitle"><div class="card-head kb-head"><div>' +
+      '<h2 id="ovStockTitle">Склад · остатки</h2><div class="card-sub">' + sub + '</div></div>' + qpLink('stock', 'Склад') + '</div>' + inner + '</section>';
   }
 
   function overviewHtml(app) {
@@ -1282,16 +1249,44 @@
     return frame(app, { tools: O.renderFilters(app.ovUi, v.rg, { groupings: true }), fresh: f.line, body: ovBodyHtml(app, f) });
   }
 
-  // Лента итогов всех каналов → A Kaspi, B Ozon / C клиенты, D склад → ниже
-  // все каналы на одном графике, таблица периодов и пояснения.
+  // По референсу (15.10.2026): восемь плиток → динамика выручки и вклад
+  // площадок → топ товаров, клиенты, структура заказов → ниже склад, все
+  // каналы столбиками, таблица периодов и пояснения.
+  function ovBoardHtml(app) {
+    const B = root.NietteBoard, O = root.NietteOverview, S = root.NietteStock, A = root.NietteAnalytics;
+    const ov = app.ov, v = app.ovView, m = v.board, E = ov.errors;
+    if (!B || !m) return C.sectionError('Не загрузился overview_board.js — обновите страницу.');
+    const gSub = GROUP_SUB[app.ovUi.grouping];
+    const prevLabel = v.prg ? O.rangeLabel(v.prg) : '';
+    const card = (id, title, sub, inner, tools) => '<section class="card kb-card-box" id="' + id + '" aria-labelledby="' + id + 'Title">' +
+      '<div class="card-head kb-head"><div><h2 id="' + id + 'Title">' + C.esc(title) + '</h2>' + (sub ? '<div class="card-sub">' + sub + '</div>' : '') +
+      '</div>' + (tools || '') + '</div>' + inner + '</section>';
+    const errOr = (key, render) => (E[key] ? C.sectionError(E[key]) : render());
+    const anOr = render => (A ? render() : C.sectionError('Не загрузился analytics.js — обновите страницу.'));
+    return '<div id="ovBoard">' + B.renderKpis(m) +
+      '<div class="kb-row2">' +
+        card('ovRevenue', 'Динамика выручки', C.esc(gSub) + ' · все каналы' + (prevLabel ? ' · пунктир — ' + C.esc(prevLabel) : ''),
+             B.renderTrend(m, { cur: O.rangeLabel(v.rg), prev: prevLabel })) +
+        card('ovMix', 'Вклад по площадкам', 'доля выручки за ' + C.esc(O.rangeLabel(v.rg)), B.renderMix(m)) +
+      '</div>' +
+      '<div class="kb-row3">' +
+        card('ovTop', 'Топ товаров', 'Kaspi · заказы по дню заказа · выкуп — среди завершённых',
+             anOr(() => errOr('sku', () => B.renderTop(m, e => (S ? S.displayName(e.name, e.sku) : e.name || e.sku)))), qpLink('analytics', 'Все товары')) +
+        card('ovClients', 'Аналитика клиентов', 'опознанные покупатели Kaspi · по дню выдачи',
+             errOr('clients', () => B.renderClients(m)), qpLink('clients', 'Подробнее')) +
+        card('ovOrders', 'Структура заказов', 'Kaspi · способ доставки · по дню заказа',
+             anOr(() => errOr('del', () => B.renderOrders(m, e => A.methodLabel(e.method))))) +
+      '</div></div>';
+  }
+
   function ovBodyHtml(app, f) {
     const O = root.NietteOverview, ov = app.ov, v = app.ovView;
     const gSub = GROUP_SUB[app.ovUi.grouping];
     return (f || ovFresh(app)).notes +
       (ov.errors.gaps ? C.sectionError(ov.errors.gaps) : O.renderGaps(ov.gaps)) +
-      O.renderRibbon(v.t, v.pt, v.rg, v.prg, v.chans) +
-      quad(ovChannelPanel(app, 'kaspi'), ovChannelPanel(app, 'ozon'), ovClientsPanel(app), ovStockPanel(app)) +
+      ovBoardHtml(app) +
       below(
+        ovStockPanel(app) +
         section('ovTrend', 'Все каналы · динамика выручки', C.esc(gSub) + ' · незакрытый период бледнее',
                 '<div id="ovTrendBody">' + ovTrendInner(app) + '</div>', { icon: '📈' }) +
         section('ovTable', 'По периодам', 'новые сверху · итог сходится с общей выручкой', O.renderTable(v.series, v.chans), { icon: '📅' }) +
@@ -2776,13 +2771,6 @@
         if (!v) return {};
         const out = { ovChart: chartSpec(() => v.series, (w, h) => ovChartHtml(app, w, h),
                                          i => O.tooltipHtml(v.series[i], v.chans, app.ovUi.hidden)) };
-        Object.keys(OV_PANELS).forEach(k => {
-          out[OV_PANELS[k].chart] = chartSpec(() => v.chSeries[k], (w, h) => ovChannelChartHtml(app, k, w, h),
-                                              i => O.channelTooltipHtml(v.chSeries[k][i], k));
-        });
-        if (K && !app.ov.errors.clients) {
-          out.ovCliChart = chartSpec(() => v.cliSeries, (w, h) => ovClientChartHtml(app, w, h), i => K.clientTooltipHtml(v.cliSeries[i]));
-        }
         return out;
       } };
     if (app.route === 'kaspi') return {
