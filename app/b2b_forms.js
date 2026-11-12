@@ -19,6 +19,11 @@
  *                 отказ проверять остатки — дело базы (v_b2b_unpaid_items).
  *
  * Сумму оплаты страница не называет: база считает её из позиций и аванса.
+ * Оплату можно привязать к поставке (12.11.2026): список «за что» — только
+ * её позиции, и база проверяет то же (shipment_id в form_b2b_add_payment).
+ * Состав и цены поставки правятся формой «Изменить поставку»
+ * (form_b2b_ship_edit): оплаченная позиция — тот же товар и цена,
+ * количество не меньше оплаченного; это же проверяет база.
  * Довесок (sql/32): салфетки, вложенные в каждую большую пачку, база сама
  * пишет в поставку строкой по 1 ₸ — форма показывает это число заранее
  * (bundleView) и даёт поправить, если в пачках их было не столько.
@@ -42,9 +47,9 @@
                      ['consignment', 'Под реализацию']];
   const WEEKDAYS = [['1', 'понедельник'], ['2', 'вторник'], ['3', 'среда'], ['4', 'четверг'], ['5', 'пятница'],
                     ['6', 'суббота'], ['0', 'воскресенье']];
-  // Цены по умолчанию — из мобильного торгпреда (PRODUCT_PRICES): подставляются
-  // при выборе товара, менять можно.
-  const PRICES = { 'Подгузники S': 7700, 'Подгузники M': 7700, 'Трусики L': 7700, 'Трусики XL': 7700, 'Трусики XXL': 7700,
+  // Цены по умолчанию — подставляются при выборе товара, менять можно.
+  // Большие пачки — 7500 ₸ (12.11.2026; было 7700 из мобильного торгпреда).
+  const PRICES = { 'Подгузники S': 7500, 'Подгузники M': 7500, 'Трусики L': 7500, 'Трусики XL': 7500, 'Трусики XXL': 7500,
                    'Салфетки влажные': 690, 'Минипак S': 450, 'Минипак M': 450, 'Минипак L': 450, 'Минипак XL': 450,
                    'Минипак XXL': 450 };
   const MAX_FILES = 10;
@@ -86,7 +91,8 @@
   const emptyItem = () => ({ product: '', unit: 'шт', qty: '', price: '' });
 
   // kind: client | visit | shipment | payment | round | branch | edit | row | delclient
-  // ctx: { cid, rec (запись для правки), rowKind }
+  // ctx: { cid, rec (запись для правки), rowKind, shipId (оплата за поставку),
+  //        items (позиции поставки для правки, с paid), bundleQty }
   function newForm(kind, ctx, today) {
     const c = ctx || {}, cid = s0(c.cid), rec = c.rec || {};
     const base = { kind, cid, msg: null, busy: false, dupAsk: false, dupFor: '' };
@@ -97,7 +103,7 @@
     if (kind === 'shipment') return Object.assign(base, { f: { branch_id: '', ship_day: today, pay_type: 'once', due_day: '',
       month_day: '15', weekday: '1', status: 'Отгружено', invoice_no: '', comment: '', bundle_qty: '' }, items: [emptyItem()], files: [] });
     if (kind === 'payment') return Object.assign(base, { f: { day: today, received: '', advance: '', method: METHODS[0],
-      receipt_no: '', receiver: '', comment: '' }, qty: {}, unpaid: null, unpaidFor: '' });
+      receipt_no: '', receiver: '', comment: '', shipment_id: s0(c.shipId) }, qty: {}, unpaid: null, unpaidFor: '' });
     if (kind === 'round') return Object.assign(base, { f: { day: today, comment: '' }, items: [emptyItem()] });
     if (kind === 'branch') return Object.assign(base, { f: { name: '', address: '', city: '', contact: '', phone: '', comment: '' } });
     if (kind === 'edit') return Object.assign(base, { f: {
@@ -107,7 +113,19 @@
     if (kind === 'row') {
       const rk = c.rowKind, f = {};
       ROW_FIELDS[rk].forEach(k => { f[k] = s0(rec[k]); });
-      return Object.assign(base, { rowKind: rk, id: s0(rec.id), f, rec });
+      const out = Object.assign(base, { rowKind: rk, id: s0(rec.id), f, rec });
+      if (rk === 'shipment') {
+        // Состав поставки: позиции без довеска (его считает база), у каждой —
+        // сколько за неё уже заплачено.
+        const its = (c.items || []).filter(i => !i.bundle).map(i => ({ id: s0(i.id), product: s0(i.product), unit: s0(i.unit) || 'шт',
+          qty: numStr(i.qty), price: numStr(i.price), paid: Number(i.paid) || 0 }));
+        out.items = its.length ? its : [emptyItem()];
+        out.origItems = itemsKey(its);
+        f.bundle_qty = s0(c.bundleQty);
+        out.origBundle = f.bundle_qty;
+        out.legacy = !its.length;
+      }
+      return out;
     }
     if (kind === 'delclient') return Object.assign(base, { f: { confirm: '' } });
     throw new Error('неизвестная форма: ' + kind);
@@ -139,6 +157,27 @@
   // база ответила «уже есть»: сменили название — база спросит заново.
   const dupKey = (name, city) => t0(name).toLowerCase().replace(/\s+/g, ' ') + '|' + t0(city).toLowerCase();
   const dupOk = (form, name, city) => form.f.allow_duplicate === true && form.dupFor === dupKey(name, city);
+
+  // Число из базы — строкой для поля: «7500», «1.5», без «7500.00».
+  function numStr(v) { const x = Number(v); return v === null || v === undefined || s0(v) === '' || !isFinite(x) ? '' : String(r3(x)); }
+  // Состав для сравнения «меняли ли»: пустые строки формы не в счёт.
+  function itemsKey(items) {
+    return JSON.stringify((items || []).filter(i => t0(i.product) || t0(i.qty) || t0(i.price))
+      .map(i => [s0(i.id), t0(i.product), t0(i.unit) || 'шт', r3(n(i.qty)), r2(n(i.price))]));
+  }
+  const shipItemsChanged = form => itemsKey(form.items) !== form.origItems || t0(form.f.bundle_qty) !== t0(form.origBundle);
+  // Что база отвергнет у оплаченной позиции — скажем сразу (текст — как у неё).
+  function shipEditProblem(form) {
+    const its = (form.items || []).filter(i => t0(i.product) || t0(i.qty) || t0(i.price));
+    if (!its.length) return 'Добавьте хотя бы одну позицию.';
+    const bad = its.find(i => !t0(i.product));
+    if (bad) return 'Не выбран товар в строке ' + (its.indexOf(bad) + 1) + '.';
+    const low = its.find(i => i.paid > 0 && n(i.qty) < i.paid - 1e-6);
+    if (low) return '«' + low.product + '»: оплачено ' + nf3.format(low.paid) + ' ' + (low.unit || 'шт') + ', меньше не поставить — сначала удалите оплату.';
+    const zero = its.find(i => !(n(i.qty) > 0));
+    if (zero) return '«' + t0(zero.product) + '»: количество — больше нуля.';
+    return '';
+  }
 
   // ── Тело запросов (названия — как в sql/31) ──────────────────────────────
   const numOrBlank = v => (t0(v) === '' ? '' : n(v));
@@ -178,10 +217,28 @@
     return d;
   }
   function paymentPayload(form) {
-    const f = form.f, items = [];
-    Object.keys(form.qty || {}).forEach(id => { const q = n(form.qty[id]); if (q > 0) items.push({ ship_item_id: id, qty: q }); });
-    return { client_id: form.cid, day: f.day, items, advance: numOrBlank(f.advance) || 0, method: f.method,
-             receipt_no: t0(f.receipt_no), receiver: t0(f.receiver), comment: t0(f.comment) };
+    const f = form.f, items = [], vis = form.unpaid ? new Set(visibleUnpaid(form).map(u => s0(u.id))) : null;
+    Object.keys(form.qty || {}).forEach(id => {
+      const q = n(form.qty[id]);
+      if (q > 0 && (!vis || vis.has(id))) items.push({ ship_item_id: id, qty: q });
+    });
+    const d = { client_id: form.cid, day: f.day, items, advance: numOrBlank(f.advance) || 0, method: f.method,
+                receipt_no: t0(f.receipt_no), receiver: t0(f.receiver), comment: t0(f.comment) };
+    if (t0(f.shipment_id)) d.shipment_id = t0(f.shipment_id);
+    return d;
+  }
+  // Правка поставки одной функцией базы: шапка (patch) и, если меняли, состав.
+  function shipEditPayload(form) {
+    const d = { patch: rowPatch(form) };
+    if (shipItemsChanged(form)) {
+      d.items = (form.items || []).filter(i => t0(i.product) || t0(i.qty) || t0(i.price)).map(i => {
+        const o = { product: t0(i.product), unit: t0(i.unit) || 'шт', qty: numOrBlank(i.qty), price: numOrBlank(i.price) };
+        if (t0(i.id)) o.id = t0(i.id);
+        return o;
+      });
+      if (t0(form.f.bundle_qty) !== '') d.bundle_qty = numOrBlank(form.f.bundle_qty);
+    }
+    return d;
   }
   function roundPayload(form) {
     return { client_id: form.cid, day: form.f.day, items: itemsOut(form.items, false), comment: t0(form.f.comment) };
@@ -211,6 +268,25 @@
   }
 
   // ── Деньги формы ─────────────────────────────────────────────────────────
+  // Поставки, по которым есть что платить, — из того же списка базы.
+  function unpaidShips(unpaid) {
+    const by = {};
+    (unpaid || []).forEach(u => {
+      const k = s0(u.shipment_id);
+      if (!k) return;
+      const x = by[k] || (by[k] = { id: k, day: s0(u.ship_day), left: 0, consign: false });
+      x.left = r2(x.left + Number(u.left_sum || 0));
+      if (u.consign) x.consign = true;
+      if (s0(u.ship_day) && (!x.day || s0(u.ship_day) < x.day)) x.day = s0(u.ship_day);
+    });
+    return Object.keys(by).map(k => by[k])
+      .sort((a, b) => (a.day || '9999').localeCompare(b.day || '9999') || a.id.localeCompare(b.id, 'ru', { numeric: true }));
+  }
+  // Привязали к поставке — видны и считаются только её позиции.
+  function visibleUnpaid(form) {
+    const sid = t0(form.f && form.f.shipment_id);
+    return (form.unpaid || []).filter(u => !sid || s0(u.shipment_id) === sid);
+  }
   function sortUnpaid(list) {
     return (list || []).slice().sort((a, b) => s0(a.ship_day || '9999').localeCompare(s0(b.ship_day || '9999')) ||
                                                s0(a.product).localeCompare(s0(b.product)) || s0(a.id).localeCompare(s0(b.id)));
@@ -292,7 +368,7 @@
   }
   function paymentTotals(form) {
     const by = {};
-    (form.unpaid || []).forEach(u => { by[u.id] = u; });
+    visibleUnpaid(form).forEach(u => { by[u.id] = u; });
     let itemsSum = 0, lines = 0;
     const over = [];
     Object.keys(form.qty || {}).forEach(id => {
@@ -345,10 +421,14 @@
     return field('bfFiles', 'Фото и документы — до ' + MAX_FILES + ', до ' + MAX_FILE_MB + ' МБ', '<input id="bfFiles" type="file" multiple accept="' + accept +
       '"><span class="b2b-files-picked muted">' + (list || 'не выбраны') + '</span>', true);
   }
+  // Строка с paid > 0 (правка поставки) оплачена: товар и цену не поменять,
+  // строку не убрать — их держит оплата; количество — не меньше оплаченного.
   function itemsTable(form, prods, withPrice, withUnit) {
     const total = shipmentTotal(form.items);
-    const rows = form.items.map((it, i) => '<tr>' +
-      '<td><select data-bf-item="' + i + '" data-bf-col="product" aria-label="Товар, строка ' + (i + 1) + '">' +
+    const lock = it => Number(it.paid) > 0;
+    const dis = it => (lock(it) ? ' disabled title="Оплачено — сначала удалите оплату"' : '');
+    const rows = form.items.map((it, i) => '<tr' + (lock(it) ? ' class="b2b-f-paid"' : '') + '>' +
+      '<td><select data-bf-item="' + i + '" data-bf-col="product" aria-label="Товар, строка ' + (i + 1) + '"' + dis(it) + '>' +
         '<option value="">— товар —</option>' + withCurrent(prods, it.product).map(p =>
         '<option' + (t0(it.product) === p ? ' selected' : '') + '>' + esc(p) + '</option>').join('') + '</select></td>' +
       '<td data-label="Кол-во"><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="qty" value="' +
@@ -356,9 +436,10 @@
       (withUnit ? '<td data-label="Ед."><input type="text" data-bf-item="' + i + '" data-bf-col="unit" maxlength="10" value="' + esc(s0(it.unit || 'шт')) +
         '" aria-label="Единица, строка ' + (i + 1) + '"></td>' : '') +
       (withPrice ? '<td data-label="Цена, ₸"><input type="number" inputmode="decimal" min="0" step="any" data-bf-item="' + i + '" data-bf-col="price" value="' +
-        esc(s0(it.price)) + '" aria-label="Цена, строка ' + (i + 1) + '"></td>' : '') +
-      '<td class="num b2b-f-sum">' + (n(it.qty) > 0 && n(it.price) >= 0 ? tg(r2(n(it.qty) * n(it.price))) : '—') + '</td>' +
-      '<td>' + (form.items.length > 1 ? '<button type="button" class="ghost small" data-action="b2b-f-item-del" data-i="' + i +
+        esc(s0(it.price)) + '" aria-label="Цена, строка ' + (i + 1) + '"' + dis(it) + '></td>' : '') +
+      '<td class="num b2b-f-sum">' + (n(it.qty) > 0 && n(it.price) >= 0 ? tg(r2(n(it.qty) * n(it.price))) : '—') +
+        (lock(it) ? '<div class="b2b-sub">оплачено ' + esc(nf3.format(it.paid)) + '</div>' : '') + '</td>' +
+      '<td>' + (form.items.length > 1 && !lock(it) ? '<button type="button" class="ghost small" data-action="b2b-f-item-del" data-i="' + i +
         '" aria-label="Убрать строку ' + (i + 1) + '">✕</button>' : '') + '</td></tr>').join('');
     return '<div class="st-field wide"><span class="b2b-f-label">Позиции</span><div class="table-scroll"><table class="grid b2b-f-items b2b-f-lines"><thead><tr>' +
       '<th scope="col" class="txt">Товар</th><th scope="col">Кол-во</th>' + (withUnit ? '<th scope="col" class="txt">Ед.</th>' : '') +
@@ -477,7 +558,7 @@
              field('bfContractDate', 'Дата договора', input('bfContractDate', f.contract_date, 'type="date" max="' + today + '"')),
              field('bfComment', 'Комментарий', input('bfComment', f.comment, 'type="text" maxlength="1000"'), true));
     } else if (form.kind === 'row') {
-      H.push(renderRowFields(form, today));
+      H.push(renderRowFields(form, today, o));
     } else if (form.kind === 'delclient') {
       const cm = o.cm, nm = c ? (c.name || c.id) : form.cid;
       const parts = cm ? [[cm.ships.length, 'поставка', 'поставки', 'поставок'], [cm.pays.length, 'оплата', 'оплаты', 'оплат'],
@@ -501,8 +582,8 @@
     const t = paymentTotals(form);
     return t.total > 0 ? 'Записать оплату ' + tg(t.total) : 'Записать оплату';
   }
-  function renderRowFields(form, today) {
-    const f = form.f, rk = form.rowKind, rec = form.rec || {};
+  function renderRowFields(form, today, o) {
+    const f = form.f, rk = form.rowKind, rec = form.rec || {}, opts = o || {};
     if (rk === 'shipment') {
       const once = !s0(rec.pay_type) || s0(rec.pay_type) === 'once';
       return field('bfShipDay', 'Дата поставки', input('bfShipDay', f.ship_day, 'type="date" max="' + today + '"')) +
@@ -511,8 +592,14 @@
         field('bfStatus', 'Статус', select('bfStatus', choices(STATUSES, f.status), f.status)) +
         field('bfInvoice', '№ накладной', input('bfInvoice', f.invoice_no, 'type="text" maxlength="50"')) +
         field('bfRep', 'Торгпред', input('bfRep', f.rep, 'type="text" maxlength="100"')) +
+        itemsTable(form, products(opts.nomen), true, true) +
+        bundleHtml(form, bundleView(form, opts.bundle, today)) +
         field('bfComment', 'Комментарий', input('bfComment', f.comment, 'type="text" maxlength="1000"'), true) +
-        '<p class="st-explain wide">Сумма и товары поставки не правятся: ошиблись в позициях — удалите поставку и оформите заново.</p>';
+        '<p class="st-explain wide">' + (form.legacy
+          ? 'Позиций у поставки нет — сумма пришла из старой таблицы. Впишите позиции, и сумма пересчитается по ним.'
+          : 'Сумма пересчитается по позициям. Оплаченную позицию (с пометкой «оплачено») не убрать и не переоценить — только добавить штук; ' +
+            'ошиблись в ней — сначала удалите оплату.') +
+        ' Накладная этой поставки переформируется сама, тем же номером; счёт — переформируйте или измените в «Счетах».</p>';
     }
     if (rk === 'payment') {
       return field('bfPayDay', 'Дата оплаты', input('bfPayDay', f.pay_day, 'type="date" max="' + today + '"')) +
@@ -547,16 +634,24 @@
     if (form.unpaidErr) return '<div class="st-field wide"><div class="st-alert st-alert-bad">' + esc(form.unpaidErr) + '</div></div>';
     if (!form.unpaid.length) return '<div class="st-field wide"><p class="st-explain">Неоплаченных позиций нет. Деньги без позиций — это аванс: ' +
       'база примет оплату только с разбивкой по отгруженному.</p></div>';
-    const t = paymentTotals(form), over = new Set(t.over);
-    const totalLeft = r2(form.unpaid.reduce((a, u) => a + Number(u.left_sum || 0), 0));
-    const rows = sortUnpaid(form.unpaid).map(u => '<tr class="' + (over.has(u.id) ? 'over' : '') + '">' +
+    const t = paymentTotals(form), over = new Set(t.over), vis = visibleUnpaid(form), sid = t0(form.f.shipment_id);
+    const ships = unpaidShips(form.unpaid);
+    const opts = [['', 'Все неоплаченные — ' + ships.length + ' ' + plural(ships.length, 'поставка', 'поставки', 'поставок')]]
+      .concat(ships.map(x => [x.id, x.id + ' · ' + dmy(x.day) + ' · осталось ' + tg(x.left) + (x.consign ? ' · реализация' : '')]))
+      .concat(sid && !ships.some(x => x.id === sid) ? [[sid, sid + ' — платить не за что']] : []);
+    const shipSel = field('bfPayShip', 'Поставка', select('bfPayShip', opts, sid), true);
+    if (!vis.length) return shipSel + '<div class="st-field wide"><p class="st-explain">По поставке ' + esc(sid) +
+      ' оплачивать нечего: всё оплачено или это возврат. Выберите другую или «Все неоплаченные».</p></div>';
+    const totalLeft = r2(vis.reduce((a, u) => a + Number(u.left_sum || 0), 0));
+    const rows = sortUnpaid(vis).map(u => '<tr class="' + (over.has(u.id) ? 'over' : '') + '">' +
       '<th scope="row" class="who">' + esc(u.product) + '<div class="where">' + esc(u.shipment_id || '') + ' · ' + dmy(u.ship_day) +
         (u.consign ? ' · под реализацию' : '') + '</div></th>' +
       '<td class="num">' + esc(nf3.format(Number(u.left_qty))) + ' ' + esc(u.unit || 'шт') + '<div class="b2b-sub">по ' + tg(Number(u.price)) + '</div></td>' +
       '<td class="num">' + tg(Number(u.left_sum)) + '</td>' +
       '<td><input type="number" inputmode="decimal" min="0" step="any" max="' + esc(s0(u.left_qty)) + '" data-bf-pay="' + esc(u.id) +
         '" value="' + esc(s0(form.qty[u.id] === undefined ? '' : form.qty[u.id])) + '" aria-label="Оплачено штук: ' + esc(u.product) + '"></td></tr>').join('');
-    return '<div class="st-field wide"><span class="b2b-f-label">За что оплата — ещё не оплачено на ' + esc(tg(totalLeft)) + '</span>' +
+    return shipSel + '<div class="st-field wide"><span class="b2b-f-label">За что оплата — ' + (sid ? 'по ' + esc(sid) + ' ' : '') +
+      'ещё не оплачено на ' + esc(tg(totalLeft)) + '</span>' +
       '<div class="b2b-f-fifo"><input id="bfReceived" type="number" inputmode="decimal" min="0" step="any" placeholder="Сколько пришло, ₸" value="' +
         esc(s0(form.f.received)) + '" aria-label="Сколько пришло, тенге"><button type="button" class="ghost" data-action="b2b-f-fifo">Разнести по старым</button></div>' +
       '<div class="table-scroll tall"><table class="grid b2b-f-items b2b-f-pay"><thead><tr><th scope="col" class="txt">Позиция</th><th scope="col">Осталось</th>' +
@@ -621,7 +716,17 @@
         (w && w.number ? ' Накладная ' + w.number + (w.reused ? ' уже была.' : ' выписана.') : w && w.error ? ' ' + w.error + ' — выпишите её в карточке, у поставки.' : '') + tr;
     }
     if (kind === 'payment') return 'Записана оплата ' + d.id + ' на ' + tg(Number(d.amount) || 0) +
+      (d.shipment_id ? ' по поставке ' + d.shipment_id : '') +
       (Number(d.advance) > 0 ? ' (из них аванс ' + tg(Number(d.advance)) + ')' : '') + '.' + tr;
+    if (kind === 'shipedit') {
+      if (!d.items_changed) return 'Сохранено.' + tr;
+      const w = d.waybill || null, inv = Array.isArray(d.invoices) ? d.invoices : [];
+      return 'Поставка ' + d.id + ': состав изменён, сумма ' + (Number(d.was_amount) !== Number(d.amount)
+        ? tg(Number(d.was_amount) || 0) + ' → ' + tg(Number(d.amount) || 0) : 'прежняя, ' + tg(Number(d.amount) || 0)) + '.' +
+        (w && w.error ? ' ' + w.error + ' — переформируйте её в «Счетах и накладных».' : w && w.number ? ' Накладная ' + w.number + ' переформирована.' : '') +
+        (inv.length ? ' ' + (inv.length === 1 ? 'Счёт ' : 'Счета ') + inv.map(x => x.number).join(', ') +
+          ' по этой поставке не менялся — переформируйте или измените его.' : '') + tr;
+    }
     if (kind === 'round') return 'Записан обход ' + d.id + ' на ' + tg(Number(d.amount) || 0) + '.' + tr;
     if (kind === 'branch') return 'Добавлен филиал ' + d.id + '.' + tr;
     if (kind === 'delclient') return 'Партнёр ' + (d.name || d.id) + ' удалён: записей отмечено ' + (d.total || 0) + '.' + tr;
@@ -650,6 +755,7 @@
     TYPES, STAGES, PRIOS, RESULTS, METHODS, STATUSES, PAY_TYPES, WEEKDAYS, PRICES, ROW_FIELDS, MAX_FILES, MAX_FILE_MB, EXT_OK, MIME,
     perm, products, priceOf, newForm, emptyItem, formTitle, dupKey, rowProblem,
     clientPayload, visitPayload, shipmentPayload, paymentPayload, roundPayload, branchPayload, clientChanges, rowPatch, schedule,
+    shipEditPayload, shipItemsChanged, shipEditProblem, itemsKey, unpaidShips, visibleUnpaid,
     sortUnpaid, shipmentTotal, fifo, paymentTotals, paySumText, bundleAuto, bundleView, bundleInfo,
     renderForm, renderActions, renderTraining, rowActions, savedText, extOf, storagePath, isStorage
   };

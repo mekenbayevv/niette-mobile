@@ -2054,7 +2054,7 @@
   function b2bBundleInfo(app) {
     const F = root.NietteB2bForms, form = app.b2bForm;
     const el = app.root.querySelector('#bfBundleInfo');
-    if (!form || form.kind !== 'shipment' || !el) return;
+    if (!form || !(form.kind === 'shipment' || (form.kind === 'row' && form.rowKind === 'shipment')) || !el) return;
     const bv = F.bundleView(form, b2bBundle(app), b2bToday(app));
     el.textContent = F.bundleInfo(bv, F.shipmentTotal(form.items));
     const inp = app.root.querySelector('#bfBundle');
@@ -2106,7 +2106,9 @@
     if (kind === 'row') {
       const rk = el.getAttribute('data-rowkind'), rec = b2bFindRec(app, rk, el.getAttribute('data-id'));
       if (!rec) return;
-      form = F.newForm('row', { cid, rec, rowKind: rk }, today);
+      form = F.newForm('row', Object.assign({ cid, rec, rowKind: rk }, rk === 'shipment' ? b2bShipItemsCtx(app, rec) : {}), today);
+    } else if (kind === 'payment') {
+      form = F.newForm('payment', { cid, shipId: el.getAttribute('data-ship') || '' }, today);
     } else if (kind === 'edit') {
       form = F.newForm('edit', { cid, rec: m.byId[cid] }, today);
     } else if (kind === 'doc') {
@@ -2127,6 +2129,26 @@
     if (kind === 'docset') b2bLoadDocSettings(app, form);
     const first = app.root.querySelector('#b2bForm input:not([type="checkbox"]):not([type="file"]), #b2bForm select');
     if (first && first.focus) first.focus();
+  }
+
+  // Позиции поставки для правки: сколько за каждую заплачено и сколько
+  // довеска стоит сейчас. Довесок, который не совпадает с правилом (его
+  // поправляли руками или убрали), остаётся числом в форме — иначе правка
+  // количества молча вернула бы его к правилу.
+  function b2bShipItemsCtx(app, rec) {
+    const F = root.NietteB2bForms, d = app.b2b.data, sid = s0(rec.id), paid = {};
+    (d.payItems || []).forEach(i => { const k = s0(i.ship_item_id); if (k) paid[k] = (paid[k] || 0) + (Number(i.qty) || 0); });
+    const all = (d.items || []).filter(i => s0(i.shipment_id) === sid && !i.deleted_at)
+      .sort((a, b) => s0(a.id).localeCompare(s0(b.id), 'ru', { numeric: true }));
+    const items = all.map(i => Object.assign({}, i, { paid: Math.round((paid[s0(i.id)] || 0) * 1000) / 1000 }));
+    const bundleRows = all.filter(i => i.bundle);
+    const auto = F.bundleAuto(items.filter(i => !i.bundle), s0(rec.ship_day).slice(0, 10), (d.bundles || []));
+    let bundleQty = '';
+    if (auto.length <= 1) {
+      const have = bundleRows.reduce((a, i) => a + (Number(i.qty) || 0), 0), want = auto.length ? auto[0].qty : 0;
+      if (Math.abs(have - want) > 1e-6 && (want > 0 || have > 0)) bundleQty = String(have);
+    }
+    return { items, bundleQty };
   }
 
   // «За что можно платить» — витрина базы, та же, по которой её проверяет
@@ -2163,6 +2185,29 @@
     const m = b2bModel(app), cm = root.NietteB2b.cardModel(m, cid);
     if (cm) root.NietteB2bDocs.prefill(form, cm, b2bWaybillsFrom(app));
     b2bRenderPanel(app);
+  }
+  // Изменить счёт: форма документа, строки — из снимка счёта (sql/32,
+  // form_b2b_doc_edit). Поставки — для отметок и «Подставить строки».
+  async function b2bOpenDocEdit(app, id) {
+    const D = root.NietteB2bDocs, cid = app.b2bUi.card || '';
+    const doc = (app.b2b.data.docs || []).find(x => s0(x.id) === s0(id));
+    if (!doc || !cid) return;
+    const form = D.newDocForm('invoice', { cid, edit: doc }, b2bToday(app));
+    form.inCard = true;
+    app.b2bForm = form; app.b2bAct.confirm = null; app.b2bNotice = null;
+    renderB2b(app);
+    b2bLoadDocLines(app, form);
+    const g = app.gen;
+    let r;
+    try { r = await app.client.from('b2b_docs').select('id,snapshot').eq('id', doc.id); }
+    catch (e) { r = { error: e }; }
+    if (g !== app.gen || app.b2bForm !== form) return;
+    if (r.error) form.snapErr = humanError(r.error, 'Счёт');
+    else if (!(r.data || []).length || !r.data[0].snapshot) form.snapErr = 'Счёта ' + (doc.number || id) + ' больше нет или он выписан старой системой — обновите экран.';
+    else D.fromSnapshot(form, r.data[0].snapshot);
+    b2bRenderPanel(app);
+    const first = app.root.querySelector('#b2bForm input:not([type="checkbox"])');
+    if (first && first.focus) first.focus();
   }
   async function b2bLoadDocSettings(app, form) {
     const g = app.gen;
@@ -2373,7 +2418,7 @@
       if (!t.lines) return b2bFormMsg(app, form, 'bad', 'Укажите, за какие позиции оплата, — или разнесите сумму по старым.');
     }
     if (kind === 'row') {
-      const p = F.rowProblem(form);
+      const p = F.rowProblem(form) || (form.rowKind === 'shipment' && F.shipItemsChanged(form) ? F.shipEditProblem(form) : '');
       if (p) return b2bFormMsg(app, form, 'bad', p);
     }
     if (kind === 'doc' || kind === 'docset') return b2bSaveDoc(app, form);
@@ -2405,8 +2450,13 @@
       if (!res.error && ch.contract) res = await b2bCall(app, 'form_b2b_set_contract', { p_client_id: form.cid, p_num: ch.contract.num, p_day: ch.contract.day });
     } else if (kind === 'row') {
       const patch = F.rowPatch(form);
-      if (!Object.keys(patch).length) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
-      res = await b2bCall(app, 'form_b2b_update', { p_kind: form.rowKind, p_id: form.id, p_patch: patch });
+      const items = form.rowKind === 'shipment' && F.shipItemsChanged(form);
+      if (!Object.keys(patch).length && !items) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
+      // Состав поставки — одной функцией вместе с шапкой: всё или ничего.
+      res = items ? await b2bCall(app, 'form_b2b_ship_edit', { p_id: form.id, d: F.shipEditPayload(form) })
+                  : await b2bCall(app, 'form_b2b_update', { p_kind: form.rowKind, p_id: form.id, p_patch: patch });
+      if (items && res.error && /could not find the function|PGRST202/i.test(String((res.error.message || '') + (res.error.code || ''))))
+        res.error = { message: 'Функции правки состава нет в базе — выполните sql/31_b2b_write.sql, затем sql/32_b2b_docs.sql и sql/12_auth.sql.' };
     } else if (kind === 'delclient') {
       res = await b2bCall(app, 'form_b2b_delete_client', { p_client_id: form.cid, p_confirm: form.f.confirm });
     }
@@ -2434,6 +2484,8 @@
       if (kind === 'delclient' && app.b2bUi.card === form.cid) app.b2bUi.card = null;
     } else if (kind === 'delclient') {
       app.b2bForm = null; app.b2bUi.card = null; app.b2bNotice = { tone: 'ok', text };
+    } else if (kind === 'row' && form.rowKind === 'shipment' && res.data && res.data.items_changed) {
+      app.b2bForm = null; app.b2bNotice = { tone: 'ok', text: F.savedText('shipedit', res.data) };
     } else if (kind === 'edit' || kind === 'row') {
       app.b2bForm = null; app.b2bNotice = { tone: 'ok', text: 'Сохранено' + (res.data && res.data.training ? ' — тренировка.' : '.') };
     } else {
@@ -2468,7 +2520,8 @@
       if (problem) { form.touched = true; return b2bFormMsg(app, form, 'bad', problem); }
       form.busy = true; form.msg = null;
       b2bRenderPanel(app);
-      res = await b2bCall(app, 'form_b2b_add_doc', { d: D.docPayload(form) });
+      res = form.editId ? await b2bCall(app, 'form_b2b_doc_edit', { p_id: form.editId, d: D.docPayload(form) })
+                        : await b2bCall(app, 'form_b2b_add_doc', { d: D.docPayload(form) });
     } else {
       const patch = D.settingsChanges(form);
       if (!Object.keys(patch).length) return b2bFormMsg(app, form, 'bad', 'Ничего не изменено.');
@@ -2486,7 +2539,7 @@
     }
     const d = res.data || {};
     if (still) app.b2bForm = null;
-    app.b2bNotice = { tone: 'ok', text: D.savedText(form.kind, d) };
+    app.b2bNotice = { tone: 'ok', text: D.savedText(form.editId ? 'docedit' : form.kind, d) };
     await b2bReload(app);
     if (form.kind === 'doc' && d.id && g === app.gen) b2bDocPdf(app, d.id, d.snapshot || null);
   }
@@ -2595,6 +2648,7 @@
       const id = el.getAttribute('data-id');
       return b2bDocAct(app, 'form_b2b_doc_regen', { p_id: id }, 'regen', d => b2bDocPdf(app, id, d.snapshot || null));
     }
+    if (action === 'b2b-doc-edit') return b2bOpenDocEdit(app, el.getAttribute('data-id'));
     if (action === 'b2b-doc-missing') { app.b2bAct.confirm = 'docmiss:' + (app.b2bUi.card || ''); app.b2bNotice = null; return renderB2b(app); }
     if (action === 'b2b-doc-missing-yes') return b2bDocAct(app, 'form_b2b_doc_waybills_missing', { p_client_id: app.b2bUi.card }, 'missing');
     if (action === 'b2b-doc-ship') {
@@ -2618,7 +2672,7 @@
     if (action === 'b2b-f-item-add') { form.items.push(F.emptyItem()); return b2bRenderPanel(app); }
     if (action === 'b2b-f-item-del') { form.items.splice(Number(el.getAttribute('data-i')), 1); return b2bRenderPanel(app); }
     if (action === 'b2b-f-fifo') {
-      const a = F.fifo(form.unpaid || [], form.f.received);
+      const a = F.fifo(F.visibleUnpaid(form), form.f.received);
       form.qty = {};
       Object.keys(a.qty).forEach(k => { form.qty[k] = String(a.qty[k]); });
       form.f.advance = a.advance > 0 ? String(a.advance) : '';
@@ -2660,6 +2714,14 @@
       if (form.kind === 'payment') return b2bLoadUnpaid(app, form);
       if (form.kind === 'shipment') return b2bRenderPanel(app);
       return;
+    }
+    if (t.id === 'bfPayShip') {
+      if (evType !== 'change') return;
+      // Сменили поставку — набранное по чужим позициям не уходит в оплату.
+      form.f.shipment_id = t.value; form.msg = null;
+      const vis = new Set(F.visibleUnpaid(form).map(u => s0(u.id)));
+      Object.keys(form.qty || {}).forEach(k => { if (!vis.has(k)) delete form.qty[k]; });
+      return b2bRenderPanel(app);
     }
     if (t.id === 'bfNewClient') { form.newClient = !!t.checked; return b2bRenderPanel(app); }
     if (t.id === 'bfAllowDup') { form.f.allow_duplicate = !!t.checked; return; }
@@ -2742,7 +2804,7 @@
     const tot = rootEl.querySelector('#bdTotal');
     if (tot) tot.textContent = C.money(Math.round(v));
     const btn = rootEl.querySelector('#b2bForm [data-action="b2b-f-save"]');
-    if (btn && !form.busy) btn.textContent = (form.docKind === 'invoice' ? 'Выписать счёт' : 'Выписать накладную') + (v > 0 ? ' на ' + C.money(Math.round(v)) : '');
+    if (btn && !form.busy) btn.textContent = D.saveLabel(form);
   }
   function b2bPaySum(app) {
     const F = root.NietteB2bForms, form = app.b2bForm, rootEl = app.root;

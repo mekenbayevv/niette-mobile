@@ -22,6 +22,9 @@
  *                     тот же расчёт, что у автонакладной), правятся руками.
  *   renderDocs()      раздел карточки «Счета и накладные».
  *   renderDocForm()   форма; renderSettingsForm() — реквизиты (полный доступ).
+ *   Изменить счёт (12.11.2026, form_b2b_doc_edit): та же форма, строки — из
+ *                     снимка счёта; номер и дата прежние. Накладная так не
+ *                     правится — через состав поставки.
  */
 (function (root) {
   'use strict';
@@ -246,11 +249,36 @@
 
   // ── Форма документа ──────────────────────────────────────────────────────
   const emptyLine = () => ({ name: '', unit: 'шт', qty: '', price: '' });
+  // ctx.edit — строка b2b_docs: правка выписанного счёта. Строки придут из
+  // снимка (fromSnapshot), до того — «загружаю»; отметки поставок их не
+  // перезаписывают (dirty).
   function newDocForm(docKind, ctx, today) {
-    const c = ctx || {};
-    return { kind: 'doc', docKind: docKind === 'waybill' ? 'waybill' : 'invoice', cid: s0(c.cid), msg: null, busy: false,
+    const c = ctx || {}, e = c.edit || null;
+    const form = { kind: 'doc', docKind: docKind === 'waybill' ? 'waybill' : 'invoice', cid: s0(c.cid), msg: null, busy: false,
              f: { day: '', comment: '', flat: false, flat_amount: '', flat_name: '' },
              items: [emptyLine()], ships: [], lines: null, linesErr: null, next: null, dirty: false, today: today || '' };
+    if (e) {
+      Object.assign(form, { editId: s0(e.id), editNumber: s0(e.number), editDay: s0(e.day).slice(0, 10), dirty: true,
+                            ships: (e.shipment_ids || []).map(s0), snap: null, snapErr: null });
+      form.f.comment = s0(e.comment);
+    }
+    return form;
+  }
+  // Строки счёта из его снимка: название — как выбирали (app_name), иначе
+  // официальное. Одна строка «усл» без кода — счёт одной суммой.
+  function fromSnapshot(form, snap) {
+    const its = (snap && Array.isArray(snap.items) ? snap.items : []).map(i => ({
+      name: t0(i.app_name) || t0(i.name), unit: t0(i.unit) || 'шт', qty: String(r3(Number(i.qty) || 0)), price: String(r2(Number(i.price) || 0)) }));
+    form.snap = snap || null;
+    if (its.length === 1 && its[0].unit === 'усл' && Number(its[0].qty) === 1 && !t0((snap.items[0] || {}).code)) {
+      form.f.flat = true; form.f.flat_amount = its[0].price; form.f.flat_name = its[0].name;
+    }
+    form.items = its.length ? its : [emptyLine()];
+    return form;
+  }
+  function saveLabel(form) {
+    const v = docTotal(form), inv = form.docKind === 'invoice';
+    return (form.editId ? 'Сохранить счёт' : inv ? 'Выписать счёт' : 'Выписать накладную') + (v > 0 ? ' на ' + tg(v) : '');
   }
   // Строки поставок пришли — отметить поставку и заполнить строки (если
   // человек ещё ничего не правил руками).
@@ -286,8 +314,8 @@
     return '';
   }
   function docPayload(form) {
-    const d = { kind: form.docKind, client_id: form.cid, day: t0(form.f.day), shipment_ids: (form.ships || []).slice(),
-                comment: t0(form.f.comment) };
+    const d = form.editId ? { shipment_ids: (form.ships || []).slice(), comment: t0(form.f.comment) }
+      : { kind: form.docKind, client_id: form.cid, day: t0(form.f.day), shipment_ids: (form.ships || []).slice(), comment: t0(form.f.comment) };
     if (isFlat(form)) d.flat = { amount: num(form.f.flat_amount), name: t0(form.f.flat_name) };
     else d.items = (form.items || []).filter(filled).map(i => ({ name: t0(i.name), unit: t0(i.unit) || 'шт',
       qty: t0(i.qty) === '' ? '' : num(i.qty), price: t0(i.price) === '' ? '' : num(i.price) }));
@@ -366,7 +394,9 @@
         else if (a.confirm === del) actions = '<td class="b2b-row-act"><button type="button" class="danger small" data-action="b2b-del-yes" data-kind="doc" data-id="' +
           esc(d.id) + '">Удалить ' + esc(d.number || d.id) + '</button> <button type="button" class="ghost small" data-action="b2b-del-no">Нет</button></td>';
         // Переформировать есть из чего: снимок или поставки (старый документ без них — только в Drive).
-        else actions = '<td class="b2b-row-act">' + ((d.kind === 'invoice' || d.kind === 'waybill') && (d.has_snapshot || ids.length)
+        else actions = '<td class="b2b-row-act">' + (d.kind === 'invoice' && d.has_snapshot
+            ? '<button type="button" class="ghost small" data-action="b2b-doc-edit" data-id="' + esc(d.id) + '" title="Строки и цены руками; номер и дата прежние">Изменить</button> ' : '') +
+          ((d.kind === 'invoice' || d.kind === 'waybill') && (d.has_snapshot || ids.length)
             ? '<button type="button" class="ghost small" data-action="b2b-doc-regen" data-id="' + esc(d.id) + '" title="Тот же номер и дата, строки — заново из поставок">Переформировать</button> ' : '') +
           '<button type="button" class="ghost small" data-action="b2b-del" data-kind="doc" data-id="' + esc(d.id) + '" aria-label="Удалить ' + esc(d.number || d.id) + '">Удалить</button></td>';
       }
@@ -406,7 +436,7 @@
     const inv = form.docKind === 'invoice', ct = o.contract || null;
     const H = [];
     H.push('<div class="st-form b2b-f b2b-doc-f" id="b2bForm" data-kind="doc"><div class="b2b-f-head"><h3 class="st-subhead">' +
-      esc((inv ? 'Счёт на оплату' : 'Накладная З-2') + ' · ' + (c.name || c.id || '')) +
+      esc((form.editId ? 'Изменить счёт № ' + form.editNumber : inv ? 'Счёт на оплату' : 'Накладная З-2') + ' · ' + (c.name || c.id || '')) +
       '</h3><button type="button" class="ghost small" data-action="b2b-f-close">Закрыть</button></div>');
     if (o.perm && o.perm.training) {
       H.push('<p class="st-explain b2b-f-train">Тренировка: документ выпишется с пометкой «ТРЕНИРОВКА» поперёк страницы, и его сотрёт следующий перенос из листов. ' +
@@ -443,6 +473,8 @@
       H.push('<div class="st-field wide"><p class="st-explain">' + esc(inv ? 'Поставок с остатком нет — строки впишите руками.' : 'Поставок нет — строки впишите руками.') + '</p></div>');
     }
     if (form.lines === null && form.cid) H.push('<div class="st-field wide"><p class="st-explain" role="status">Загружаю строки поставок…</p></div>');
+    if (form.editId && !form.snap && !form.snapErr) H.push('<div class="st-field wide"><p class="st-explain" role="status">Загружаю строки счёта…</p></div>');
+    if (form.snapErr) H.push('<div class="st-field wide"><div class="st-alert st-alert-bad">' + esc(form.snapErr) + '</div></div>');
     if (form.linesErr) H.push('<div class="st-field wide"><div class="st-alert st-alert-bad">' + esc(form.linesErr) + '</div></div>');
     // Строки.
     if (inv) {
@@ -456,16 +488,21 @@
     } else {
       H.push(linesTable(form, o.nomen));
     }
-    H.push(field('bdDay', inv ? 'Дата счёта (пусто — сегодня)' : 'Дата накладной (пусто — дата поставки)',
+    H.push(form.editId
+             ? '<div class="st-field"><span class="b2b-f-label">Номер и дата</span><span>№ ' + esc(form.editNumber) + ' от ' + dmy(form.editDay) +
+               ' <span class="muted">— не меняются</span></span></div>'
+             : field('bdDay', inv ? 'Дата счёта (пусто — сегодня)' : 'Дата накладной (пусто — дата поставки)',
                  input('bdDay', f.day, 'type="date" max="' + esc(o.today || '') + '"' +
                        (inv && form.next && form.next.last_invoice_day ? ' min="' + esc(form.next.last_invoice_day) + '"' : ''))),
            field('bdComment', 'Комментарий — для себя, в документ не печатается', input('bdComment', f.comment, 'type="text" maxlength="1000"'), true));
     H.push('</div>');
     const nx = form.next ? (inv ? form.next.invoice_next : form.next.waybill_next) : '';
     const problem = docProblem(form, ct);
-    H.push('<div class="st-form-actions"><button type="button" data-action="b2b-f-save"' + (form.busy || (inv && !ct) ? ' disabled' : '') + '>' +
-      esc(form.busy ? 'Выписываю…' : (inv ? 'Выписать счёт' : 'Выписать накладную') + (docTotal(form) > 0 ? ' на ' + tg(docTotal(form)) : '')) + '</button>' +
-      (nx ? '<span class="muted b2b-f-note">следующий номер — ' + esc(nx) + (inv ? '' : ' (год — по дате накладной)') + '</span>' : '') + '</div>' +
+    const wait = !!form.editId && !form.snap;
+    H.push('<div class="st-form-actions"><button type="button" data-action="b2b-f-save"' + (form.busy || wait || (inv && !ct) ? ' disabled' : '') + '>' +
+      esc(form.busy ? (form.editId ? 'Сохраняю…' : 'Выписываю…') : saveLabel(form)) + '</button>' +
+      (form.editId ? '<span class="muted b2b-f-note">«Переформировать» потом соберёт строки из поставок заново — эта правка пропадёт</span>'
+        : nx ? '<span class="muted b2b-f-note">следующий номер — ' + esc(nx) + (inv ? '' : ' (год — по дате накладной)') + '</span>' : '') + '</div>' +
       (problem && !form.msg && form.touched ? '<div class="st-msg st-bad-text" role="status">' + esc(problem) + '</div>' : '') +
       msgHtml(form.msg) + '</div>');
     return H.join('');
@@ -558,6 +595,8 @@
     const d = res || {}, tr = d.training ? ' Тренировка — сотрётся при следующем переносе.' : '';
     if (kind === 'doc') return (d.reused ? 'Уже была выписана: ' : 'Выписан' + (d.kind === 'waybill' ? 'а накладная ' : ' счёт № ')) +
       d.number + ' от ' + dmy(d.day) + ' на ' + tg(Number(d.amount) || 0) + '.' + tr;
+    if (kind === 'docedit') return 'Счёт № ' + d.number + ' изменён: ' + (Number(d.was_amount) !== Number(d.amount)
+      ? 'сумма ' + tg(Number(d.was_amount) || 0) + ' → ' + tg(Number(d.amount) || 0) : 'сумма прежняя, ' + tg(Number(d.amount) || 0)) + '.' + tr;
     if (kind === 'regen') return 'Переформирован ' + d.number + ': ' + (Number(d.was_amount) !== Number(d.amount)
       ? 'сумма ' + tg(Number(d.was_amount) || 0) + ' → ' + tg(Number(d.amount) || 0) : 'сумма прежняя, ' + tg(Number(d.amount) || 0)) + '.' + tr;
     if (kind === 'missing') {
@@ -572,7 +611,7 @@
 
   root.NietteB2bDocs = {
     KIND, SETTINGS, money2, qty, docDefinition, fileName, fillFromShipments, shipChoices, pickShip,
-    newDocForm, prefill, emptyLine, lineSum, docTotal, docProblem, docPayload, missingCount,
+    newDocForm, prefill, emptyLine, lineSum, docTotal, docProblem, docPayload, missingCount, fromSnapshot, saveLabel,
     renderDocs, renderPdfPanel, shipDocsHtml, renderDocForm, newSettingsForm, settingsChanges, renderSettingsForm, savedText, isTraining
   };
 })(typeof window !== 'undefined' ? window : globalThis);

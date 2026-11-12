@@ -205,12 +205,22 @@
     return out;
   }
 
-  function nextContactMap(visits) {
-    const map = {};
+  // «Нужен контакт» (27.10.2026), правило одно с _b2bBuildNextContactMap:
+  // план — next_day из ПОСЛЕДНЕГО визита, где он стоит; план выполнен, если
+  // после того визита было любое событие — визит, поставка или оплата.
+  function nextContactMap(visits, touchMap) {
+    const plan = {};
     (visits || []).forEach(v => {
-      const cid = s0(v.client_id), next = v.next_day || '';
+      const cid = s0(v.client_id), next = v.next_day || '', day = v.day || '';
       if (!cid || !next) return;
-      if (!map[cid] || next < map[cid]) map[cid] = next;
+      const cur = plan[cid];
+      if (!cur || day > cur.day || (day === cur.day && next > cur.next)) plan[cid] = { day, next };
+    });
+    const map = {};
+    Object.keys(plan).forEach(cid => {
+      const t = (touchMap || {})[cid];
+      if (t && t.day && t.day > plan[cid].day) return;
+      map[cid] = plan[cid].next;
     });
     return map;
   }
@@ -323,12 +333,13 @@
     const debtList = debtors(clients, ships, pays, today);
     const debtMap = {};
     debtList.forEach(x => { debtMap[x.cid] = x; });
+    const touchMap = lastTouchMap(visits, ships, pays);
     return {
       today, clients, ships, pays, visits,
       items: d.items || [], payItems: d.payItems || [], branches: d.branches || [], docs: d.docs || [], rounds: d.rounds || [],
       byId: firstById(clients), visitMap: vm.visitMap, outcomeMap: vm.outcomeMap, debtList, debtMap,
-      touchMap: lastTouchMap(visits, ships, pays), ageMap: agingMap(ships, pays, today),
-      nextContact: nextContactMap(visits), lastPayDay: lastPayDateMap(pays), money: moneyMaps(ships, pays, today)
+      touchMap, ageMap: agingMap(ships, pays, today),
+      nextContact: nextContactMap(visits, touchMap), lastPayDay: lastPayDateMap(pays), money: moneyMaps(ships, pays, today)
     };
   }
 
@@ -1009,7 +1020,11 @@
         const debt = ret ? 0 : Math.max(0, Math.round(a.sum - a.paid)), due = dueDate(s);
         const items = (s._items || []).map(i => esc(i.product) + (n(i.qty) ? ' × ' + nf3.format(n(i.qty)) : '')).join('<br>');
         const docs = root.NietteB2bDocs ? root.NietteB2bDocs.shipDocsHtml(cm, s, act) : '';
-        return '<tr><th scope="row">' + esc(s.id) + '<div class="where">' + esc(s.status || '') + (s.rep ? ' · ' + esc(s.rep) : '') + '</div>' + docs + '</th>' +
+        // Оплата за эту поставку — форма сразу с ней (12.11.2026).
+        const pay = act && act.perm && act.perm.canPay && !ret && debt > 0
+          ? '<div class="where"><button type="button" class="ghost small" data-action="b2b-f-open" data-kind="payment" data-ship="' + esc(s.id) +
+            '">+ оплата</button></div>' : '';
+        return '<tr><th scope="row">' + esc(s.id) + '<div class="where">' + esc(s.status || '') + (s.rep ? ' · ' + esc(s.rep) : '') + '</div>' + docs + pay + '</th>' +
           '<td>' + dmy(s.ship_day) + '</td><td class="num">' + tg(s.amount) + '</td><td class="num">' + tg(a.paid) + '</td>' +
           '<td class="num ' + (ret ? 'muted' : debt > 0 ? (a.consign ? '' : 'bad') : 'good') + '">' + (ret ? '—' : tg(debt)) + '</td>' +
           '<td>' + (ret ? '<span class="badge info">Возврат</span>' : shipBadge(a)) + '</td>' +
@@ -1028,7 +1043,10 @@
           ? (p._items || []).map(i => esc(i.product || i.ship_item_id || '') + (n(i.qty) ? ' × ' + nf3.format(n(i.qty)) : '') +
               (s0(i.source) === 'оценка' ? ' <span class="muted">(оценка)</span>' : '')).join('<br>')
           : (p.shipment_id ? 'поставка ' + esc(p.shipment_id) : '<span class="muted">без разбивки</span>');
-        return '<tr><th scope="row">' + dmy(p.pay_day) + '</th><td class="num good">' + tg(p.amount) + '</td><td class="wrap">' + what + '</td>' +
+        // К какой поставке — по позициям оплаты (без позиций это уже сказано в «За что»).
+        const to = (p._items || []).map(i => s0(i.shipment_id)).filter((x, i, a) => x && a.indexOf(x) === i);
+        return '<tr><th scope="row">' + dmy(p.pay_day) + (to.length ? '<div class="where">' + esc((to.length > 1 ? 'поставки ' : 'поставка ') + to.join(', ')) + '</div>' : '') +
+          '</th><td class="num good">' + tg(p.amount) + '</td><td class="wrap">' + what + '</td>' +
           '<td>' + esc(p.method || '—') + '</td><td class="muted">' + esc(p.receipt_no || '—') + '</td><td>' + esc(p.receiver || '—') + '</td>' +
           actCell(act, 'payment', p.id) + '</tr>';
       }).join('') + '</tbody></table></div>';
